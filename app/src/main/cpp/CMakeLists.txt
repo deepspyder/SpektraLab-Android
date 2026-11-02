@@ -171,7 +171,7 @@ target_include_directories(spektralab PRIVATE ${SPK_INCLUDE_DIRS})
 
 find_library(log-lib log)
 
-target_link_libraries(spektralab ${log-lib})
+target_link_libraries(spektralab ${log-lib} jnigraphics)
 if(NOT SPEKTRA_USE_STUB_ENGINE)
     target_link_libraries(spektralab spk_volk)
     if(SPEKTRALAB_RAW_AVAILABLE)

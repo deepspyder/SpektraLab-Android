@@ -35,13 +35,31 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var compareOnly = false
     private var progressOnly = false
     private var exportOnly = false
+    private var largeExportOnly = false
+    private var largeExportResolution = 0
+    private var largeExportInput = "repro-large-3072x4096.jpg"
+    private var largeExportFormat = "JPEG"
+    private var largeExportEdges = false
+    private var exportMemoryOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
         val x = (i / 3) % w; val y = i / 3 / w
         when (i % 3) { 0 -> 0.01f + x.toFloat() / w; 1 -> 0.01f + y.toFloat() / h; else -> 0.18f }
     }
-    override fun onCreate(arguments: Bundle?) { compareOnly = arguments?.getString("audit") == "compare";progressOnly=arguments?.getString("audit")=="progress";exportOnly=arguments?.getString("audit")=="export";super.onCreate(arguments);start() }
+    override fun onCreate(arguments: Bundle?) {
+        val audit = arguments?.getString("audit")
+        compareOnly = audit == "compare"
+        progressOnly = audit == "progress"
+        exportOnly = audit == "export"
+        largeExportOnly = audit == "large-export"
+        exportMemoryOnly = audit == "export-memory"
+        largeExportResolution = arguments?.getString("exportRes")?.toIntOrNull() ?: 0
+        largeExportInput = arguments?.getString("input") ?: largeExportInput
+        largeExportFormat = arguments?.getString("format") ?: largeExportFormat
+        largeExportEdges = arguments?.getString("edges") == "true"
+        super.onCreate(arguments); start()
+    }
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
         if (progressOnly) {
@@ -58,6 +76,21 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
                 Bundle().apply {putString("stream", rows.toString(2))})
+            return
+        }
+        if (largeExportOnly) {
+            case("export.$largeExportInput.$largeExportFormat.res_$largeExportResolution.edges_$largeExportEdges") { isolatedLargeExportAudit() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (exportMemoryOnly) {
+            case("export.native_input_output_and_tiff_parity") { nativeExportParityAudit() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
             return
         }
         if (compareOnly) {
@@ -191,6 +224,126 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             check(vm.errorMessage!=null&&vm.renderProgress==null&&vm.renderStage.isEmpty()){"failure left progress active"}
         } finally {check(held.renameTo(imageFile));runOnMainSync{vm.dismissError()}}
         return "${values.size} samples, ${levels.size} levels, ${values.first()}→${values.last()}%; single/batch cancellation and missing-file cleanup passed; stages=${phases.joinToString()}"
+    }
+
+    private fun isolatedLargeExportAudit(): String {
+        val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        await { vm.engine != null && !vm.busy }
+        val imageFile = File(output, largeExportInput)
+        check(imageFile.isFile) { "push $largeExportInput into $output before running this audit" }
+        val uri = Uri.fromFile(imageFile)
+        EditStore.save(targetContext.applicationContext, uri, EditorParams().apply {
+            overscanActive = largeExportEdges
+            if (overscanActive) {
+                val width = if (RawDecoder.isRaw(imageFile.name)) 5200 else 3072
+                val height = if (RawDecoder.isRaw(imageFile.name)) 3900 else 4096
+                val crop = computeCenteredCropByAspect(overscanGateAspect("135"), width, height)
+                cropX = crop[0]; cropY = crop[1]; cropW = crop[2]; cropH = crop[3]
+            }
+        })
+        runOnMainSync {
+            vm.dismissError()
+            vm.exportFormat = largeExportFormat
+            vm.exportColorSpace = if (largeExportFormat == "TIFF") "Display P3" else "sRGB"
+            vm.exportRes = largeExportResolution
+            vm.openPhotos(listOf(uri))
+        }
+        await(180000) { vm.errorMessage != null || vm.lastResult != null && !vm.busy }
+        check(vm.errorMessage == null) { "image import failed: ${vm.errorMessage}" }
+        val before = vm.engine!!.memoryReport()
+        val savedBefore = targetContext.contentResolver.query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(android.provider.MediaStore.Images.Media._ID), null, null, null)?.use { it.count } ?: 0
+        runOnMainSync { vm.export() }
+        await(240000) { !vm.isExporting }
+        val error = vm.errorMessage
+        val log = vm.log.takeLast(1200)
+        val after = vm.engine?.memoryReport() ?: "engine unavailable"
+        runOnMainSync { activity.finish() }
+        check(error == null) { "export failed: $error; log=$log; memory_before=$before; memory_after=$after" }
+        check(log.contains("导出成功")) { "export did not complete; log=$log" }
+        val savedAfter = targetContext.contentResolver.query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(android.provider.MediaStore.Images.Media._ID), null, null, null)?.use { it.count } ?: 0
+        check(savedAfter > savedBefore) { "no output image was saved" }
+        val savedUri = Uri.parse(log.substringAfterLast("相册: ").lineSequence().first().trim())
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        if (largeExportFormat != "TIFF") {
+            targetContext.contentResolver.openInputStream(savedUri).use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+            val expected = Regex("导出成功: ([0-9]+)×([0-9]+)").find(log)!!
+            check(bounds.outWidth == expected.groupValues[1].toInt() && bounds.outHeight == expected.groupValues[2].toInt())
+        }
+        return "resolution=$largeExportResolution; model=${android.os.Build.MODEL}; log=$log; memory_before=$before; memory_after=$after"
+    }
+
+    private fun nativeExportParityAudit(): String {
+        val width = 72; val height = 53 // partial final 32-row strip
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        bitmap.setPixels(IntArray(width * height) { i ->
+            -0x1000000 or ((i % width * 255 / width) shl 16) or ((i / width * 255 / height) shl 8) or 97
+        }, 0, width, 0, 0, width, height)
+        try {
+            EngineClient.create(targetContext).use { engine ->
+                val params = EditorParams().apply { grainActive = false; glareActive = false }
+                val json = params.openJson(width, height)
+                engine.open(ColorPipeline.bitmapToLinearSrgb(bitmap), width, height, 3, json)
+                val expected = engine.render("full")
+                engine.openBitmap(bitmap, json)
+                engine.renderForExport().use { actual ->
+                    check(actual.width == expected.width && actual.height == expected.height)
+                    val pixels = ShortArray(actual.width * actual.height * 4)
+                    actual.readRows(0, actual.height, pixels)
+                    val difference = pixels.indices.maxOf { kotlin.math.abs((pixels[it].toInt() and 65535) - (expected.rgba16[it].toInt() and 65535)) }
+                    check(difference <= 1) { "native bitmap input differs by $difference/65535" }
+                    val grade = Grade(1.02f, .99f, .98f, 1.2f, .1f, .05f, 1.1f, -.1f, .1f, 0f, 0f,
+                        floatArrayOf(.01f, 0f, 0f), FloatArray(3), FloatArray(3))
+                    val expectedTiff = java.io.ByteArrayOutputStream().also {
+                        TiffWriter.writeRgba16(pixels, actual.width, actual.height, grade, null, it)
+                    }.toByteArray()
+                    val actualTiff = java.io.ByteArrayOutputStream().also { TiffWriter.writeNative(actual, grade, null, it) }.toByteArray()
+                    check(expectedTiff.contentEquals(actualTiff)) { "strip TIFF changed pixels or tags" }
+                    // Native results must remain readable after the GPU session closes.
+                    engine.closeSession()
+                    actual.readRows(actual.height - 1, 1, ShortArray(actual.width * 4))
+                }
+                bitmap.setPixels(IntArray(width * height) { i ->
+                    (128 shl 24) or ((i % width * 255 / width) shl 16) or ((i / width * 255 / height) shl 8) or 97
+                }, 0, width, 0, 0, width, height)
+                engine.open(ColorPipeline.bitmapToLinearSrgb(bitmap), width, height, 3, json)
+                val translucentExpected = engine.render("full")
+                engine.openBitmap(bitmap, json)
+                engine.renderForExport().use { actual ->
+                    val pixels = ShortArray(translucentExpected.rgba16.size)
+                    actual.readRows(0, actual.height, pixels)
+                    val difference = pixels.indices.maxOf { kotlin.math.abs((pixels[it].toInt() and 65535) - (translucentExpected.rgba16[it].toInt() and 65535)) }
+                    check(difference <= 1) { "premultiplied bitmap conversion differs by $difference/65535" }
+                }
+            }
+            val file = File(output, "small-export-parity.dng")
+            context.assets.open("audit.dng").use { source -> file.outputStream().use { source.copyTo(it) } }
+            val uri = Uri.fromFile(file)
+            val old = RawDecoder.decode(targetContext, uri, halfSize = false)
+            EngineClient.create(targetContext).use { engine ->
+                val json = EditorParams().apply { grainActive = false; glareActive = false }
+                    .openJson(old.width, old.height, inputColorSpace = "ProPhoto RGB")
+                engine.open(old.linearProPhoto, old.width, old.height, 3, json)
+                val expected = engine.render("full")
+                RawDecoder.decodeForExport(targetContext, uri, 0).use { raw ->
+                    check(raw.width == old.width && raw.height == old.height)
+                    engine.openRaw(raw, json)
+                }
+                engine.renderForExport().use { actual ->
+                    val pixels = ShortArray(expected.rgba16.size)
+                    actual.readRows(0, actual.height, pixels)
+                    check(pixels.contentEquals(expected.rgba16)) { "native RAW changed decoded pixels" }
+                }
+                RawDecoder.decodeForExport(targetContext, uri, 384).use { raw ->
+                    raw.resize(384)
+                    check(maxOf(raw.width, raw.height) == 384) { "RAW was undersized by half demosaic" }
+                }
+            }
+            return "bitmap input parity <=1/65535; RAW pixels exact; partial-strip TIFF bytes exact; native result survives closed session; requested RAW dimensions preserved"
+        } finally { bitmap.recycle() }
     }
     private fun mae(a: SpkResult, b: SpkResult): Double {
         check(a.width == b.width && a.height == b.height)

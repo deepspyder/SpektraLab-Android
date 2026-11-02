@@ -4,12 +4,20 @@ This is a decoder fixture, not a substitute for camera-specific RAW validation.
 Uses only the Python standard library. Do not use this as a photographic oracle.
 """
 import struct
+import argparse
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-out = root / 'app/src/androidTest/assets/audit.dng'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--width', type=int, default=512)
+parser.add_argument('--height', type=int, default=384)
+parser.add_argument('--output', type=Path, default=root / 'app/src/androidTest/assets/audit.dng')
+args = parser.parse_args()
+w, h = args.width, args.height
+if w < 8 or h < 8 or w % 2 or h % 2 or w > 65535 or h > 65535:
+    parser.error('dimensions must be even, between 8 and 65534')
+out = args.output
 out.parent.mkdir(parents=True, exist_ok=True)
-w, h = 512, 384
 entries = []
 def tag(key, typ, values):
     fmt = {1:'B', 2:'B', 3:'H', 4:'I', 5:'I', 10:'i'}[typ]

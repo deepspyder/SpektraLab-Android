@@ -16,6 +16,7 @@ object RawDecoder {
     init { System.loadLibrary("spektralab") }
 
     private external fun nativeDecodeRaw(path: String, halfSize: Boolean, userMul: FloatArray?): RawDecodeResult
+    private external fun nativeDecodeForExport(path: String, maxLongEdge: Int, userMul: FloatArray?): NativeRawImage
 
     private external fun nativeApplyLensCorrection(
         rgb: FloatArray, width: Int, height: Int,
@@ -54,5 +55,14 @@ object RawDecoder {
         } finally {
             tmp.delete()
         }
+    }
+
+    fun decodeForExport(context: Context, uri: Uri, maxLongEdge: Int, userMul: FloatArray? = null): NativeRawImage {
+        val tmp = File(context.cacheDir, "raw_export_${System.nanoTime()}.raw")
+        try {
+            val input = context.contentResolver.openInputStream(uri) ?: throw SpkException("无法读取 RAW 文件")
+            input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
+            return nativeDecodeForExport(tmp.absolutePath, maxLongEdge, userMul)
+        } finally { tmp.delete() }
     }
 }

@@ -2,6 +2,7 @@ package com.spektralab.android.engine
 
 import android.content.Context
 import android.content.res.AssetManager
+import android.graphics.Bitmap
 import android.util.Log
 import java.io.Closeable
 import java.io.File
@@ -46,6 +47,22 @@ class EngineClient private constructor(
         sessionPtr = nativeOpen(enginePtr, data, width, height, channels, paramsJson)
         return sessionPtr
     }
+
+    fun openBitmap(bitmap: Bitmap, paramsJson: String): Long {
+        check(enginePtr != 0L)
+        closeSession()
+        sessionPtr = nativeOpenBitmap(enginePtr, bitmap, paramsJson)
+        return sessionPtr
+    }
+
+    fun openRaw(image: NativeRawImage, paramsJson: String): Long {
+        check(enginePtr != 0L && image.handle != 0L)
+        closeSession()
+        sessionPtr = nativeOpenRaw(enginePtr, image.handle, paramsJson)
+        return sessionPtr
+    }
+
+    fun renderForExport(): NativeRenderResult = requireSession { nativeRenderForExport(enginePtr, sessionPtr) }
 
     fun closeSession() {
         if (sessionPtr != 0L) {
@@ -141,6 +158,9 @@ class EngineClient private constructor(
         paramsJson: String?,
     ): Long
     private external fun nativeSessionRelease(sessionPtr: Long)
+    private external fun nativeOpenBitmap(enginePtr: Long, bitmap: Bitmap, paramsJson: String): Long
+    private external fun nativeOpenRaw(enginePtr: Long, pixels: Long, paramsJson: String): Long
+    private external fun nativeRenderForExport(enginePtr: Long, sessionPtr: Long): NativeRenderResult
     private external fun nativeSetParams(enginePtr: Long, sessionPtr: Long, deltaJson: String): String
     private external fun nativeGetParams(enginePtr: Long, sessionPtr: Long): String
     private external fun nativeSolve(enginePtr: Long, sessionPtr: Long, target: String): String

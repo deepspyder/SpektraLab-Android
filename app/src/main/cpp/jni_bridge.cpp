@@ -12,9 +12,15 @@
 
 #include <jni.h>
 #include <android/log.h>
+#include <android/bitmap.h>
+#include "native_pixels.hpp"
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
+#include <memory>
+#include <stdexcept>
 
 #include <spektrafilm/spk_engine.h>
 
@@ -48,6 +54,7 @@ void throwEngineError(JNIEnv* env, spk_engine* e, spk_status st) {
     (void) st;
     const char* msg = spk_last_error(e);
     if (!msg || !*msg) msg = "engine failed";
+    LOGE("engine status=%d: %s", int(st), msg);
     jclass cls = env->FindClass(kSpkExceptionClass);
     if (cls) env->ThrowNew(cls, msg);
 }
@@ -66,6 +73,7 @@ jobject wrapResult(JNIEnv* env, const spk_result& r) {
     if (!arr) return nullptr;
 
     jshort* dst = env->GetShortArrayElements(arr, nullptr);
+    if (!dst) return nullptr;
     for (uint32_t y = 0; y < r.height; ++y) {
         const uint16_t* src = r.rgba16 + static_cast<size_t>(y) * r.row_stride_px * 4;
         jshort* row = dst + static_cast<size_t>(y) * r.width * 4;
@@ -181,6 +189,7 @@ Java_com_spektralab_android_engine_EngineClient_nativeOpen(
     jfloatArray data, jint width, jint height, jint channels, jstring paramsJson) {
     spk_engine* e = asEngine(enginePtr);
     jfloat* px = env->GetFloatArrayElements(data, nullptr);
+    if (!px) return 0;
 
     spk_image img;
     img.data = px;
@@ -205,6 +214,112 @@ Java_com_spektralab_android_engine_EngineClient_nativeOpen(
         return 0;
     }
     return reinterpret_cast<jlong>(s);
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_spektralab_android_engine_EngineClient_nativeOpenBitmap(
+    JNIEnv* env, jobject, jlong enginePtr, jobject bitmap, jstring paramsJson) {
+    AndroidBitmapInfo info{};
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || !info.width || !info.height) {
+        jclass cls = env->FindClass(kSpkExceptionClass);
+        if (cls) env->ThrowNew(cls, "Export bitmap must be software RGBA_8888");
+        return 0;
+    }
+    try {
+        std::vector<float> linear(size_t(info.width) * info.height * 3);
+        float table[256];
+        for (int i = 0; i < 256; ++i) {
+            const float s = i / 255.f;
+            table[i] = s <= .04045f ? s / 12.92f : std::pow((s + .055f) / 1.055f, 2.4f);
+        }
+        void* pixels = nullptr;
+        if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) {
+            jclass cls = env->FindClass(kSpkExceptionClass);
+            if (cls) env->ThrowNew(cls, "Cannot read export bitmap");
+            return 0;
+        }
+        for (uint32_t y = 0; y < info.height; ++y) {
+            const auto* row = static_cast<const uint8_t*>(pixels) + size_t(y) * info.stride;
+            float* dst = linear.data() + size_t(y) * info.width * 3;
+            for (uint32_t x = 0; x < info.width; ++x) {
+                const uint32_t alpha = row[x * 4 + 3];
+                for (uint32_t c = 0; c < 3; ++c) {
+                    uint32_t value = row[x * 4 + c];
+                    // Bitmap.getPixels returns unpremultiplied colors. Preserve that contract for PNG.
+                    if ((info.flags & ANDROID_BITMAP_FLAGS_ALPHA_MASK) == ANDROID_BITMAP_FLAGS_ALPHA_PREMUL && alpha < 255)
+                        value = alpha ? std::min(255u, (value * 255u + alpha / 2) / alpha) : 0;
+                    dst[x * 3 + c] = table[value];
+                }
+            }
+        }
+        AndroidBitmap_unlockPixels(env, bitmap);
+        const char* params = env->GetStringUTFChars(paramsJson, nullptr);
+        if (!params) return 0;
+        spk_image img{linear.data(), info.width, info.height, 3};
+        spk_session* session = spk_open(asEngine(enginePtr), &img, params, nullptr);
+        env->ReleaseStringUTFChars(paramsJson, params);
+        if (!session) throwEngineError(env, asEngine(enginePtr), SPK_ERR_INTERNAL);
+        return reinterpret_cast<jlong>(session);
+    } catch (const std::exception& ex) {
+        jclass cls = env->FindClass(kSpkExceptionClass);
+        if (cls) env->ThrowNew(cls, ex.what());
+        return 0;
+    }
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_spektralab_android_engine_EngineClient_nativeOpenRaw(
+    JNIEnv* env, jobject, jlong enginePtr, jlong pixels, jstring paramsJson) {
+    auto* raw = reinterpret_cast<NativeRawPixels*>(pixels);
+    if (!raw || raw->rgb.size() != size_t(raw->width) * raw->height * 3) return 0;
+    const char* params = env->GetStringUTFChars(paramsJson, nullptr);
+    if (!params) return 0;
+    spk_image img{raw->rgb.data(), raw->width, raw->height, 3};
+    spk_session* session = spk_open(asEngine(enginePtr), &img, params, nullptr);
+    env->ReleaseStringUTFChars(paramsJson, params);
+    if (!session) throwEngineError(env, asEngine(enginePtr), SPK_ERR_INTERNAL);
+    return reinterpret_cast<jlong>(session);
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_spektralab_android_engine_EngineClient_nativeRenderForExport(
+    JNIEnv* env, jobject, jlong enginePtr, jlong sessionPtr) {
+    auto result = std::make_unique<spk_result>();
+    std::memset(result.get(), 0, sizeof(spk_result));
+    const spk_status status = spk_reprint(asSession(sessionPtr), "full", result.get());
+    if (status != SPK_OK) {
+        spk_result_free(result.get());
+        throwEngineError(env, asEngine(enginePtr), status);
+        return nullptr;
+    }
+    jclass cls = env->FindClass("com/spektralab/android/engine/NativeRenderResult");
+    jmethodID ctor = cls ? env->GetMethodID(cls, "<init>", "(JII)V") : nullptr;
+    jobject obj = ctor ? env->NewObject(cls, ctor, reinterpret_cast<jlong>(result.get()),
+        jint(result->width), jint(result->height)) : nullptr;
+    if (obj) result.release();
+    else spk_result_free(result.get());
+    return obj;
+}
+
+JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeRenderResult_nativeReadRows(
+    JNIEnv* env, jobject, jlong handle, jint y, jint rows, jshortArray dst) {
+    const auto* result = reinterpret_cast<const spk_result*>(handle);
+    if (!result || y < 0 || rows <= 0 || uint64_t(y) + rows > result->height ||
+        uint64_t(result->width) * rows * 4 > uint64_t(env->GetArrayLength(dst))) return;
+    const jsize row_samples = jsize(result->width * 4);
+    for (jint row = 0; row < rows && !env->ExceptionCheck(); ++row) {
+        const auto* pixels = result->rgba16 + size_t(y + row) * result->row_stride_px * 4;
+        env->SetShortArrayRegion(dst, row * row_samples, row_samples, reinterpret_cast<const jshort*>(pixels));
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeRenderResult_nativeRelease(
+    JNIEnv*, jobject, jlong handle) {
+    auto* result = reinterpret_cast<spk_result*>(handle);
+    if (result) { spk_result_free(result); delete result; }
 }
 
 JNIEXPORT void JNICALL

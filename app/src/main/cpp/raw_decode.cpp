@@ -14,21 +14,22 @@
 #include <android/log.h>
 
 #include <libraw/libraw.h>
+#include "native_pixels.hpp"
 
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <string>
 #include <vector>
+#include <memory>
+#include <algorithm>
 
 #define LOG_TAG "SpektraLab-Raw"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
-struct DecodedRaw {
-    std::uint32_t width = 0, height = 0;
-    std::vector<float> rgb;      // 紧凑 RGB，行优先、首行为顶，线性 ProPhoto 0..1
+struct DecodedRaw : NativeRawPixels {
     float cam_mul[4] = {};       // 相机白平衡乘数（R, G, B, G2）
     float cam_xyz[9] = {};       // XYZ -> camera 矩阵（3x3，行主序）
     std::string make, model;
@@ -130,7 +131,7 @@ bool apply_lens_correction(std::vector<float>& rgb, std::uint32_t w, std::uint32
 }
 
 bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
-                DecodedRaw& out, std::string& error) {
+                DecodedRaw& out, std::string& error, int max_long_edge = 0) {
     try {
         LibRaw raw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
         libraw_output_params_t& p = raw.imgdata.params;
@@ -159,6 +160,10 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
             error = std::string("RAW open: ") + LibRaw::strerror(status);
             return false;
         }
+        // Use half demosaic only when it still contains every requested output pixel.
+        if (max_long_edge > 0 &&
+            std::max(raw.imgdata.sizes.width, raw.imgdata.sizes.height) / 2 >= max_long_edge)
+            p.half_size = 1;
         status = raw.unpack();
         if (status != LIBRAW_SUCCESS) {
             error = std::string("RAW unpack: ") + LibRaw::strerror(status);
@@ -179,35 +184,26 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
         }
 
         int image_status = LIBRAW_SUCCESS;
-        libraw_processed_image_t* image = raw.dcraw_make_mem_image(&image_status);
+        std::unique_ptr<libraw_processed_image_t, decltype(&LibRaw::dcraw_clear_mem)> image(
+            raw.dcraw_make_mem_image(&image_status), &LibRaw::dcraw_clear_mem);
         if (image_status != LIBRAW_SUCCESS || !image) {
             error = std::string("RAW output: ") + LibRaw::strerror(image_status);
             return false;
         }
         if (image->type != LIBRAW_IMAGE_BITMAP || image->bits != 16 || image->colors != 3 ||
             image->width == 0 || image->height == 0) {
-            LibRaw::dcraw_clear_mem(image);
             error = "RAW output: expected non-empty 16-bit three-channel bitmap";
             return false;
         }
 
         const std::uint64_t samples = std::uint64_t(image->width) * image->height * 3;
         if (samples * sizeof(std::uint16_t) != image->data_size) {
-            LibRaw::dcraw_clear_mem(image);
             error = "RAW output: inconsistent byte count";
             return false;
         }
 
         out.width = image->width;
         out.height = image->height;
-        out.rgb.resize(static_cast<std::size_t>(samples));
-        for (std::uint64_t i = 0; i < samples; ++i) {
-            std::uint16_t v;
-            std::memcpy(&v, image->data + i * sizeof(v), sizeof(v));
-            out.rgb[static_cast<std::size_t>(i)] = static_cast<float>(static_cast<double>(v) / 65535.0);
-        }
-        LibRaw::dcraw_clear_mem(image);
-
         const auto& color = raw.imgdata.color;
         const auto& idata = raw.imgdata.idata;
         for (unsigned c = 0; c < 4; ++c) out.cam_mul[c] = color.cam_mul[c];
@@ -220,6 +216,14 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
         out.lens.assign(lensinfo.Lens, lensinfo.Lens + strnlen(lensinfo.Lens, sizeof(lensinfo.Lens)));
         out.focal = lensinfo.makernotes.CurFocal > 0 ? lensinfo.makernotes.CurFocal
                     : (lensinfo.makernotes.MinFocal > 0 ? lensinfo.makernotes.MinFocal : 0.0f);
+        // make_mem_image owns its copy. Release demosaic/RAW work planes before expanding RGB16 to RGB32.
+        raw.recycle();
+        out.rgb.resize(static_cast<std::size_t>(samples));
+        for (std::uint64_t i = 0; i < samples; ++i) {
+            std::uint16_t v;
+            std::memcpy(&v, image->data + i * sizeof(v), sizeof(v));
+            out.rgb[static_cast<std::size_t>(i)] = static_cast<float>(static_cast<double>(v) / 65535.0);
+        }
         return true;
     } catch (const std::exception& e) {
         error = std::string("RAW decode: ") + e.what();
@@ -238,6 +242,107 @@ void throw_engine_error(JNIEnv* env, const std::string& msg) {
 }  // namespace
 
 extern "C" {
+
+JNIEXPORT jobject JNICALL
+Java_com_spektralab_android_engine_RawDecoder_nativeDecodeForExport(
+    JNIEnv* env, jobject, jstring path, jint maxLongEdge, jfloatArray userMul) {
+    try {
+        const char* text = env->GetStringUTFChars(path, nullptr);
+        if (!text) return nullptr;
+        const std::string file(text);
+        env->ReleaseStringUTFChars(path, text);
+        float multipliers[4]{};
+        if (userMul) {
+            if (env->GetArrayLength(userMul) != 4) { throw_engine_error(env, "Invalid RAW white balance"); return nullptr; }
+            env->GetFloatArrayRegion(userMul, 0, 4, multipliers);
+            if (env->ExceptionCheck()) return nullptr;
+        }
+        DecodedRaw raw;
+        std::string error;
+        if (!decode_raw(file, false, userMul ? multipliers : nullptr, raw, error, maxLongEdge)) {
+            throw_engine_error(env, error); return nullptr;
+        }
+        auto pixels = std::make_unique<NativeRawPixels>();
+        pixels->width = raw.width; pixels->height = raw.height; pixels->rgb = std::move(raw.rgb);
+        jclass cls = env->FindClass("com/spektralab/android/engine/NativeRawImage");
+        jmethodID ctor = cls ? env->GetMethodID(cls, "<init>", "(JIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;F[F)V") : nullptr;
+        if (!ctor) return nullptr;
+        jfloatArray xyz = env->NewFloatArray(9);
+        if (!xyz) return nullptr;
+        env->SetFloatArrayRegion(xyz, 0, 9, raw.cam_xyz);
+        jstring make = env->NewStringUTF(raw.make.c_str());
+        jstring model = env->NewStringUTF(raw.model.c_str());
+        jstring lens = env->NewStringUTF(raw.lens.c_str());
+        if (env->ExceptionCheck()) return nullptr;
+        jobject obj = env->NewObject(cls, ctor, reinterpret_cast<jlong>(pixels.get()), jint(raw.width), jint(raw.height), make, model, lens, jfloat(raw.focal), xyz);
+        if (obj) pixels.release();
+        return obj;
+    } catch (const std::exception& ex) { throw_engine_error(env, ex.what()); return nullptr; }
+}
+
+JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeRawImage_nativeRelease(JNIEnv*, jobject, jlong handle) {
+    delete reinterpret_cast<NativeRawPixels*>(handle);
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_spektralab_android_engine_NativeRawImage_nativeResize(JNIEnv* env, jobject, jlong handle, jint maxLongEdge) {
+    auto* raw = reinterpret_cast<NativeRawPixels*>(handle);
+    if (!raw) return nullptr;
+    try {
+        const uint32_t edge = std::max(raw->width, raw->height);
+        if (maxLongEdge > 0 && edge > uint32_t(maxLongEdge)) {
+            const double scale = double(maxLongEdge) / edge;
+            const uint32_t w = std::max(1u, uint32_t(std::lround(raw->width * scale)));
+            const uint32_t h = std::max(1u, uint32_t(std::lround(raw->height * scale)));
+            std::vector<float> resized(size_t(w) * h * 3);
+            for (uint32_t y = 0; y < h; ++y) {
+                const double sy = std::clamp((y + .5) * raw->height / h - .5, 0., double(raw->height - 1));
+                const uint32_t y0 = uint32_t(sy), y1 = std::min(y0 + 1, raw->height - 1);
+                const double fy = sy - y0;
+                for (uint32_t x = 0; x < w; ++x) {
+                    const double sx = std::clamp((x + .5) * raw->width / w - .5, 0., double(raw->width - 1));
+                    const uint32_t x0 = uint32_t(sx), x1 = std::min(x0 + 1, raw->width - 1);
+                    const double fx = sx - x0;
+                    for (int c = 0; c < 3; ++c) {
+                        const auto sample = [&](uint32_t xx, uint32_t yy) { return raw->rgb[(size_t(yy) * raw->width + xx) * 3 + c]; };
+                        resized[(size_t(y) * w + x) * 3 + c] = float(
+                            (sample(x0,y0)*(1-fx)+sample(x1,y0)*fx)*(1-fy) +
+                            (sample(x0,y1)*(1-fx)+sample(x1,y1)*fx)*fy);
+                    }
+                }
+            }
+            raw->rgb.swap(resized); raw->width = w; raw->height = h;
+        }
+        jintArray size = env->NewIntArray(2);
+        const jint dimensions[] = {jint(raw->width), jint(raw->height)};
+        if (size) env->SetIntArrayRegion(size, 0, 2, dimensions);
+        return size;
+    } catch (const std::exception& ex) { throw_engine_error(env, ex.what()); return nullptr; }
+}
+
+JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeRawImage_nativeCorrectLens(
+    JNIEnv* env, jobject, jlong handle, jstring model, jfloatArray terms, jfloatArray vignette, jfloat vr, jfloat vb) {
+    auto* raw = reinterpret_cast<NativeRawPixels*>(handle);
+    if (!raw) return;
+    try {
+        LensCorrection correction;
+        const char* text = env->GetStringUTFChars(model, nullptr);
+        if (!text) return;
+        correction.dist_model = text; env->ReleaseStringUTFChars(model, text);
+        float t[3]{}, v[3]{};
+        env->GetFloatArrayRegion(terms, 0, 3, t);
+        if (env->ExceptionCheck()) return;
+        env->GetFloatArrayRegion(vignette, 0, 3, v);
+        if (env->ExceptionCheck()) return;
+        for (int i = 0; i < 3; ++i) { correction.terms[i] = t[i]; correction.vig_k[i] = v[i]; }
+        correction.tca_vr = vr; correction.tca_vb = vb;
+        std::string error;
+        if (!apply_lens_correction(raw->rgb, raw->width, raw->height, correction, error))
+            throw_engine_error(env, error.empty() ? "RAW lens correction failed" : error);
+    } catch (const std::exception& ex) { throw_engine_error(env, ex.what()); }
+}
 
 JNIEXPORT jobject JNICALL
 Java_com_spektralab_android_engine_RawDecoder_nativeDecodeRaw(

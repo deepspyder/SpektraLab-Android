@@ -27,6 +27,7 @@ import com.spektralab.android.engine.LensProfile
 import com.spektralab.android.engine.LensProfileStore
 import com.spektralab.android.engine.RawDecoder
 import com.spektralab.android.engine.RawDecodeResult
+import com.spektralab.android.engine.NativeRenderResult
 import com.spektralab.android.engine.SpkException
 import com.spektralab.android.engine.SpkResult
 import com.spektralab.android.engine.Stock
@@ -530,6 +531,44 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return raw
     }
 
+    // Native export input avoids full-frame Java arrays without reducing the requested resolution.
+    private fun openExportSource(e: EngineClient, uri: Uri, editParams: EditorParams, size: Int, colorSpace: String) {
+        // The interactive preview remains on screen, but its GPU session need not overlap source decoding.
+        e.closeSession()
+        if (RawDecoder.isRaw(queryDisplayName(uri))) {
+            val cachedXyz = if (uri == currentUri) rawCamXyz else null
+            fun multipliers(xyz: FloatArray?): FloatArray? {
+                if (!editParams.cameraWbCustom || xyz == null) return null
+                val mul = FloatArray(4)
+                return if (CameraWhiteBalance.multipliersFor(xyz, editParams.cameraWbKelvin.toDouble(),
+                    editParams.cameraWbTint.toDouble(), mul)) mul else null
+            }
+            var raw = RawDecoder.decodeForExport(app, uri, size, multipliers(cachedXyz))
+            try {
+                if (editParams.cameraWbCustom && cachedXyz == null) {
+                    val mul = multipliers(raw.camXyz)
+                    if (mul != null) {
+                        raw.close()
+                        raw = RawDecoder.decodeForExport(app, uri, size, mul)
+                    }
+                }
+                LensProfileStore.load(app)
+                val profile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
+                if (lensCorrectionActive && profile != null) raw.correctLens(profile)
+                raw.resize(size)
+                checkExportCancellation()
+                e.openRaw(raw, editParams.openJson(raw.width, raw.height, colorSpace, "ProPhoto RGB"))
+            } finally { raw.close() }
+        } else {
+            val bitmap = decodeBitmapForExport(uri, size)
+            try {
+                checkExportCancellation()
+                e.openBitmap(bitmap, editParams.openJson(bitmap.width, bitmap.height, colorSpace))
+            } finally { bitmap.recycle() }
+        }
+        android.util.Log.i("SpkExport", "input opened; ART limit=${Runtime.getRuntime().maxMemory()}; ${e.memoryReport()}")
+    }
+
     // 解码 RAW → 显示源图 → 开会话。
     private suspend fun decodeRawAndOpen(uri: Uri) {
         val raw = decodeRaw(uri)
@@ -783,16 +822,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 renderStage = "解码原图"
                 withContext(engineDispatcher) {
                     if (uri != null) {
-                        if (currentIsRaw) {
-                            val full = outputSize == 0
-                            val raw = decodeRaw(uri, exportParams, halfSize = !full && outputSize <= 2048)
-                            val resized = if (full) raw else resizeRaw(raw, outputSize)
-                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, exportParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
-                        } else {
-                            val bmp = decodeBitmapForExport(uri, outputSize)
-                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
-                            e.open(linear, bmp.width, bmp.height, 3, exportParams.openJson(bmp.width, bmp.height, outputCs))
-                        }
+                        openExportSource(e, uri, exportParams, outputSize, outputCs)
                     }
                 }
                 checkExportCancellation()
@@ -810,23 +840,38 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         delay(120)
                     }
                 }
-                val result = withContext(engineDispatcher) { e.render("full") }
-                poller.cancelAndJoin()
-                poller = null
+                var dimensions = ""
+                val path = withContext(engineDispatcher) {
+                    e.renderForExport().use { result ->
+                        poller?.cancelAndJoin()
+                        poller = null
+                        checkExportCancellation()
+                        android.util.Log.i("SpkExport", "render complete ${result.width}x${result.height}; ${e.memoryReport()}")
+                        e.closeSession()
+                        dimensions = "${result.width}×${result.height}"
+                        withContext(Dispatchers.Main.immediate) {
+                            renderProgress = 96f
+                            renderStage = "编码并保存文件"
+                        }
+                        withContext(Dispatchers.IO) { saveNativeResult(result, System.currentTimeMillis().toString(), exportParams) }
+                    }
+                }
                 checkExportCancellation()
-                renderProgress = 96f
-                renderStage = "编码并保存文件"
-                val path = withContext(Dispatchers.IO) { saveResult(result, System.currentTimeMillis().toString(), exportParams) }
-                append("导出成功: ${result.width}×${result.height} → $path")
+                append("导出成功: $dimensions → $path")
                 toast("已导出到相册")
                 renderProgress = 100f
                 renderStage = "导出完成"
                 delay(250)
             } catch (_: ExportCancelled) {
                 append("导出已取消")
+            } catch (_: OutOfMemoryError) {
+                fail("导出内存不足，请关闭其他应用或选择较小导出尺寸")
             } catch (ex: SpkException) {
                 if (ex.message?.contains("cancel", ignoreCase = true) == true) append("导出已取消")
-                else fail("SpkException: ${ex.message}")
+                else {
+                    android.util.Log.e("SpkExport", "render/export failed; ${runCatching { e.memoryReport() }.getOrDefault("memory unavailable")}", ex)
+                    fail("SpkException: ${ex.message}")
+                }
             } catch (ex: Exception) {
                 fail("${ex::class.simpleName}: ${ex.message}")
             } finally {
@@ -1058,24 +1103,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         val photoParams = if (uri == activeUri) activeParams.copy() else EditStore.load(app, uri) ?: EditorParams()
                         sourceExif = readExif(uri)
-                        if (RawDecoder.isRaw(queryDisplayName(uri))) {
-                            val full = batchResolution == 0
-                            val raw = decodeRaw(uri, photoParams, halfSize = !full && batchResolution <= 2048)
-                            val resized = if (full) raw else resizeRaw(raw, batchResolution)
-                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, photoParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
-                        } else {
-                            val bmp = decodeBitmapForExport(uri, batchResolution)
-                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
-                            e.open(linear, bmp.width, bmp.height, 3, photoParams.openJson(bmp.width, bmp.height, outputCs))
+                        openExportSource(e, uri, photoParams, batchResolution, outputCs)
+                        checkExportCancellation()
+                        var dimensions = ""
+                        val path = e.renderForExport().use { r ->
+                            checkExportCancellation()
+                            e.closeSession()
+                            dimensions = "${r.width}×${r.height}"
+                            saveNativeResult(r, "$batchTs-$i", photoParams)
                         }
-                        checkExportCancellation()
-                        val r = e.render("full")
-                        checkExportCancellation()
-                        val path = saveResult(r, "$batchTs-$i", photoParams)
                         done++
                         withContext(Dispatchers.Main.immediate) {
                             renderProgress = done.toFloat() / batchPhotos.size * 100f
-                            append("批量导出 $done/${batchPhotos.size}: ${r.width}×${r.height} → $path")
+                            append("批量导出 $done/${batchPhotos.size}: $dimensions → $path")
                         }
                     }
                     withContext(Dispatchers.Main.immediate) {
@@ -1083,6 +1123,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 } catch (_: ExportCancelled) {
                     withContext(Dispatchers.Main.immediate) { append("批量导出已取消") }
+                } catch (_: OutOfMemoryError) {
+                    withContext(Dispatchers.Main.immediate) { fail("导出内存不足，请关闭其他应用或选择较小导出尺寸") }
                 } catch (ex: SpkException) {
                     withContext(Dispatchers.Main.immediate) {
                         if (ex.message?.contains("cancel", ignoreCase = true) == true) append("批量导出已取消")
@@ -1149,22 +1191,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             withContext(engineDispatcher) {
                 try {
                     val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
-                    if (uri != null) {
-                        if (currentIsRaw) {
-                            val full = exportRes == 0
-                            val raw = decodeRaw(uri, proofParams, halfSize = !full && exportRes <= 2048)
-                            val resized = if (full) raw else resizeRaw(raw, exportRes)
-                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, proofParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
-                        } else {
-                            val bmp = decodeBitmapForExport(uri, exportRes)
-                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
-                            e.open(linear, bmp.width, bmp.height, 3, proofParams.openJson(bmp.width, bmp.height, outputCs))
-                        }
-                    }
+                    if (uri != null) openExportSource(e, uri, proofParams, exportRes, outputCs)
                     val r = e.render("full")
                     updateResult(r, outputCs)
                     e.setParams(JSONObject().put("output_color_space", "sRGB").toString())
                     append("软打样: ${r.width}×${r.height}  ${r.elapsedMs}ms")
+                } catch (_: OutOfMemoryError) {
+                    fail("软打样内存不足，请选择较小的预览尺寸")
                 } catch (ex: SpkException) {
                     fail("SpkException: ${ex.message}")
                 } catch (ex: Exception) {
@@ -1254,41 +1287,82 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // 先压缩到临时文件（JPEG 需先落盘才能附加 EXIF）。
         val tmp = File(app.cacheDir, "export_${System.nanoTime()}.$ext")
         try {
-            FileOutputStream(tmp).use { fos -> bitmap.compress(fmt, jpegQuality.coerceIn(1, 100), fos) }
-            if (fmt == Bitmap.CompressFormat.JPEG) attachSourceExif(tmp)
-
-            // API 29+：写 MediaStore，照片出现在系统相册（无需权限）。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Images.Media.MIME_TYPE, mime)
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                val uri = app.contentResolver.insert(collection, values)
-                if (uri != null) {
-                    app.contentResolver.openOutputStream(uri)?.use { out ->
-                        tmp.inputStream().use { it.copyTo(out) }
-                    }
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    app.contentResolver.update(uri, values, null, null)
-                    return "相册: $uri"
-                }
+            FileOutputStream(tmp).use { fos ->
+                check(bitmap.compress(fmt, jpegQuality.coerceIn(1, 100), fos)) { "图片编码失败" }
             }
-
-            // 回退：app 私有目录（API 26-28，或 MediaStore 插入失败）。
-            val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
-            val file = File(dir, name)
-            tmp.copyTo(file, overwrite = true)
-            return file.absolutePath
+            if (fmt == Bitmap.CompressFormat.JPEG) attachSourceExif(tmp)
+            return publishExport(tmp, name, mime)
         } finally {
             tmp.delete()
         }
     }
 
     // 按当前格式导出渲染结果（TIFF 走 16-bit，其余走 8-bit JPEG/PNG）。
+    private fun saveNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams): String {
+        if (exportFormat == "TIFF") {
+            val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
+            try {
+                val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
+                tmp.outputStream().use { TiffWriter.writeNative(result, grade(editParams), icc, it) }
+                return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
+            } finally { tmp.delete() }
+        }
+        // A full RGBA16 ShortArray plus full ARGB IntArray exceeded ART limits even for 12 MP.
+        val bitmap = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
+        try {
+            val rows = minOf(32, result.height)
+            val strip = ShortArray(result.width * rows * 4)
+            val argb = IntArray(result.width * rows)
+            val g = grade(editParams)
+            val pixel = FloatArray(3)
+            var y = 0
+            while (y < result.height) {
+                checkExportCancellation()
+                val count = minOf(rows, result.height - y)
+                result.readRows(y, count, strip)
+                for (i in 0 until result.width * count) {
+                    g.grade(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel)
+                    val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
+                    val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
+                    val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
+                    argb[i] = (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
+                }
+                bitmap.setPixels(argb, 0, result.width, 0, y, result.width, count)
+                y += count
+            }
+            return saveBitmap(bitmap, suffix)
+        } finally { bitmap.recycle() }
+    }
+
+    private fun publishExport(tmp: File, name: String, mime: String): String {
+        checkExportCancellation()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, mime)
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = app.contentResolver.insert(collection, values)
+            if (uri != null) {
+                try {
+                    val stream = app.contentResolver.openOutputStream(uri) ?: error("无法写入相册文件")
+                    stream.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                    checkExportCancellation()
+                    values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    check(app.contentResolver.update(uri, values, null, null) > 0) { "无法完成相册文件" }
+                    return "相册: $uri"
+                } catch (ex: Throwable) {
+                    app.contentResolver.delete(uri, null, null)
+                    throw ex
+                }
+            }
+        }
+        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
+        return File(dir, name).also { tmp.copyTo(it, overwrite = true) }.absolutePath
+    }
+
     private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
         return if (exportFormat == "TIFF") {
             saveTiff(result, suffix, editParams)
