@@ -1,0 +1,1484 @@
+package com.spektralab.android
+
+import android.app.Application
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.ColorSpace
+import android.graphics.Matrix
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.exifinterface.media.ExifInterface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.spektralab.android.engine.CameraWhiteBalance
+import com.spektralab.android.engine.ColorPipeline
+import com.spektralab.android.engine.EngineClient
+import com.spektralab.android.engine.Grade
+import com.spektralab.android.engine.Histogram
+import com.spektralab.android.engine.LensProfile
+import com.spektralab.android.engine.LensProfileStore
+import com.spektralab.android.engine.RawDecoder
+import com.spektralab.android.engine.RawDecodeResult
+import com.spektralab.android.engine.SpkException
+import com.spektralab.android.engine.SpkResult
+import com.spektralab.android.engine.Stock
+import com.spektralab.android.engine.StockCatalog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+/**
+ * 编辑器状态与引擎句柄的宿主。用 [AndroidViewModel] 承载，跨配置变更（旋转屏幕）存活：
+ * - 引擎句柄只在 onCleared() 释放，旋转不会泄漏 native 句柄、也不会重复创建；
+ * - 参数/渲染结果/源图都留在这里，旋转后直接复用，不重新解码。
+ */
+class EditorViewModel(application: Application) : AndroidViewModel(application) {
+    private class ExportCancelled : Exception()
+    @Volatile private var exportCancelRequested = false
+
+    private fun checkExportCancellation() {
+        if (exportCancelRequested) throw ExportCancelled()
+    }
+
+    private data class PendingFrame(
+        val pixels: FloatArray,
+        val width: Int,
+        val height: Int,
+        val inputColorSpace: String,
+    )
+
+    private val app get() = getApplication<Application>()
+
+    var params by mutableStateOf(EditorParams())
+        private set
+    var engine by mutableStateOf<EngineClient?>(null)
+        private set
+    var rendered by mutableStateOf<Bitmap?>(null)
+    var lastResult by mutableStateOf<SpkResult?>(null)
+    var histogram by mutableStateOf<Histogram?>(null)
+        private set
+    var sourceBitmap by mutableStateOf<Bitmap?>(null)
+    var films by mutableStateOf<List<Stock>>(emptyList())
+        private set
+    var papers by mutableStateOf<List<Stock>>(emptyList())
+        private set
+    var hasPhoto by mutableStateOf(false)
+        private set
+    var isCropping by mutableStateOf(false)
+    var cropAspect by mutableStateOf("原始")
+    var isExporting by mutableStateOf(false)
+        private set
+    var exportFormat by mutableStateOf("JPEG")
+    var exportRes by mutableStateOf(2560)
+    var exportColorSpace by mutableStateOf("sRGB")
+    var jpegQuality by mutableStateOf(95)
+    var recipes by mutableStateOf(RecipeStore.load(app))
+        private set
+    var log by mutableStateOf("（未创建引擎）\n")
+        private set
+    var currentUri by mutableStateOf<Uri?>(null)
+        private set
+    var photoInfo by mutableStateOf<List<Pair<String, String>>>(emptyList())
+        private set
+    var photos by mutableStateOf<List<Uri>>(emptyList())
+        private set
+    var currentIndex by mutableStateOf(0)
+        private set
+    var thumbnails by mutableStateOf<Map<Uri, Bitmap>>(emptyMap())
+        private set
+    /** Small, already-developed previews used by the viewing stand. */
+    var developedPreviews by mutableStateOf<Map<Uri, Bitmap>>(emptyMap())
+        private set
+    var viewingPhotos by mutableStateOf<List<Pair<String, Bitmap>>>(emptyList())
+        private set
+    var isBatchExporting by mutableStateOf(false)
+        private set
+    var busy by mutableStateOf(false)
+        private set
+    var renderProgress by mutableStateOf<Float?>(null)   // 0..100，null = 无进行中渲染
+        private set
+    var renderStage by mutableStateOf("")
+        private set
+    var errorMessage by mutableStateOf<String?>(null)
+        private set
+    var dirty by mutableStateOf(false)
+        private set
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
+
+    // 场景宽容度测量结果（P0-3）
+    var latitudeReadout by mutableStateOf<String?>(null)
+        private set
+    var latitudeCanApply by mutableStateOf(false)
+        private set
+    private var latitudeDelta: JSONObject? = null
+
+    private var previewLinear: FloatArray? = null
+    private var previewW = 0
+    private var previewH = 0
+    private var previewInputColorSpace = "sRGB"
+    private var resultColorSpace = "sRGB"
+    var currentIsRaw by mutableStateOf(false)
+        private set
+    var lensCorrectionActive by mutableStateOf(true)
+        private set
+    var matchedLens by mutableStateOf<String?>(null)
+        private set
+    private var matchedLensProfile: LensProfile? = null
+    private var sourceExif: ExifInterface? = null
+    private var rawCamXyz: FloatArray? = null
+    private val undoHistory = mutableMapOf<String, MutableList<String>>()
+    private val redoHistory = mutableMapOf<String, MutableList<String>>()
+    private var suppressHistory = false
+    private var lastHistoryKey: String? = null
+    private var lastHistoryEditMs = 0L
+    private var renderJob: Job? = null
+    private var wbJob: Job? = null
+    private var gradeGeneration = 0L
+    private var renderGeneration = 0L
+    private var cameraWbJob: Job? = null
+    private var engineCreateJob: Job? = null
+    private var pendingFrame: PendingFrame? = null
+    private var cropEditStart: FloatArray? = null
+    // One engine/session owns mutable native state. Decode/open/render/export transactions must not overlap.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val engineDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    init {
+        viewModelScope.launch {
+            val (f, p) = StockCatalog.load(app)
+            films = f
+            papers = p
+        }
+        createEngine()
+    }
+
+    fun append(s: String) {
+        val line = (if (s.length > 2048) s.take(2047) + "…" else s) + "\n"
+        log = (log + line).takeLast(32 * 1024)
+    }
+
+    fun dismissError() { errorMessage = null }
+
+    // 日期后背用的当前日期（lcd 风格：'YY M D，月/日无前导零）。
+    fun currentDateText(): String {
+        val cal = java.util.Calendar.getInstance()
+        return "'" + (cal.get(java.util.Calendar.YEAR) % 100) + " " +
+               (cal.get(java.util.Calendar.MONTH) + 1) + " " +
+               cal.get(java.util.Calendar.DAY_OF_MONTH)
+    }
+
+    // 错误：弹窗提示 + 记日志。
+    private fun fail(msg: String) {
+        errorMessage = msg
+        append(msg)
+    }
+
+    // 轻提示（导出完成等），不打断操作。
+    private fun toast(msg: String) {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            Toast.makeText(app, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 当前打开照片的源图尺寸（供裁剪预设按宽高比计算居中裁剪）。
+    fun previewWidth(): Int = previewW
+    fun previewHeight(): Int = previewH
+
+    fun restoreUri(uriString: String?) {
+        if (!uriString.isNullOrEmpty()) currentUri = Uri.parse(uriString)
+    }
+
+    fun persistReadPermission(uri: Uri) {
+        try {
+            app.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            // Providers that do not offer persistable grants can still be used in this session.
+        }
+    }
+
+    // 重置全部编辑参数到默认（保留当前照片）。
+    fun resetAll() {
+        params = EditorParams()
+        cropAspect = "原始"
+        scheduleRender()
+    }
+
+    private fun historyKey(uri: Uri? = currentUri): String = uri?.toString() ?: "session"
+    private fun historySnapshot(): String = params.toJson().toString()
+
+    private fun refreshHistoryButtons() {
+        val key = historyKey()
+        canUndo = (undoHistory[key]?.size ?: 0) > 1
+        canRedo = !redoHistory[key].isNullOrEmpty()
+    }
+
+    private fun recordHistory() {
+        if (suppressHistory) return
+        val key = historyKey()
+        val snapshot = historySnapshot()
+        val history = undoHistory.getOrPut(key) { mutableListOf(snapshot) }
+        if (history.lastOrNull() == snapshot) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastHistoryKey == key && now - lastHistoryEditMs < 350 && history.size > 1) {
+            history[history.lastIndex] = snapshot
+            redoHistory[key]?.clear()
+            lastHistoryEditMs = now
+            refreshHistoryButtons()
+            return
+        }
+        history += snapshot
+        if (history.size > 64) history.removeAt(0)
+        redoHistory[key]?.clear()
+        lastHistoryKey = key
+        lastHistoryEditMs = now
+        refreshHistoryButtons()
+    }
+
+    private fun seedHistory(uri: Uri, initial: EditorParams) {
+        val key = historyKey(uri)
+        val snapshot = initial.toJson().toString()
+        if (undoHistory[key]?.lastOrNull() != snapshot) {
+            undoHistory[key] = mutableListOf(snapshot)
+            redoHistory.remove(key)
+        }
+        lastHistoryKey = null
+        refreshHistoryButtons()
+    }
+
+    fun undo() = restoreHistory(redo = false)
+    fun redo() = restoreHistory(redo = true)
+
+    private fun restoreHistory(redo: Boolean) {
+        val key = historyKey()
+        val undo = undoHistory[key] ?: return
+        val redoStack = redoHistory.getOrPut(key) { mutableListOf() }
+        if (redo && redoStack.isEmpty()) return
+        if (!redo && undo.size <= 1) return
+        val previous = params.copy()
+        val current = historySnapshot()
+        if (redo) {
+            val restored = redoStack.removeAt(redoStack.lastIndex)
+            undo += restored
+            params = EditorParams.fromJson(JSONObject(restored))
+        } else {
+            redoStack += current
+            undo.removeAt(undo.lastIndex)
+            params = EditorParams.fromJson(JSONObject(undo.last()))
+        }
+        currentUri?.let { EditStore.save(app, it, params) }
+        refreshHistoryButtons()
+        lastHistoryKey = null
+        suppressHistory = true
+        if (currentIsRaw && currentUri != null &&
+            (previous.cameraWbCustom != params.cameraWbCustom || previous.cameraWbKelvin != params.cameraWbKelvin || previous.cameraWbTint != params.cameraWbTint)) {
+            scheduleCameraWb()
+        }
+        scheduleRender()
+        suppressHistory = false
+    }
+
+    fun syncSettingsToOtherPhotos() {
+        val uri = currentUri ?: return
+        val source = params.copy()
+        var count = 0
+        photos.filter { it != uri }.forEach { targetUri ->
+            val target = EditStore.load(app, targetUri) ?: EditorParams()
+            target.copySettingsFrom(source)
+            EditStore.save(app, targetUri, target)
+            seedHistory(targetUri, target)
+            count++
+        }
+        toast("已同步到 $count 张照片（保留各自裁剪）")
+    }
+
+    // 新照片（无 sidecar）时重置几何/裁剪。
+    fun resetGeometry() {
+        params.cropX = 0f; params.cropY = 0f; params.cropW = 1f; params.cropH = 1f
+        params.quarterTurns = 0; params.flipH = false; params.flipV = false; params.rotationDeg = 0f
+        cropAspect = "原始"
+    }
+
+    /** Enter the dedicated crop workspace and remember the pre-edit frame. */
+    fun beginCrop() {
+        if (isCropping || sourceBitmap == null || params.overscanActive) return
+        cropEditStart = floatArrayOf(params.cropX, params.cropY, params.cropW, params.cropH)
+        isCropping = true
+    }
+
+    /** Discard the current crop gesture and restore the frame on entry. */
+    fun cancelCrop() {
+        val start = cropEditStart
+        if (start != null && start.size == 4) {
+            params.cropX = start[0]; params.cropY = start[1]
+            params.cropW = start[2]; params.cropH = start[3]
+            cropAspect = if (start[2] >= 1f && start[3] >= 1f) "原始" else "自定义"
+        }
+        cropEditStart = null
+        isCropping = false
+    }
+
+    fun resetCropSelection() {
+        params.cropX = 0f; params.cropY = 0f; params.cropW = 1f; params.cropH = 1f
+        cropAspect = "原始"
+    }
+
+    /** Commit the crop overlay as a bounded geometry edit and re-render it. */
+    fun finishCrop() {
+        if (!isCropping) return
+        params.cropW = params.cropW.coerceIn(0.1f, 1f)
+        params.cropH = params.cropH.coerceIn(0.1f, 1f)
+        params.cropX = params.cropX.coerceIn(0f, 1f - params.cropW)
+        params.cropY = params.cropY.coerceIn(0f, 1f - params.cropH)
+        isCropping = false
+        cropEditStart = null
+        scheduleRender()
+    }
+
+    // Layer 2 调色参数（应用侧）：白平衡 + 曝光 + 对比度/亮度 + 高光/阴影 + 黑点/白点 + 饱和度 + 色彩平衡。
+    private fun grade(p: EditorParams = params): Grade {
+        fun zone(temp: Float, tint: Float) = floatArrayOf(0.18f * temp, -0.12f * tint, -0.18f * temp)
+        return Grade(
+            1f + p.temperature * 0.18f,                      // Windows layer2Uniforms
+            1f - p.tint * 0.12f,
+            1f - p.temperature * 0.18f,
+            Math.pow(2.0, p.gradeExposure.toDouble()).toFloat(),  // exposureGain
+            p.contrast / 100f,
+            p.brightness / 100f,
+            1f + p.saturation / 100f,
+            p.highlights / 100f,
+            p.shadows / 100f,
+            p.blackPoint / 100f,
+            p.whitePoint / 100f,
+            zone(p.cbShadowTemp / 100f, p.cbShadowTint / 100f),
+            zone(p.cbMidTemp / 100f, p.cbMidTint / 100f),
+            zone(p.cbHighTemp / 100f, p.cbHighTint / 100f),
+        )
+    }
+
+    // 把渲染结果（rgba16）过一遍 Layer 2 调色，转成显示用 Bitmap。
+    private fun convertToBitmap(result: SpkResult, editParams: EditorParams = params, colorSpace: String = "sRGB"): Bitmap {
+        val argb = ColorPipeline.applyGrade(result.rgba16, result.width, result.height, grade(editParams), colorSpace)
+        return Bitmap.createBitmap(argb, result.width, result.height, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun convertPreview(result: SpkResult, editParams: EditorParams, colorSpace: String): Pair<Bitmap, Histogram> {
+        val graded = ColorPipeline.applyGradeAndHistogram(result.rgba16, result.width, result.height, grade(editParams), colorSpace)
+        return Bitmap.createBitmap(graded.argb, result.width, result.height, Bitmap.Config.ARGB_8888) to graded.histogram!!
+    }
+
+    // 更新渲染结果 + 直方图 + 显示位图（一次渲染落地后调用）。
+    private fun updateResult(result: SpkResult, colorSpace: String = "sRGB") {
+        resultColorSpace = colorSpace
+        val (bitmap, counts) = convertPreview(result, params, colorSpace)
+        rendered = bitmap
+        histogram = counts
+        lastResult = result
+        rememberDevelopedPreview(bitmap)
+    }
+
+    private fun rememberDevelopedPreview(bitmap: Bitmap) {
+        val uri = currentUri ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val edge = max(bitmap.width, bitmap.height)
+            val preview = if (edge > 960) {
+                val scale = 960f / edge
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).roundToInt().coerceAtLeast(1),
+                    (bitmap.height * scale).roundToInt().coerceAtLeast(1),
+                    true,
+                )
+            } else bitmap
+            withContext(Dispatchers.Main.immediate) {
+                developedPreviews = developedPreviews + (uri to preview)
+            }
+        }
+    }
+
+    /** Add gallery photos to the independent viewing-stand queue. */
+    fun loadViewingPhotos(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val existing = viewingPhotos.map { it.first }.toSet()
+            val loaded = withContext(Dispatchers.IO) {
+                uris.distinct().filter { it.toString() !in existing }.mapNotNull { uri ->
+                    runCatching { uri.toString() to decodeSampled(uri, 1400) }.getOrNull()
+                }
+            }
+            val currentKeys = viewingPhotos.map { it.first }.toSet()
+            viewingPhotos = viewingPhotos + loaded.filter { it.first !in currentKeys }
+        }
+    }
+
+    /** Remove only the viewing-stand entry; the original photo is untouched. */
+    fun removeViewingPhoto(key: String) {
+        viewingPhotos = viewingPhotos.filterNot { it.first == key }
+    }
+
+    // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
+    fun scheduleGrade() {
+        recordHistory()
+        dirty = true
+        currentUri?.let { EditStore.save(app, it, params) }
+        val result = lastResult ?: return
+        val editParams = params.copy()
+        val colorSpace = resultColorSpace
+        val generation = ++gradeGeneration
+        wbJob?.cancel()
+        wbJob = viewModelScope.launch {
+            delay(45)
+            val (bitmap, counts) = withContext(Dispatchers.Default) {
+                convertPreview(result, editParams, colorSpace)
+            }
+            if (generation == gradeGeneration && lastResult === result) {
+                rendered = bitmap
+                histogram = counts
+                rememberDevelopedPreview(bitmap)
+            }
+        }
+    }
+
+    // 相机白平衡（解码侧，仅 RAW）：Kelvin/tint 变化后去抖重新解码 + 重开会话。
+    fun scheduleCameraWb() {
+        if (!currentIsRaw || !hasPhoto) return
+        recordHistory()
+        currentUri?.let { EditStore.save(app, it, params) }
+        cameraWbJob?.cancel()
+        cameraWbJob = viewModelScope.launch {
+            delay(300)
+            val uri = currentUri ?: return@launch
+            withContext(engineDispatcher) {
+                try {
+                    decodeRawAndOpen(uri)
+                    append("RAW 白平衡: ${if (params.cameraWbCustom) "${params.cameraWbKelvin.toInt()}K / tint ${params.cameraWbTint.toInt()}" else "as-shot"}")
+                } catch (ex: SpkException) {
+                    fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                }
+            }
+        }
+    }
+
+    // 恢复 as-shot 白平衡。
+    fun resetCameraWb() {
+        params.cameraWbCustom = false
+        scheduleCameraWb()
+    }
+
+    // 切换镜头校正（命中镜头配置时）。重新解码 + 应用/撤销 + 重开。
+    fun toggleLensCorrection() {
+        if (matchedLensProfile == null) {
+            fail("未找到这支镜头的校正配置，已保留原始画面")
+            return
+        }
+        lensCorrectionActive = !lensCorrectionActive
+        val uri = currentUri ?: return
+        if (!currentIsRaw || !hasPhoto) return
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    decodeRawAndOpen(uri)
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                }
+            }
+        }
+    }
+
+    // 解码 RAW：应用自定义白平衡（若开启）+ 镜头校正（若命中且开启）。
+    private fun decodeRaw(uri: Uri, editParams: EditorParams = params, halfSize: Boolean = true): RawDecodeResult {
+        val cachedXyz = if (uri == currentUri) rawCamXyz else null
+        val initial = if (cachedXyz == null) RawDecoder.decode(app, uri, halfSize = halfSize) else null
+        val cameraXyz = cachedXyz ?: initial!!.camXyz
+        val userMul = if (editParams.cameraWbCustom) {
+            val mul = FloatArray(4)
+            if (CameraWhiteBalance.multipliersFor(cameraXyz, editParams.cameraWbKelvin.toDouble(), editParams.cameraWbTint.toDouble(), mul)) mul else null
+        } else null
+        val raw = if (userMul != null) RawDecoder.decode(app, uri, halfSize = halfSize, userMul = userMul)
+            else initial ?: RawDecoder.decode(app, uri, halfSize = halfSize)
+        if (uri == currentUri) rawCamXyz = raw.camXyz
+        LensProfileStore.load(app)
+        val lensProfile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
+        if (uri == currentUri) {
+            matchedLensProfile = lensProfile
+            matchedLens = lensProfile?.model
+        }
+        if (lensCorrectionActive && lensProfile != null) {
+            RawDecoder.applyLensCorrection(raw.linearProPhoto, raw.width, raw.height, lensProfile)
+        }
+        return raw
+    }
+
+    // 解码 RAW → 显示源图 → 开会话。
+    private suspend fun decodeRawAndOpen(uri: Uri) {
+        val raw = decodeRaw(uri)
+        if (currentUri != uri) return
+        val argb = ColorPipeline.proPhotoLinearToSrgbArgb(raw.linearProPhoto, raw.width, raw.height)
+        withContext(Dispatchers.Main.immediate) {
+            sourceBitmap = Bitmap.createBitmap(argb, raw.width, raw.height, Bitmap.Config.ARGB_8888)
+            append("RAW 解码: ${raw.width}×${raw.height} · ${raw.make} ${raw.model}" +
+                (matchedLens?.let { " · 镜头校正: $it" } ?: ""))
+            openFrame(raw.linearProPhoto, raw.width, raw.height, "ProPhoto RGB")
+        }
+    }
+
+    // 在当前会话上 set_params + reprint，带 120ms 去抖（最新状态生效）。
+    fun scheduleRender() {
+        recordHistory()
+        val e = engine ?: return
+        if (!hasPhoto) return
+        dirty = true
+        val generation = ++renderGeneration
+        renderJob?.cancel()
+        e.cancel()
+        renderJob = viewModelScope.launch {
+            delay(120)
+            withContext(engineDispatcher) {
+                if (generation != renderGeneration) return@withContext
+                try {
+                    e.setParams(params.deltaJson(previewW, previewH))
+                    currentUri?.let { EditStore.save(app, it, params) }
+                    val r = e.render("live")
+                    if (generation != renderGeneration) return@withContext
+                    updateResult(r)
+                    append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
+                } catch (ex: SpkException) {
+                    if (ex.message?.contains("cancel", ignoreCase = true) != true) fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                }
+            }
+        }
+    }
+
+    // 相纸切换：先用打印 LUT 给近似预览（~10ms），再排程真正的 reprint
+    // （LUT 无法表示曝光/滤色/glare，只作快速反馈）。
+    fun selectFilm(stockId: String) {
+        params.filmId = stockId
+        if (!StockCatalog.canPrint(stockId, params.paperId)) {
+            params.paperId = films.firstOrNull { it.id == stockId }?.targetPrint
+                ?: papers.first { StockCatalog.canPrint(stockId, it.id) }.id
+        }
+        scheduleRender()
+    }
+
+    fun selectPaper(stockId: String) {
+        if (!StockCatalog.canPrint(params.filmId, stockId)) return
+        params.paperId = stockId
+        val e = engine ?: return
+        if (!hasPhoto) return
+        dirty = true
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    val r = e.previewStockLut(stockId, "live")
+                    updateResult(r)
+                } catch (ex: SpkException) {
+                    // 胶片不配对时 LUT 预览可能被拒；忽略，等 reprint。
+                }
+            }
+        }
+        scheduleRender()
+    }
+
+    // 一键配光：solve("both") 求曝光 + 放大机中性滤色包。
+    // 引擎默认 auto_exposure=true + neutral_print_filters_from_database=true，
+    // 曝光与中性滤色包本就自动解析；这里只重新测光并把用户手动 shift 归零后重印
+    // （与桌面版 solveNow 一致：不把求解 EV 写回 exposure_compensation_ev，避免双重曝光）。
+    fun solve() {
+        val e = engine ?: return
+        if (!hasPhoto || busy) return
+        busy = true
+        viewModelScope.launch {
+            val reply: String = try {
+                withContext(engineDispatcher) { e.solve("both") }
+            } catch (ex: SpkException) {
+                fail("SpkException: ${ex.message}")
+                busy = false
+                return@launch
+            } catch (ex: Exception) {
+                fail("${ex::class.simpleName}: ${ex.message}")
+                busy = false
+                return@launch
+            }
+            // 在主线程写 Compose 状态：手动 shift 归零；曝光/中性滤色由引擎自动解析。
+            val sp = JSONObject(reply).optJSONObject("solved_params")
+            val ev = sp?.optDouble("exposure_compensation_ev", 0.0) ?: 0.0
+            val m = sp?.optDouble("m_filter_neutral", 0.0) ?: 0.0
+            val y = sp?.optDouble("y_filter_neutral", 0.0) ?: 0.0
+            params.mFilterShift = 0f
+            params.yFilterShift = 0f
+            append("配光: 测光 EV %+.2f · 中性滤色 M %.0f / Y %.0f".format(ev, m, y))
+            busy = false
+            scheduleRender()
+        }
+    }
+
+    // 测量场景宽容度：spk_scene_latitude 返回 medium/scene/suggested/fit。
+    // 展示建议回拉量，并在 fit 有效时保存 params_delta 供「应用」提交。
+    fun measureLatitude() {
+        val e = engine ?: return
+        if (!hasPhoto || busy) return
+        busy = true
+        viewModelScope.launch {
+            val reply: String = try {
+                withContext(engineDispatcher) { e.sceneLatitude(null) }
+            } catch (ex: SpkException) {
+                fail("SpkException: ${ex.message}")
+                busy = false
+                return@launch
+            } catch (ex: Exception) {
+                fail("${ex::class.simpleName}: ${ex.message}")
+                busy = false
+                return@launch
+            }
+            val root = JSONObject(reply)
+            val suggested = root.optJSONObject("suggested")
+            val scene = root.optJSONObject("scene")
+            val fit = root.optJSONObject("fit")
+            val hi = suggested?.optDouble("highlight_pull_back", 0.0) ?: 0.0
+            val sh = suggested?.optDouble("shadow_pull_back", 0.0) ?: 0.0
+            val p1 = scene?.optDouble("p1", 0.0) ?: 0.0
+            val p99 = scene?.optDouble("p99", 0.0) ?: 0.0
+            val valid = fit?.optBoolean("valid", false) ?: false
+            val delta = fit?.optJSONObject("params_delta")
+            latitudeDelta = if (valid) delta else null
+            latitudeCanApply = valid && delta != null
+            latitudeReadout = "高光回拉 %+.2f stop · 阴影回拉 %+.2f stop · 场景 p1 %.1f / p99 %.1f".format(hi, sh, p1, p99)
+            if (!valid) {
+                val issue = fit?.optJSONArray("issues")?.optJSONObject(0)?.optString("message")
+                if (!issue.isNullOrEmpty()) latitudeReadout = "$latitudeReadout\n拟合失败: $issue"
+            }
+            append(latitudeReadout!!)
+            busy = false
+        }
+    }
+
+    // 应用测量得到的场景置位（fit.params_delta → EditorParams → set_params + 重显影）。
+    fun applyLatitude() {
+        val delta = latitudeDelta ?: return
+        if (!hasPhoto) return
+        params.sceneLatitudeActive = delta.optBoolean("scene_latitude_active", false)
+        params.sceneLatitudeNorm = delta.optString("scene_latitude_norm", "power")
+        params.sceneLatitudeHighlightKnee = delta.optDouble("scene_latitude_highlight_knee", 2.0).toFloat()
+        params.sceneLatitudeHighlightRoom = delta.optDouble("scene_latitude_highlight_room", 0.0).toFloat()
+        params.sceneLatitudeShadowKnee = delta.optDouble("scene_latitude_shadow_knee", -2.0).toFloat()
+        params.sceneLatitudeShadowRoom = delta.optDouble("scene_latitude_shadow_room", 0.0).toFloat()
+        params.sceneLatitudeRolloff = delta.optDouble("scene_latitude_rolloff", 2.0).toFloat()
+        params.sceneLatitudeMaxLift = delta.optDouble("scene_latitude_max_lift", 4.0).toFloat()
+        latitudeDelta = null
+        latitudeCanApply = false
+        scheduleRender()
+    }
+
+    fun openFrame(linear: FloatArray, w: Int, h: Int, inputColorSpace: String = "sRGB") {
+        previewLinear = linear
+        previewW = w
+        previewH = h
+        previewInputColorSpace = inputColorSpace
+        isCropping = false
+        dirty = false
+        val frame = PendingFrame(linear, w, h, inputColorSpace)
+        val currentEngine = engine
+        if (currentEngine == null) {
+            pendingFrame = frame
+            if (engineCreateJob?.isActive != true) createEngine()
+            return
+        }
+        renderFrame(currentEngine, frame)
+    }
+
+    private fun renderFrame(targetEngine: EngineClient, frame: PendingFrame) {
+        busy = true
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    targetEngine.open(
+                        frame.pixels,
+                        frame.width,
+                        frame.height,
+                        3,
+                        params.openJson(frame.width, frame.height, inputColorSpace = frame.inputColorSpace),
+                    )
+                    val r = targetEngine.render("live")
+                    updateResult(r)
+                    hasPhoto = true
+                    append("渲染: ${r.width}×${r.height}  ${r.elapsedMs}ms")
+                } catch (ex: SpkException) {
+                    fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    busy = false
+                }
+            }
+        }
+    }
+
+    // 取消当前进行中的渲染（跨线程安全，渲染在下个节点边界回退并返回 cancelled）。
+    fun cancelRender() {
+        if (isExporting || isBatchExporting) {
+            if (isExporting && (renderProgress ?: 0f) >= 96f) return
+            exportCancelRequested = true
+            renderStage = "正在取消…"
+        }
+        engine?.cancel()
+    }
+
+    // 应用一条导出配方。
+    fun applyRecipe(recipe: ExportRecipe) {
+        exportFormat = recipe.format
+        exportRes = recipe.res
+        exportColorSpace = recipe.colorSpace
+        jpegQuality = recipe.jpegQuality.coerceIn(50, 100)
+    }
+
+    // 把当前导出设置保存为命名配方（同名覆盖）。
+    fun saveRecipe(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val recipe = ExportRecipe(trimmed, exportFormat, exportRes, exportColorSpace, jpegQuality)
+        recipes = recipes.filter { it.name != trimmed } + recipe
+        RecipeStore.save(app, recipes)
+        toast("已保存配方: $trimmed")
+    }
+
+    // 以导出分辨率重新解码原图 → 全分辨率渲染 → 存盘 → 恢复预览会话。
+    // 渲染期间并发轮询进度，支持取消。
+    fun export() {
+        val e = engine ?: return
+        if (!hasPhoto || isExporting || isBatchExporting || busy) return
+        isExporting = true
+        exportCancelRequested = false
+        val uri = currentUri
+        val exportParams = params.copy()
+        val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
+        val outputSize = exportRes
+        renderProgress = 0f
+        renderStage = "准备导出"
+        viewModelScope.launch {
+            var poller: Job? = null
+            try {
+                renderStage = "解码原图"
+                withContext(engineDispatcher) {
+                    if (uri != null) {
+                        if (currentIsRaw) {
+                            val full = outputSize == 0
+                            val raw = decodeRaw(uri, exportParams, halfSize = !full && outputSize <= 2048)
+                            val resized = if (full) raw else resizeRaw(raw, outputSize)
+                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, exportParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
+                        } else {
+                            val bmp = decodeBitmapForExport(uri, outputSize)
+                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
+                            e.open(linear, bmp.width, bmp.height, 3, exportParams.openJson(bmp.width, bmp.height, outputCs))
+                        }
+                    }
+                }
+                checkExportCancellation()
+                renderProgress = 8f
+                renderStage = "胶片冲印与相纸扫描"
+                val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
+                poller = launch(Dispatchers.IO) {
+                    while (isActive) {
+                        val progress = runCatching { e.progressSnapshot() }.getOrNull()
+                        if (exportCancelRequested) e.cancel()
+                        if (progress != null && progress.progressId != previousProgressId) withContext(Dispatchers.Main.immediate) {
+                            renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
+                            if (progress.done && !exportCancelRequested) renderStage = "准备保存"
+                        }
+                        delay(120)
+                    }
+                }
+                val result = withContext(engineDispatcher) { e.render("full") }
+                poller.cancelAndJoin()
+                poller = null
+                checkExportCancellation()
+                renderProgress = 96f
+                renderStage = "编码并保存文件"
+                val path = withContext(Dispatchers.IO) { saveResult(result, System.currentTimeMillis().toString(), exportParams) }
+                append("导出成功: ${result.width}×${result.height} → $path")
+                toast("已导出到相册")
+                renderProgress = 100f
+                renderStage = "导出完成"
+                delay(250)
+            } catch (_: ExportCancelled) {
+                append("导出已取消")
+            } catch (ex: SpkException) {
+                if (ex.message?.contains("cancel", ignoreCase = true) == true) append("导出已取消")
+                else fail("SpkException: ${ex.message}")
+            } catch (ex: Exception) {
+                fail("${ex::class.simpleName}: ${ex.message}")
+            } finally {
+                poller?.cancelAndJoin()
+                val pl = previewLinear
+                if (uri != null && pl != null) {
+                    try {
+                        withContext(engineDispatcher) {
+                            e.open(pl, previewW, previewH, 3, params.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
+                            val pr = e.render("live")
+                            updateResult(pr)
+                        }
+                    } catch (ex: Exception) {
+                        append("恢复预览失败: ${ex.message}")
+                    }
+                }
+                renderProgress = null
+                renderStage = ""
+                exportCancelRequested = false
+                isExporting = false
+            }
+        }
+    }
+
+    fun createEngine() {
+        if (engine != null) return
+        if (engineCreateJob?.isActive == true) return
+        busy = true
+        engineCreateJob = viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    val created = EngineClient.create(app)
+                    engine = created
+                    append("引擎创建成功 · ${EngineClient.buildInfo()}")
+                    val waitingFrame = pendingFrame
+                    pendingFrame = null
+                    if (waitingFrame != null) renderFrame(created, waitingFrame) else busy = false
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                    busy = false
+                }
+            }
+        }
+    }
+
+    fun openPhoto(uri: Uri) {
+        currentUri = uri
+        photoInfo = emptyList()
+        rawCamXyz = null
+        sourceBitmap = null
+        rendered = null
+        lastResult = null
+        histogram = null
+        hasPhoto = false
+        busy = true
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                if (currentUri != uri) return@withContext
+                try {
+                    val saved = EditStore.load(app, uri)
+                    val name = queryDisplayName(uri)
+                    val exif = readExif(uri)
+                    val imageBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    runCatching { app.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, imageBounds) } }
+                    withContext(Dispatchers.Main.immediate) {
+                        if (currentUri != uri) return@withContext
+                        photoInfo = buildList {
+                            add("文件名" to (name ?: "未知"))
+                            val width = (exif?.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0) ?: 0).takeIf { it > 0 } ?: imageBounds.outWidth
+                            val height = (exif?.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0) ?: 0).takeIf { it > 0 } ?: imageBounds.outHeight
+                            if (width > 0 && height > 0) add("原始尺寸" to "$width × $height")
+                            listOf("相机" to ExifInterface.TAG_MODEL, "镜头" to ExifInterface.TAG_LENS_MODEL,
+                                "拍摄时间" to ExifInterface.TAG_DATETIME_ORIGINAL, "光圈" to ExifInterface.TAG_F_NUMBER,
+                                "快门时间（秒）" to ExifInterface.TAG_EXPOSURE_TIME, "ISO" to ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY,
+                                "焦距（毫米）" to ExifInterface.TAG_FOCAL_LENGTH).forEach { (label, tag) ->
+                                exif?.getAttribute(tag)?.takeIf { it.isNotBlank() }?.let { add(label to it) }
+                            }
+                        }
+                        if (saved != null) {
+                            params = saved
+                            cropAspect = if (saved.cropW >= 1f && saved.cropH >= 1f) "原始" else "自定义"
+                            append("已恢复上次编辑")
+                        } else {
+                            params = EditorParams()
+                            resetGeometry()
+                        }
+                        seedHistory(uri, params.copy())
+                        sourceExif = exif
+                    }
+                    if (RawDecoder.isRaw(name)) {
+                        withContext(Dispatchers.Main.immediate) { currentIsRaw = true }
+                        decodeRawAndOpen(uri)
+                    } else {
+                        withContext(Dispatchers.Main.immediate) { currentIsRaw = false }
+                        val bmp = decodeSampled(uri)
+                        if (currentUri != uri) return@withContext
+                        val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
+                        if (currentUri != uri) return@withContext
+                        withContext(Dispatchers.Main.immediate) {
+                            if (currentUri != uri) return@withContext
+                            sourceBitmap = bmp
+                            append("解码: ${bmp.width}×${bmp.height}")
+                            openFrame(linear, bmp.width, bmp.height)
+                        }
+                    }
+                } catch (ex: Exception) {
+                    withContext(Dispatchers.Main.immediate) {
+                        fail("${ex::class.simpleName}: ${ex.message}")
+                        busy = false
+                    }
+                }
+            }
+        }
+    }
+
+    // 打开多张照片（图库），第一张为当前。
+    fun openPhotos(uris: List<Uri>) {
+        if (uris.isEmpty() || isBatchExporting || isExporting) return
+        saveCurrentSidecar()
+        photos = uris.distinct()
+        currentIndex = 0
+        openPhoto(photos[0])
+    }
+
+    /** Add new album picks to the stage without interrupting the current edit. */
+    fun addPhotos(uris: List<Uri>) {
+        if (uris.isEmpty() || isBatchExporting || isExporting) return
+        saveCurrentSidecar()
+        val merged = (photos + uris).distinct()
+        val selected = currentUri
+        photos = merged
+        currentIndex = selected?.let { merged.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+        if (selected == null) openPhoto(merged.first())
+    }
+
+    // 切换到图库中的第 [index] 张。
+    fun selectPhoto(index: Int) {
+        if (index !in photos.indices || isBatchExporting || isExporting) return
+        saveCurrentSidecar()
+        currentIndex = index
+        openPhoto(photos[index])
+    }
+
+    fun previousPhoto() {
+        if (currentIndex > 0) selectPhoto(currentIndex - 1)
+    }
+
+    fun nextPhoto() {
+        if (currentIndex < photos.lastIndex) selectPhoto(currentIndex + 1)
+    }
+
+    fun removeCurrentPhoto() {
+        if (busy || isExporting || isBatchExporting || currentIndex !in photos.indices) return
+        saveCurrentSidecar()
+        renderGeneration++
+        gradeGeneration++
+        renderJob?.cancel()
+        wbJob?.cancel()
+        cameraWbJob?.cancel()
+        engine?.cancel()
+        val removed = photos[currentIndex]
+        val remaining = photos.filterIndexed { index, _ -> index != currentIndex }
+        thumbnails = thumbnails - removed
+        developedPreviews = developedPreviews - removed
+        photos = remaining
+        if (remaining.isNotEmpty()) {
+            currentIndex = currentIndex.coerceAtMost(remaining.lastIndex)
+            openPhoto(remaining[currentIndex])
+        } else {
+            currentUri = null
+            currentIndex = 0
+            photoInfo = emptyList()
+            sourceBitmap = null
+            rendered = null
+            lastResult = null
+            histogram = null
+            previewLinear = null
+            sourceExif = null
+            hasPhoto = false
+            dirty = false
+            isCropping = false
+            viewModelScope.launch { withContext(engineDispatcher) { engine?.closeSession() } }
+        }
+    }
+
+    // 切换前把当前照片的编辑落盘（避免 120ms 去抖未到就切换而丢编辑）。
+    private fun saveCurrentSidecar() {
+        currentUri?.let { EditStore.save(app, it, params) }
+    }
+
+    // 懒加载单个缩略图（滚到才解码）。
+    fun loadThumbnail(uri: Uri) {
+        if (thumbnails.containsKey(uri)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val bmp = decodeSampled(uri, 200)
+                thumbnails = thumbnails + (uri to bmp)
+            } catch (e: Exception) {
+                // 忽略单个缩略图失败
+            }
+        }
+    }
+
+    // 用当前编辑参数批量导出图库所有照片。
+    fun batchExport() {
+        val e = engine ?: return
+        if (photos.isEmpty() || isBatchExporting || isExporting) return
+        val batchPhotos = photos.toList()
+        val batchFormat = exportFormat
+        val batchResolution = exportRes
+        val batchColorSpace = exportColorSpace
+        isBatchExporting = true
+        exportCancelRequested = false
+        renderProgress = 0f
+        renderStage = "准备批量导出"
+        saveCurrentSidecar()
+        val activeUri = currentUri
+        val activeParams = params.copy()
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                val batchTs = System.currentTimeMillis()
+                var done = 0
+                try {
+                    val outputCs = if (batchFormat == "TIFF") batchColorSpace else "sRGB"
+                    for ((i, uri) in batchPhotos.withIndex()) {
+                        checkExportCancellation()
+                        withContext(Dispatchers.Main.immediate) {
+                            renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
+                        }
+                        val photoParams = if (uri == activeUri) activeParams.copy() else EditStore.load(app, uri) ?: EditorParams()
+                        sourceExif = readExif(uri)
+                        if (RawDecoder.isRaw(queryDisplayName(uri))) {
+                            val full = batchResolution == 0
+                            val raw = decodeRaw(uri, photoParams, halfSize = !full && batchResolution <= 2048)
+                            val resized = if (full) raw else resizeRaw(raw, batchResolution)
+                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, photoParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
+                        } else {
+                            val bmp = decodeBitmapForExport(uri, batchResolution)
+                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
+                            e.open(linear, bmp.width, bmp.height, 3, photoParams.openJson(bmp.width, bmp.height, outputCs))
+                        }
+                        checkExportCancellation()
+                        val r = e.render("full")
+                        checkExportCancellation()
+                        val path = saveResult(r, "$batchTs-$i", photoParams)
+                        done++
+                        withContext(Dispatchers.Main.immediate) {
+                            renderProgress = done.toFloat() / batchPhotos.size * 100f
+                            append("批量导出 $done/${batchPhotos.size}: ${r.width}×${r.height} → $path")
+                        }
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        toast("批量导出完成 ($done 张)")
+                    }
+                } catch (_: ExportCancelled) {
+                    withContext(Dispatchers.Main.immediate) { append("批量导出已取消") }
+                } catch (ex: SpkException) {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (ex.message?.contains("cancel", ignoreCase = true) == true) append("批量导出已取消")
+                        else fail("SpkException: ${ex.message}")
+                    }
+                } catch (ex: Exception) {
+                    withContext(Dispatchers.Main.immediate) { fail("${ex::class.simpleName}: ${ex.message}") }
+                } finally {
+                    // 恢复当前照片预览。
+                    val pl = previewLinear
+                    if (pl != null) {
+                        try {
+                            withContext(Dispatchers.Main.immediate) { params = activeParams }
+                            sourceExif = activeUri?.let(::readExif)
+                            e.open(pl, previewW, previewH, 3, activeParams.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
+                            val pr = e.render("live")
+                            withContext(Dispatchers.Main.immediate) { updateResult(pr) }
+                        } catch (ex: Exception) {
+                            withContext(Dispatchers.Main.immediate) { append("恢复预览失败: ${ex.message}") }
+                        }
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        isBatchExporting = false
+                        renderProgress = null
+                        renderStage = ""
+                        exportCancelRequested = false
+                    }
+                }
+            }
+        }
+    }
+
+    // 导出数字中间片（DI）：Cineon log 编码，设备 RGB 密度，不套 Layer 2、不嵌 ICC。
+    fun exportDi() {
+        val e = engine ?: return
+        if (!hasPhoto || isExporting) return
+        isExporting = true
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    val r = e.renderDigitalIntermediate()
+                    val path = saveDiTiff(r, System.currentTimeMillis().toString())
+                    append("DI 导出: ${r.width}×${r.height} → $path")
+                    toast("DI 已导出")
+                } catch (ex: SpkException) {
+                    fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    isExporting = false
+                }
+            }
+        }
+    }
+
+    // 软打样：以导出分辨率重新解码 + full 渲染并显示结果（不保存），供检查导出质量。
+    fun softProof() {
+        val e = engine ?: return
+        if (!hasPhoto || isExporting) return
+        isExporting = true
+        val uri = currentUri
+        val proofParams = params.copy()
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
+                    if (uri != null) {
+                        if (currentIsRaw) {
+                            val full = exportRes == 0
+                            val raw = decodeRaw(uri, proofParams, halfSize = !full && exportRes <= 2048)
+                            val resized = if (full) raw else resizeRaw(raw, exportRes)
+                            e.open(resized.linearProPhoto, resized.width, resized.height, 3, proofParams.openJson(resized.width, resized.height, outputCs, "ProPhoto RGB"))
+                        } else {
+                            val bmp = decodeBitmapForExport(uri, exportRes)
+                            val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
+                            e.open(linear, bmp.width, bmp.height, 3, proofParams.openJson(bmp.width, bmp.height, outputCs))
+                        }
+                    }
+                    val r = e.render("full")
+                    updateResult(r, outputCs)
+                    e.setParams(JSONObject().put("output_color_space", "sRGB").toString())
+                    append("软打样: ${r.width}×${r.height}  ${r.elapsedMs}ms")
+                } catch (ex: SpkException) {
+                    fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    isExporting = false
+                }
+            }
+        }
+    }
+
+    // 高清预览：preview tier（3400px）渲染，检查颗粒/光晕，比 full 更快、比 live 更清晰。
+    fun previewTier() {
+        val e = engine ?: return
+        if (!hasPhoto || isExporting) return
+        isExporting = true
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                try {
+                    // The interactive input is capped at 2048px; reopen the source before asking
+                    // for 3400px, otherwise the "HD" action can never exceed the old preview.
+                    currentUri?.let { uri ->
+                        if (currentIsRaw) {
+                            val raw = resizeRaw(decodeRaw(uri, halfSize = false), 3400)
+                            e.open(raw.linearProPhoto, raw.width, raw.height, 3,
+                                params.openJson(raw.width, raw.height, inputColorSpace = "ProPhoto RGB"))
+                        } else {
+                            val bitmap = decodeBitmapForExport(uri, 3400)
+                            e.open(ColorPipeline.bitmapToLinearSrgb(bitmap), bitmap.width, bitmap.height, 3,
+                                params.openJson(bitmap.width, bitmap.height))
+                        }
+                    }
+                    val r = e.render("preview")
+                    updateResult(r)
+                    append("高清预览: ${r.width}×${r.height}  ${r.elapsedMs}ms")
+                } catch (ex: SpkException) {
+                    fail("SpkException: ${ex.message}")
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    isExporting = false
+                }
+            }
+        }
+    }
+
+    fun openTestImage() {
+        currentUri = null
+        rawCamXyz = null
+        sourceBitmap = null
+        sourceExif = null
+        photos = emptyList()
+        thumbnails = emptyMap()
+        currentIndex = 0
+        resetGeometry()
+        val w = 512; val h = 512
+        val px = FloatArray(w * h * 3)
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = (y * w + x) * 3
+            px[i + 0] = x / (w - 1f)
+            px[i + 1] = y / (h - 1f)
+            px[i + 2] = 0.5f
+        }
+        openFrame(px, w, h)
+    }
+
+    fun release() {
+        viewModelScope.launch {
+            withContext(engineDispatcher) {
+                engine?.close()
+                engine = null
+                rendered = null
+                sourceBitmap = null
+                hasPhoto = false
+                isCropping = false
+                append("已释放")
+            }
+        }
+    }
+
+    private fun saveBitmap(bitmap: Bitmap, suffix: String): String {
+        val ext = if (exportFormat == "PNG") "png" else "jpg"
+        val mime = if (exportFormat == "PNG") "image/png" else "image/jpeg"
+        val name = "SpektraLab_$suffix.$ext"
+        val fmt = if (exportFormat == "PNG") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+
+        // 先压缩到临时文件（JPEG 需先落盘才能附加 EXIF）。
+        val tmp = File(app.cacheDir, "export_${System.nanoTime()}.$ext")
+        try {
+            FileOutputStream(tmp).use { fos -> bitmap.compress(fmt, jpegQuality.coerceIn(1, 100), fos) }
+            if (fmt == Bitmap.CompressFormat.JPEG) attachSourceExif(tmp)
+
+            // API 29+：写 MediaStore，照片出现在系统相册（无需权限）。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Images.Media.MIME_TYPE, mime)
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val uri = app.contentResolver.insert(collection, values)
+                if (uri != null) {
+                    app.contentResolver.openOutputStream(uri)?.use { out ->
+                        tmp.inputStream().use { it.copyTo(out) }
+                    }
+                    values.clear()
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    app.contentResolver.update(uri, values, null, null)
+                    return "相册: $uri"
+                }
+            }
+
+            // 回退：app 私有目录（API 26-28，或 MediaStore 插入失败）。
+            val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
+            val file = File(dir, name)
+            tmp.copyTo(file, overwrite = true)
+            return file.absolutePath
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    // 按当前格式导出渲染结果（TIFF 走 16-bit，其余走 8-bit JPEG/PNG）。
+    private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
+        return if (exportFormat == "TIFF") {
+            saveTiff(result, suffix, editParams)
+        } else {
+            saveBitmap(convertToBitmap(result, editParams), suffix)
+        }
+    }
+
+    private fun saveTiff(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
+        val g = grade(editParams)
+        val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
+        val name = "SpektraLab_$suffix.tiff"
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/tiff")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = app.contentResolver.insert(collection, values)
+            if (uri != null) {
+                app.contentResolver.openOutputStream(uri)?.use { out ->
+                    TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out)
+                }
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                app.contentResolver.update(uri, values, null, null)
+                return uri.toString()
+            }
+        }
+
+        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
+        val file = File(dir, name)
+        FileOutputStream(file).use { out -> TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out) }
+        return file.absolutePath
+    }
+
+    // DI TIFF：无调色、无 ICC（设备 RGB 密度）。
+    private fun saveDiTiff(result: SpkResult, suffix: String): String {
+        val name = "SpektraLab_DI_$suffix.tiff"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/tiff")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = app.contentResolver.insert(collection, values)
+            if (uri != null) {
+                app.contentResolver.openOutputStream(uri)?.use { out ->
+                    TiffWriter.writeRgba16(result.rgba16, result.width, result.height, null, null, out)
+                }
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                app.contentResolver.update(uri, values, null, null)
+                return uri.toString()
+            }
+        }
+        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
+        val file = File(dir, name)
+        FileOutputStream(file).use { out -> TiffWriter.writeRgba16(result.rgba16, result.width, result.height, null, null, out) }
+        return file.absolutePath
+    }
+
+    private fun readSrgbIcc(): ByteArray? = try {
+        app.assets.open("engine/resources/io/sRGB.icc").use { it.readBytes() }
+    } catch (e: Exception) {
+        null
+    }
+
+    // 取 MediaStore 的 DISPLAY_NAME（文件名），用于判断是否 RAW。
+    private fun queryDisplayName(uri: Uri): String? = try {
+        app.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst() && c.columnCount > 0) c.getString(0) else null } ?: uri.lastPathSegment
+    } catch (e: Exception) {
+        uri.lastPathSegment
+    }
+
+    // 读取源 EXIF（仅 JPEG/TIFF/DNG；RAW 抛异常时返回 null）。
+    private fun readExif(uri: Uri): ExifInterface? = try {
+        app.contentResolver.openInputStream(uri)?.use { ExifInterface(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    // JPEG 导出时透传的源 EXIF 标签（不含 orientation——解码时已应用，避免二次旋转）。
+    private val exifTagsToCopy = listOf(
+        ExifInterface.TAG_MAKE,
+        ExifInterface.TAG_MODEL,
+        ExifInterface.TAG_DATETIME_ORIGINAL,
+        ExifInterface.TAG_DATETIME,
+        ExifInterface.TAG_EXPOSURE_TIME,
+        ExifInterface.TAG_F_NUMBER,
+        ExifInterface.TAG_ISO_SPEED_RATINGS,
+        ExifInterface.TAG_FOCAL_LENGTH,
+    )
+
+    private fun attachSourceExif(file: File) {
+        val src = sourceExif ?: return
+        try {
+            val dst = ExifInterface(file)
+            for (tag in exifTagsToCopy) {
+                src.getAttribute(tag)?.let { dst.setAttribute(tag, it) }
+            }
+            dst.saveAttributes()
+        } catch (e: Exception) {
+            // EXIF 附加失败不阻塞导出
+        }
+    }
+
+    private fun decodeSampled(uri: Uri, maxLongEdge: Int = 2048): Bitmap {
+        if (Build.VERSION.SDK_INT >= 28) {
+            return ImageDecoder.decodeBitmap(ImageDecoder.createSource(app.contentResolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                val edge = max(info.size.width, info.size.height)
+                if (edge > maxLongEdge) {
+                    val scale = maxLongEdge.toDouble() / edge
+                    decoder.setTargetSize((info.size.width * scale).roundToInt().coerceAtLeast(1),
+                        (info.size.height * scale).roundToInt().coerceAtLeast(1))
+                }
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        app.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxLongEdge) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        opts.inPreferredConfig = Bitmap.Config.ARGB_8888
+        opts.inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+        val bitmap = app.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: throw IllegalArgumentException("无法解码此图片，请选择有效的 JPEG、PNG、WebP 或支持的 RAW 文件")
+        val orientation = readExif(uri)?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        val matrix = Matrix().apply {
+            when (orientation) {
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> setScale(-1f, 1f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> setRotate(180f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> setScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> { setRotate(90f); postScale(-1f, 1f) }
+                ExifInterface.ORIENTATION_ROTATE_90 -> setRotate(90f)
+                ExifInterface.ORIENTATION_TRANSVERSE -> { setRotate(270f); postScale(-1f, 1f) }
+                ExifInterface.ORIENTATION_ROTATE_270 -> setRotate(270f)
+            }
+        }
+        return if (matrix.isIdentity) bitmap else Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    private fun decodeBitmapForExport(uri: Uri, maxLongEdge: Int): Bitmap {
+        val bitmap = decodeSampled(uri, if (maxLongEdge == 0) Int.MAX_VALUE else maxLongEdge)
+        val edge = max(bitmap.width, bitmap.height)
+        if (maxLongEdge == 0 || edge <= maxLongEdge) return bitmap
+        val scale = maxLongEdge.toFloat() / edge
+        return Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt().coerceAtLeast(1),
+            (bitmap.height * scale).roundToInt().coerceAtLeast(1), true)
+    }
+
+    private fun resizeRaw(raw: RawDecodeResult, maxLongEdge: Int): RawDecodeResult {
+        val edge = max(raw.width, raw.height)
+        if (maxLongEdge == 0 || edge <= maxLongEdge) return raw
+        val scale = maxLongEdge.toDouble() / edge
+        val width = (raw.width * scale).roundToInt().coerceAtLeast(1)
+        val height = (raw.height * scale).roundToInt().coerceAtLeast(1)
+        val output = FloatArray(width * height * 3)
+        for (y in 0 until height) {
+            val sy = ((y + 0.5) * raw.height / height - 0.5).coerceIn(0.0, (raw.height - 1).toDouble())
+            val y0 = sy.toInt(); val y1 = (y0 + 1).coerceAtMost(raw.height - 1); val fy = sy - y0
+            for (x in 0 until width) {
+                val sx = ((x + 0.5) * raw.width / width - 0.5).coerceIn(0.0, (raw.width - 1).toDouble())
+                val x0 = sx.toInt(); val x1 = (x0 + 1).coerceAtMost(raw.width - 1); val fx = sx - x0
+                val dst = (y * width + x) * 3
+                for (c in 0..2) {
+                    val a = raw.linearProPhoto[(y0 * raw.width + x0) * 3 + c]
+                    val b = raw.linearProPhoto[(y0 * raw.width + x1) * 3 + c]
+                    val d = raw.linearProPhoto[(y1 * raw.width + x0) * 3 + c]
+                    val e = raw.linearProPhoto[(y1 * raw.width + x1) * 3 + c]
+                    output[dst + c] = ((a * (1.0 - fx) + b * fx) * (1.0 - fy) + (d * (1.0 - fx) + e * fx) * fy).toFloat()
+                }
+            }
+        }
+        return RawDecodeResult(width, height, output, raw.make, raw.model, raw.lens, raw.focal, raw.camMul, raw.camXyz)
+    }
+
+    override fun onCleared() {
+        renderJob?.cancel()
+        wbJob?.cancel()
+        engine?.close()
+        engine = null
+        super.onCleared()
+    }
+}

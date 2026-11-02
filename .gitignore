@@ -1,0 +1,32 @@
+*.iml
+.idea
+.codegraph
+.kotlin
+.gradle
+/local.properties
+/keystore.properties
+/app/release-signing/
+/.idea
+.DS_Store
+/build
+/captures
+/qa
+.externalNativeBuild
+.cxx
+local.properties
+
+
+
+# Gradle wrapper jar（二进制，由 `gradle wrapper` 或 Android Studio 生成）
+gradle/wrapper/gradle-wrapper.jar
+gradlew
+gradlew.bat
+
+BUILDING.md
+UI布局规范.md
+功能分析-Android移植.md
+
+# 引擎资源/SPIR-V 由 tools/sync_resources.py / compile_shaders.py 生成，不提交
+app/src/main/assets/engine/resources/
+!app/src/main/assets/engine/resources/README.md
+/app/build
