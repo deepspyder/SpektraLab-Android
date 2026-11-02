@@ -261,10 +261,15 @@ private enum class EditorTab(val label: String, val icon: ImageVector) {
 private fun EditorScreen(vm: EditorViewModel) {
     var addToStage by remember { mutableStateOf(false) }
     var viewingStandVisible by rememberSaveable { mutableStateOf(false) }
+    var aboutVisible by rememberSaveable { mutableStateOf(false) }
     var viewingLightOn by rememberSaveable { mutableStateOf(true) }
     var viewingSelectedKey by rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(enabled = vm.isCropping || viewingStandVisible) {
-        if (vm.isCropping) vm.cancelCrop() else viewingStandVisible = false
+    BackHandler(enabled = aboutVisible || vm.isCropping || viewingStandVisible) {
+        when {
+            aboutVisible -> aboutVisible = false
+            vm.isCropping -> vm.cancelCrop()
+            else -> viewingStandVisible = false
+        }
     }
     val viewingPhotos = vm.viewingPhotos
     val viewingPicker = rememberLauncherForActivityResult(
@@ -357,6 +362,11 @@ private fun EditorScreen(vm: EditorViewModel) {
                                     text = { Text("观景台") },
                                     onClick = { showMoreMenu = false; openViewingStand() }
                                 )
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                DropdownMenuItem(
+                                    text = { Text("关于") },
+                                    onClick = { showMoreMenu = false; aboutVisible = true }
+                                )
                             }
                         }
                     },
@@ -424,6 +434,10 @@ private fun EditorScreen(vm: EditorViewModel) {
                 onClose = { viewingStandVisible = false },
                 modifier = Modifier.fillMaxSize().zIndex(4f),
             )
+        }
+
+        if (aboutVisible) {
+            AboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize().zIndex(5f))
         }
 
         if (vm.busy || vm.isExporting || vm.isBatchExporting) {
