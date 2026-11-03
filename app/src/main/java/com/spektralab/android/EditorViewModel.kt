@@ -535,7 +535,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun openExportSource(e: EngineClient, uri: Uri, editParams: EditorParams, size: Int, colorSpace: String) {
         // The interactive preview remains on screen, but its GPU session need not overlap source decoding.
         e.closeSession()
-        if (RawDecoder.isRaw(queryDisplayName(uri))) {
+        if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
             val cachedXyz = if (uri == currentUri) rawCamXyz else null
             fun multipliers(xyz: FloatArray?): FloatArray? {
                 if (!editParams.cameraWbCustom || xyz == null) return null
@@ -961,7 +961,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         seedHistory(uri, params.copy())
                         sourceExif = exif
                     }
-                    if (RawDecoder.isRaw(name)) {
+                    if (RawDecoder.isRaw(app, uri, name)) {
                         withContext(Dispatchers.Main.immediate) { currentIsRaw = true }
                         decodeRawAndOpen(uri)
                     } else {
@@ -976,6 +976,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             append("解码: ${bmp.width}×${bmp.height}")
                             openFrame(linear, bmp.width, bmp.height)
                         }
+                    }
+                } catch (_: OutOfMemoryError) {
+                    withContext(Dispatchers.Main.immediate) {
+                        fail("照片过大，当前设备内存不足以生成预览。请关闭其他应用后重试，或选择较小尺寸导出")
+                        busy = false
                     }
                 } catch (ex: Exception) {
                     withContext(Dispatchers.Main.immediate) {

@@ -19,8 +19,8 @@ android {
         applicationId = "com.spektralab.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
         testInstrumentationRunner = "com.spektralab.android.FunctionalAuditInstrumentation"
 
         // Vulkan 与 LibRaw 在 64 位 ARM 上最稳；加 x86_64 方便在模拟器上跑。
@@ -33,7 +33,8 @@ android {
                 // 引擎是 C++20。真实引擎移植（M0）时可能需要补充它自己的编译标志。
                 cppFlags += "-std=c++20"
                 arguments += listOf(
-                    "-DANDROID_STL=c++_shared"
+                    "-DANDROID_STL=c++_shared",
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 )
             }
         }

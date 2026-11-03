@@ -36,6 +36,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var progressOnly = false
     private var exportOnly = false
     private var largeExportOnly = false
+    private var assetBatchOnly = false
     private var largeExportResolution = 0
     private var largeExportInput = "repro-large-3072x4096.jpg"
     private var largeExportFormat = "JPEG"
@@ -53,6 +54,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         progressOnly = audit == "progress"
         exportOnly = audit == "export"
         largeExportOnly = audit == "large-export"
+        assetBatchOnly = audit == "assets-batch"
         exportMemoryOnly = audit == "export-memory"
         largeExportResolution = arguments?.getString("exportRes")?.toIntOrNull() ?: 0
         largeExportInput = arguments?.getString("input") ?: largeExportInput
@@ -80,6 +82,14 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         if (largeExportOnly) {
             case("export.$largeExportInput.$largeExportFormat.res_$largeExportResolution.edges_$largeExportEdges") { isolatedLargeExportAudit() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (assetBatchOnly) {
+            case("export.assets_jpeg_and_raw.full.batch") { assetBatchExportAudit() }
             writeReport()
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
@@ -237,8 +247,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         EditStore.save(targetContext.applicationContext, uri, EditorParams().apply {
             overscanActive = largeExportEdges
             if (overscanActive) {
-                val width = if (RawDecoder.isRaw(imageFile.name)) 5200 else 3072
-                val height = if (RawDecoder.isRaw(imageFile.name)) 3900 else 4096
+                val isRawInput = RawDecoder.isRaw(targetContext, uri, imageFile.name)
+                val width = if (isRawInput) 5200 else 3072
+                val height = if (isRawInput) 3900 else 4096
                 val crop = computeCenteredCropByAspect(overscanGateAspect("135"), width, height)
                 cropX = crop[0]; cropY = crop[1]; cropW = crop[2]; cropH = crop[3]
             }
@@ -252,6 +263,12 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         await(180000) { vm.errorMessage != null || vm.lastResult != null && !vm.busy }
         check(vm.errorMessage == null) { "image import failed: ${vm.errorMessage}" }
+        val expectsRaw = RawDecoder.isRaw(targetContext, uri, imageFile.name)
+        check(vm.currentIsRaw == expectsRaw) { "RAW detection mismatch: extension=${imageFile.name}, currentIsRaw=${vm.currentIsRaw}" }
+        if (expectsRaw) {
+            val preview = vm.sourceBitmap ?: error("RAW preview bitmap was not created")
+            check(max(preview.width, preview.height) <= 2048) { "RAW editor preview exceeds 2048px: ${preview.width}x${preview.height}" }
+        }
         val before = vm.engine!!.memoryReport()
         val savedBefore = targetContext.contentResolver.query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(android.provider.MediaStore.Images.Media._ID), null, null, null)?.use { it.count } ?: 0
@@ -274,6 +291,40 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             check(bounds.outWidth == expected.groupValues[1].toInt() && bounds.outHeight == expected.groupValues[2].toInt())
         }
         return "resolution=$largeExportResolution; model=${android.os.Build.MODEL}; log=$log; memory_before=$before; memory_after=$after"
+    }
+
+    private fun assetBatchExportAudit(): String {
+        val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        await { vm.engine != null && !vm.busy }
+        val jpeg = File(output, "batch-assets-13mb.jpg")
+        val raw = File(output, "batch-assets-50mp.tiff")
+        context.assets.open("13mb.jpg").use { input -> jpeg.outputStream().use { input.copyTo(it) } }
+        context.assets.open("xiaomi-dng.tiff").use { input -> raw.outputStream().use { input.copyTo(it) } }
+        val uris = listOf(Uri.fromFile(jpeg), Uri.fromFile(raw))
+        uris.forEach { EditStore.save(targetContext.applicationContext, it, EditorParams()) }
+        runOnMainSync {
+            vm.dismissError()
+            vm.exportFormat = "JPEG"
+            vm.exportRes = 0
+            vm.openPhotos(uris)
+        }
+        await(240000) { vm.errorMessage != null || vm.lastResult != null && !vm.busy }
+        check(vm.errorMessage == null) { "JPEG preview import failed: ${vm.errorMessage}" }
+        val countBefore = targetContext.contentResolver.query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(android.provider.MediaStore.Images.Media._ID), null, null, null)?.use { it.count } ?: 0
+        runOnMainSync { vm.batchExport() }
+        await(600000) { !vm.isBatchExporting }
+        val error = vm.errorMessage
+        val log = vm.log.takeLast(5000)
+        runOnMainSync { activity.finish() }
+        check(error == null) { "full-resolution asset batch failed: $error; log=$log" }
+        check(log.contains("批量导出 2/2")) { "both asset outputs were not reported: $log" }
+        val countAfter = targetContext.contentResolver.query(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(android.provider.MediaStore.Images.Media._ID), null, null, null)?.use { it.count } ?: 0
+        check(countAfter >= countBefore + 2) { "asset batch did not save two gallery outputs ($countBefore -> $countAfter)" }
+        return "8192x6144 JPEG and 50MP DNG TIFF both exported at original resolution in one batch on ${android.os.Build.MODEL}; log=$log"
     }
 
     private fun nativeExportParityAudit(): String {
@@ -320,15 +371,15 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 }
             }
             val file = File(output, "small-export-parity.dng")
-            context.assets.open("audit.dng").use { source -> file.outputStream().use { source.copyTo(it) } }
+            context.assets.open("raw.dng").use { source -> file.outputStream().use { source.copyTo(it) } }
             val uri = Uri.fromFile(file)
-            val old = RawDecoder.decode(targetContext, uri, halfSize = false)
+            val old = RawDecoder.decode(targetContext, uri, halfSize = true)
             EngineClient.create(targetContext).use { engine ->
                 val json = EditorParams().apply { grainActive = false; glareActive = false }
                     .openJson(old.width, old.height, inputColorSpace = "ProPhoto RGB")
                 engine.open(old.linearProPhoto, old.width, old.height, 3, json)
                 val expected = engine.render("full")
-                RawDecoder.decodeForExport(targetContext, uri, 0).use { raw ->
+                RawDecoder.decodeForExport(targetContext, uri, max(old.width, old.height)).use { raw ->
                     check(raw.width == old.width && raw.height == old.height)
                     engine.openRaw(raw, json)
                 }

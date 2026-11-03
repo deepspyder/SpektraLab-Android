@@ -196,14 +196,16 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
             return false;
         }
 
-        const std::uint64_t samples = std::uint64_t(image->width) * image->height * 3;
-        if (samples * sizeof(std::uint16_t) != image->data_size) {
+        const std::uint32_t source_width = image->width;
+        const std::uint32_t source_height = image->height;
+        const std::uint64_t source_samples = std::uint64_t(source_width) * source_height * 3;
+        if (source_samples * sizeof(std::uint16_t) != image->data_size) {
             error = "RAW output: inconsistent byte count";
             return false;
         }
 
-        out.width = image->width;
-        out.height = image->height;
+        out.width = source_width;
+        out.height = source_height;
         const auto& color = raw.imgdata.color;
         const auto& idata = raw.imgdata.idata;
         for (unsigned c = 0; c < 4; ++c) out.cam_mul[c] = color.cam_mul[c];
@@ -217,12 +219,36 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
         out.focal = lensinfo.makernotes.CurFocal > 0 ? lensinfo.makernotes.CurFocal
                     : (lensinfo.makernotes.MinFocal > 0 ? lensinfo.makernotes.MinFocal : 0.0f);
         // make_mem_image owns its copy. Release demosaic/RAW work planes before expanding RGB16 to RGB32.
+        const std::uint32_t source_edge = std::max(source_width, source_height);
+        if (max_long_edge > 0 && source_edge > std::uint32_t(max_long_edge)) {
+            const double scale = double(max_long_edge) / source_edge;
+            out.width = std::max(1u, std::uint32_t(source_width * scale));
+            out.height = std::max(1u, std::uint32_t(source_height * scale));
+        }
+        const std::uint64_t samples = std::uint64_t(out.width) * out.height * 3;
         raw.recycle();
         out.rgb.resize(static_cast<std::size_t>(samples));
-        for (std::uint64_t i = 0; i < samples; ++i) {
-            std::uint16_t v;
-            std::memcpy(&v, image->data + i * sizeof(v), sizeof(v));
-            out.rgb[static_cast<std::size_t>(i)] = static_cast<float>(static_cast<double>(v) / 65535.0);
+        const auto sample = [&](std::uint32_t x, std::uint32_t y, std::uint32_t channel) {
+            std::uint16_t value;
+            const std::uint64_t index = (std::uint64_t(y) * source_width + x) * 3 + channel;
+            std::memcpy(&value, image->data + index * sizeof(value), sizeof(value));
+            return double(value);
+        };
+        for (std::uint32_t y = 0; y < out.height; ++y) {
+            const double sy = std::clamp((y + 0.5) * source_height / out.height - 0.5, 0.0, double(source_height - 1));
+            const std::uint32_t y0 = std::uint32_t(sy), y1 = std::min(y0 + 1, source_height - 1);
+            const double fy = sy - y0;
+            for (std::uint32_t x = 0; x < out.width; ++x) {
+                const double sx = std::clamp((x + 0.5) * source_width / out.width - 0.5, 0.0, double(source_width - 1));
+                const std::uint32_t x0 = std::uint32_t(sx), x1 = std::min(x0 + 1, source_width - 1);
+                const double fx = sx - x0;
+                for (std::uint32_t c = 0; c < 3; ++c) {
+                    const double top = sample(x0, y0, c) * (1.0 - fx) + sample(x1, y0, c) * fx;
+                    const double bottom = sample(x0, y1, c) * (1.0 - fx) + sample(x1, y1, c) * fx;
+                    out.rgb[(std::size_t(y) * out.width + x) * 3 + c] =
+                        float((top * (1.0 - fy) + bottom * fy) / 65535.0);
+                }
+            }
         }
         return true;
     } catch (const std::exception& e) {
@@ -361,7 +387,9 @@ Java_com_spektralab_android_engine_RawDecoder_nativeDecodeRaw(
 
     DecodedRaw decoded;
     std::string error;
-    if (!decode_raw(file, halfSize == JNI_TRUE, user_mul, decoded, error)) {
+    // The editor needs a responsive preview, not a half-resolution copy of a 50 MP sensor frame.
+    if (!decode_raw(file, halfSize == JNI_TRUE, user_mul, decoded, error,
+                    halfSize == JNI_TRUE ? 2048 : 0)) {
         LOGE("%s", error.c_str());
         throw_engine_error(env, error);
         return nullptr;
