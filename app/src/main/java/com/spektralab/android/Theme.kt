@@ -12,18 +12,31 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+object SpektraTokens {
+    val background = Color(0xFF151615)
+    val surface = Color(0xFF1B1D1A)
+    val surfaceLow = Color(0xFF191A18)
+    val surfaceMid = Color(0xFF242622)
+    val surfaceHigh = Color(0xFF2D2F2A)
+    val paper = Color(0xFFF2EEE6)
+    val paperMuted = Color(0xFFB8B2A8)
+    val amber = Color(0xFFE5AA55)
+    val amberDeep = Color(0xFF4A351D)
+    val line = Color(0xFF41433D)
+}
+
 private val SpektraColors = darkColorScheme(
-    primary = Color(0xFFD2B783), onPrimary = Color(0xFF211D16),
-    primaryContainer = Color(0xFF383329), onPrimaryContainer = Color(0xFFF0DFC0),
-    secondary = Color(0xFFBCC6D2), onSecondary = Color(0xFF20252B),
-    secondaryContainer = Color(0xFF30353B), onSecondaryContainer = Color(0xFFE1E6ED),
-    background = Color(0xFF121315), onBackground = Color(0xFFF0EFEB),
-    surface = Color(0xFF1C1D20), onSurface = Color(0xFFF0EFEB),
-    surfaceVariant = Color(0xFF292B2F), onSurfaceVariant = Color(0xFFB8BABF),
-    outline = Color(0xFF81848B), outlineVariant = Color(0xFF383B40),
-    surfaceContainer = Color(0xFF232529), surfaceContainerHigh = Color(0xFF2C2E33),
-    surfaceContainerLow = Color(0xFF191A1D), surfaceContainerLowest = Color(0xFF0E0F11),
-    error = Color(0xFFFFA69A), onError = Color(0xFF32110C),
+    primary = SpektraTokens.amber, onPrimary = Color(0xFF261A0C),
+    primaryContainer = SpektraTokens.amberDeep, onPrimaryContainer = Color(0xFFFFE1B6),
+    secondary = Color(0xFFC8BCA5), onSecondary = Color(0xFF28231C),
+    secondaryContainer = Color(0xFF38352E), onSecondaryContainer = Color(0xFFE7DECF),
+    background = SpektraTokens.background, onBackground = SpektraTokens.paper,
+    surface = SpektraTokens.surface, onSurface = SpektraTokens.paper,
+    surfaceVariant = SpektraTokens.surfaceMid, onSurfaceVariant = SpektraTokens.paperMuted,
+    outline = Color(0xFF88877F), outlineVariant = SpektraTokens.line,
+    surfaceContainer = SpektraTokens.surfaceMid, surfaceContainerHigh = SpektraTokens.surfaceHigh,
+    surfaceContainerLow = SpektraTokens.surfaceLow, surfaceContainerLowest = Color(0xFF10110F),
+    error = Color(0xFFFFB4AB), onError = Color(0xFF32110C),
 )
 
 @Composable

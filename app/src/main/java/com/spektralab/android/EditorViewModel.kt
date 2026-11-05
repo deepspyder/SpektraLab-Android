@@ -33,8 +33,12 @@ import com.spektralab.android.engine.SpkResult
 import com.spektralab.android.engine.Stock
 import com.spektralab.android.engine.StockCatalog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -63,6 +67,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val width: Int,
         val height: Int,
         val inputColorSpace: String,
+        val photo: Long,
+        val revision: Long,
+        val editParams: EditorParams,
     )
 
     private val app get() = getApplication<Application>()
@@ -153,9 +160,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var lastHistoryKey: String? = null
     private var lastHistoryEditMs = 0L
     private var renderJob: Job? = null
+    private var photoLoadJob: Job? = null
+    private var frameRenderJob: Job? = null
+    private var stockPreviewJob: Job? = null
+    private var developedPreviewJob: Job? = null
+    private val thumbnailJobs = mutableMapOf<Uri, Job>()
+    @Volatile private var photoGeneration = 0L
+    private var paramsUri: Uri? = null
+    @Volatile private var cleared = false
     private var wbJob: Job? = null
     private var gradeGeneration = 0L
-    private var renderGeneration = 0L
+    @Volatile private var renderGeneration = 0L
     private var cameraWbJob: Job? = null
     private var engineCreateJob: Job? = null
     private var pendingFrame: PendingFrame? = null
@@ -388,29 +403,39 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 更新渲染结果 + 直方图 + 显示位图（一次渲染落地后调用）。
-    private fun updateResult(result: SpkResult, colorSpace: String = "sRGB") {
-        resultColorSpace = colorSpace
-        val (bitmap, counts) = convertPreview(result, params, colorSpace)
-        rendered = bitmap
-        histogram = counts
-        lastResult = result
-        rememberDevelopedPreview(bitmap)
+    private suspend fun updateResult(
+        result: SpkResult,
+        colorSpace: String = "sRGB",
+        photo: Long = photoGeneration,
+        revision: Long = renderGeneration,
+        editParams: EditorParams = params.copy(),
+    ) {
+        if (photo != photoGeneration || revision != renderGeneration) return
+        val (bitmap, counts) = withContext(Dispatchers.Default) { convertPreview(result, editParams, colorSpace) }
+        withContext(Dispatchers.Main.immediate) {
+            if (photo != photoGeneration || revision != renderGeneration) { bitmap.recycle(); return@withContext }
+            resultColorSpace = colorSpace
+            rendered = bitmap
+            histogram = counts
+            lastResult = result
+            rememberDevelopedPreview(bitmap)
+        }
     }
 
     private fun rememberDevelopedPreview(bitmap: Bitmap) {
         val uri = currentUri ?: return
-        viewModelScope.launch(Dispatchers.Default) {
-            val edge = max(bitmap.width, bitmap.height)
-            val preview = if (edge > 960) {
-                val scale = 960f / edge
-                Bitmap.createScaledBitmap(
-                    bitmap,
-                    (bitmap.width * scale).roundToInt().coerceAtLeast(1),
-                    (bitmap.height * scale).roundToInt().coerceAtLeast(1),
-                    true,
-                )
-            } else bitmap
-            withContext(Dispatchers.Main.immediate) {
+        val photo = photoGeneration
+        developedPreviewJob?.cancel()
+        developedPreviewJob = viewModelScope.launch {
+            val preview = withContext(Dispatchers.Default) {
+                val edge = max(bitmap.width, bitmap.height)
+                if (edge > 960) {
+                    val scale = 960f / edge
+                    Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt().coerceAtLeast(1),
+                        (bitmap.height * scale).roundToInt().coerceAtLeast(1), true)
+                } else bitmap
+            }
+            if (photo == photoGeneration && uri == currentUri && uri in photos && rendered === bitmap) {
                 developedPreviews = developedPreviews + (uri to preview)
             }
         }
@@ -438,6 +463,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
     fun scheduleGrade() {
+        if (!hasPhoto) return
         recordHistory()
         dirty = true
         currentUri?.let { EditStore.save(app, it, params) }
@@ -445,13 +471,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val editParams = params.copy()
         val colorSpace = resultColorSpace
         val generation = ++gradeGeneration
+        val photo = photoGeneration
         wbJob?.cancel()
         wbJob = viewModelScope.launch {
             delay(45)
             val (bitmap, counts) = withContext(Dispatchers.Default) {
                 convertPreview(result, editParams, colorSpace)
             }
-            if (generation == gradeGeneration && lastResult === result) {
+            if (photo == photoGeneration && generation == gradeGeneration && lastResult === result) {
                 rendered = bitmap
                 histogram = counts
                 rememberDevelopedPreview(bitmap)
@@ -464,18 +491,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!currentIsRaw || !hasPhoto) return
         recordHistory()
         currentUri?.let { EditStore.save(app, it, params) }
+        val uri = currentUri ?: return
+        val photo = photoGeneration
+        val editParams = params.copy()
         cameraWbJob?.cancel()
         cameraWbJob = viewModelScope.launch {
             delay(300)
-            val uri = currentUri ?: return@launch
             withContext(engineDispatcher) {
+                if (photo != photoGeneration) return@withContext
                 try {
-                    decodeRawAndOpen(uri)
+                    decodeRawAndOpen(uri, photo, editParams)
                     append("RAW 白平衡: ${if (params.cameraWbCustom) "${params.cameraWbKelvin.toInt()}K / tint ${params.cameraWbTint.toInt()}" else "as-shot"}")
-                } catch (ex: SpkException) {
-                    fail("SpkException: ${ex.message}")
+                } catch (ex: CancellationException) {
+                    throw ex
                 } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
+                    withContext(Dispatchers.Main.immediate) {
+                        if (photo == photoGeneration) fail("${ex::class.simpleName}: ${ex.message}")
+                    }
                 }
             }
         }
@@ -496,20 +528,29 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         lensCorrectionActive = !lensCorrectionActive
         val uri = currentUri ?: return
         if (!currentIsRaw || !hasPhoto) return
-        viewModelScope.launch {
+        val photo = photoGeneration
+        val editParams = params.copy()
+        cameraWbJob?.cancel()
+        cameraWbJob = viewModelScope.launch {
             withContext(engineDispatcher) {
+                if (photo != photoGeneration) return@withContext
                 try {
-                    decodeRawAndOpen(uri)
+                    decodeRawAndOpen(uri, photo, editParams)
+                } catch (ex: CancellationException) {
+                    throw ex
                 } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
+                    withContext(Dispatchers.Main.immediate) {
+                        if (photo == photoGeneration) fail("${ex::class.simpleName}: ${ex.message}")
+                    }
                 }
             }
         }
     }
 
     // 解码 RAW：应用自定义白平衡（若开启）+ 镜头校正（若命中且开启）。
-    private fun decodeRaw(uri: Uri, editParams: EditorParams = params, halfSize: Boolean = true): RawDecodeResult {
-        val cachedXyz = if (uri == currentUri) rawCamXyz else null
+    private suspend fun decodeRaw(uri: Uri, editParams: EditorParams = params, halfSize: Boolean = true, photo: Long = photoGeneration): RawDecodeResult {
+        val cachedXyz = if (uri == currentUri && photo == photoGeneration) rawCamXyz else null
+        val correctLens = lensCorrectionActive
         val initial = if (cachedXyz == null) RawDecoder.decode(app, uri, halfSize = halfSize) else null
         val cameraXyz = cachedXyz ?: initial!!.camXyz
         val userMul = if (editParams.cameraWbCustom) {
@@ -518,14 +559,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         } else null
         val raw = if (userMul != null) RawDecoder.decode(app, uri, halfSize = halfSize, userMul = userMul)
             else initial ?: RawDecoder.decode(app, uri, halfSize = halfSize)
-        if (uri == currentUri) rawCamXyz = raw.camXyz
         LensProfileStore.load(app)
         val lensProfile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
-        if (uri == currentUri) {
-            matchedLensProfile = lensProfile
-            matchedLens = lensProfile?.model
+        withContext(Dispatchers.Main.immediate) {
+            if (uri == currentUri && photo == photoGeneration) {
+                rawCamXyz = raw.camXyz
+                matchedLensProfile = lensProfile
+                matchedLens = lensProfile?.model
+            }
         }
-        if (lensCorrectionActive && lensProfile != null) {
+        if (correctLens && lensProfile != null) {
             RawDecoder.applyLensCorrection(raw.linearProPhoto, raw.width, raw.height, lensProfile)
         }
         return raw
@@ -570,11 +613,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 解码 RAW → 显示源图 → 开会话。
-    private suspend fun decodeRawAndOpen(uri: Uri) {
-        val raw = decodeRaw(uri)
-        if (currentUri != uri) return
+    private suspend fun decodeRawAndOpen(uri: Uri, photo: Long = photoGeneration, editParams: EditorParams = params.copy()) {
+        val raw = decodeRaw(uri, editParams, photo = photo)
+        if (photo != photoGeneration || currentUri != uri) return
         val argb = ColorPipeline.proPhotoLinearToSrgbArgb(raw.linearProPhoto, raw.width, raw.height)
         withContext(Dispatchers.Main.immediate) {
+            if (photo != photoGeneration || currentUri != uri) return@withContext
             sourceBitmap = Bitmap.createBitmap(argb, raw.width, raw.height, Bitmap.Config.ARGB_8888)
             append("RAW 解码: ${raw.width}×${raw.height} · ${raw.make} ${raw.model}" +
                 (matchedLens?.let { " · 镜头校正: $it" } ?: ""))
@@ -589,23 +633,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!hasPhoto) return
         dirty = true
         val generation = ++renderGeneration
+        val photo = photoGeneration
+        val uri = currentUri
+        val editParams = params.copy()
+        val delta = editParams.deltaJson(previewW, previewH)
         renderJob?.cancel()
         e.cancel()
         renderJob = viewModelScope.launch {
             delay(120)
             withContext(engineDispatcher) {
-                if (generation != renderGeneration) return@withContext
+                if (photo != photoGeneration || generation != renderGeneration) return@withContext
                 try {
-                    e.setParams(params.deltaJson(previewW, previewH))
-                    currentUri?.let { EditStore.save(app, it, params) }
+                    e.setParams(delta)
+                    uri?.let { EditStore.save(app, it, editParams) }
                     val r = e.render("live")
-                    if (generation != renderGeneration) return@withContext
-                    updateResult(r)
+                    if (photo != photoGeneration || generation != renderGeneration) return@withContext
+                    withContext(Dispatchers.Main.immediate) { stockPreviewJob?.cancel() }
+                    updateResult(r, photo = photo, revision = generation, editParams = editParams)
                     append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
-                } catch (ex: SpkException) {
-                    if (ex.message?.contains("cancel", ignoreCase = true) != true) fail("SpkException: ${ex.message}")
+                } catch (ex: CancellationException) {
+                    throw ex
                 } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
+                    withContext(Dispatchers.Main.immediate) {
+                        if (photo == photoGeneration && generation == renderGeneration &&
+                            ex.message?.contains("cancel", ignoreCase = true) != true) fail("${ex::class.simpleName}: ${ex.message}")
+                    }
                 }
             }
         }
@@ -628,17 +680,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val e = engine ?: return
         if (!hasPhoto) return
         dirty = true
-        viewModelScope.launch {
+        scheduleRender()
+        val photo = photoGeneration
+        val revision = renderGeneration
+        val editParams = params.copy()
+        stockPreviewJob?.cancel()
+        stockPreviewJob = viewModelScope.launch {
             withContext(engineDispatcher) {
+                if (photo != photoGeneration || revision != renderGeneration) return@withContext
                 try {
                     val r = e.previewStockLut(stockId, "live")
-                    updateResult(r)
+                    updateResult(r, photo = photo, revision = revision, editParams = editParams)
                 } catch (ex: SpkException) {
                     // 胶片不配对时 LUT 预览可能被拒；忽略，等 reprint。
                 }
             }
         }
-        scheduleRender()
     }
 
     // 一键配光：solve("both") 求曝光 + 放大机中性滤色包。
@@ -738,7 +795,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         previewInputColorSpace = inputColorSpace
         isCropping = false
         dirty = false
-        val frame = PendingFrame(linear, w, h, inputColorSpace)
+        val frame = PendingFrame(linear, w, h, inputColorSpace, photoGeneration, ++renderGeneration, params.copy())
         val currentEngine = engine
         if (currentEngine == null) {
             pendingFrame = frame
@@ -749,28 +806,36 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun renderFrame(targetEngine: EngineClient, frame: PendingFrame) {
+        if (frame.photo != photoGeneration || frame.revision != renderGeneration) return
         busy = true
-        viewModelScope.launch {
-            withContext(engineDispatcher) {
-                try {
+        frameRenderJob?.cancel()
+        frameRenderJob = viewModelScope.launch {
+            try {
+                withContext(engineDispatcher) {
+                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@withContext
                     targetEngine.open(
                         frame.pixels,
                         frame.width,
                         frame.height,
                         3,
-                        params.openJson(frame.width, frame.height, inputColorSpace = frame.inputColorSpace),
+                        frame.editParams.openJson(frame.width, frame.height, inputColorSpace = frame.inputColorSpace),
                     )
+                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@withContext
                     val r = targetEngine.render("live")
-                    updateResult(r)
-                    hasPhoto = true
-                    append("渲染: ${r.width}×${r.height}  ${r.elapsedMs}ms")
-                } catch (ex: SpkException) {
-                    fail("SpkException: ${ex.message}")
-                } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
-                } finally {
-                    busy = false
+                    updateResult(r, photo = frame.photo, revision = frame.revision, editParams = frame.editParams)
+                    withContext(Dispatchers.Main.immediate) {
+                        if (frame.photo == photoGeneration && frame.revision == renderGeneration) {
+                            hasPhoto = true
+                            append("渲染: ${r.width}×${r.height}  ${r.elapsedMs}ms")
+                        }
+                    }
                 }
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                if (frame.photo == photoGeneration && frame.revision == renderGeneration) fail("${ex::class.simpleName}: ${ex.message}")
+            } finally {
+                if (frame.photo == photoGeneration && frame.revision == renderGeneration) busy = false
             }
         }
     }
@@ -904,11 +969,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             withContext(engineDispatcher) {
                 try {
                     val created = EngineClient.create(app)
-                    engine = created
-                    append("引擎创建成功 · ${EngineClient.buildInfo()}")
-                    val waitingFrame = pendingFrame
-                    pendingFrame = null
-                    if (waitingFrame != null) renderFrame(created, waitingFrame) else busy = false
+                    if (cleared) { created.close(); return@withContext }
+                    withContext(Dispatchers.Main.immediate) {
+                        engine = created
+                        append("引擎创建成功 · ${EngineClient.buildInfo()}")
+                        val waitingFrame = pendingFrame
+                        pendingFrame = null
+                        if (waitingFrame != null) renderFrame(created, waitingFrame)
+                        else if (photoLoadJob?.isActive != true) busy = false
+                    }
+                } catch (ex: CancellationException) {
+                    throw ex
                 } catch (ex: Exception) {
                     fail("${ex::class.simpleName}: ${ex.message}")
                     busy = false
@@ -917,27 +988,75 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openPhoto(uri: Uri) {
-        currentUri = uri
+    /** Invalidate before changing identity; cancellation alone cannot stop synchronous native work. */
+    private fun invalidatePhotoWork(): Long {
+        photoGeneration++
+        renderGeneration++
+        gradeGeneration++
+        photoLoadJob?.cancel()
+        frameRenderJob?.cancel()
+        renderJob?.cancel()
+        wbJob?.cancel()
+        cameraWbJob?.cancel()
+        stockPreviewJob?.cancel()
+        developedPreviewJob?.cancel()
+        pendingFrame = null
+        engine?.cancel()
+        return photoGeneration
+    }
+
+    private fun clearPhotoState() {
+        paramsUri = null
         photoInfo = emptyList()
         rawCamXyz = null
+        sourceExif = null
         sourceBitmap = null
         rendered = null
         lastResult = null
         histogram = null
+        previewLinear = null
+        previewW = 0
+        previewH = 0
+        currentIsRaw = false
+        matchedLensProfile = null
+        matchedLens = null
+        latitudeReadout = null
+        latitudeDelta = null
+        latitudeCanApply = false
+        isCropping = false
+        cropEditStart = null
         hasPhoto = false
+        canUndo = false
+        canRedo = false
+        dirty = false
+        errorMessage = null
+    }
+
+    private fun retainThumbnailRequests(uris: Set<Uri>) {
+        thumbnailJobs.keys.filterNot(uris::contains).forEach { uri ->
+            thumbnailJobs.remove(uri)?.cancel()
+        }
+    }
+
+    fun openPhoto(uri: Uri) {
+        if (isExporting || isBatchExporting) return
+        val photo = invalidatePhotoWork()
+        currentUri = uri
+        clearPhotoState()
+        params = EditorParams()
         busy = true
-        viewModelScope.launch {
-            withContext(engineDispatcher) {
-                if (currentUri != uri) return@withContext
-                try {
+        photoLoadJob = viewModelScope.launch {
+            try {
+                withContext(engineDispatcher) {
+                    if (photo != photoGeneration) return@withContext
                     val saved = EditStore.load(app, uri)
                     val name = queryDisplayName(uri)
                     val exif = readExif(uri)
                     val imageBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     runCatching { app.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, imageBounds) } }
-                    withContext(Dispatchers.Main.immediate) {
-                        if (currentUri != uri) return@withContext
+                    val isRaw = RawDecoder.isRaw(app, uri, name)
+                    withContext(Dispatchers.Main.immediate) metadata@{
+                        if (photo != photoGeneration) return@metadata
                         photoInfo = buildList {
                             add("文件名" to (name ?: "未知"))
                             val width = (exif?.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0) ?: 0).takeIf { it > 0 } ?: imageBounds.outWidth
@@ -959,35 +1078,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             resetGeometry()
                         }
                         seedHistory(uri, params.copy())
+                        paramsUri = uri
                         sourceExif = exif
+                        currentIsRaw = isRaw
                     }
-                    if (RawDecoder.isRaw(app, uri, name)) {
-                        withContext(Dispatchers.Main.immediate) { currentIsRaw = true }
-                        decodeRawAndOpen(uri)
+                    if (photo != photoGeneration) return@withContext
+                    if (isRaw) {
+                        decodeRawAndOpen(uri, photo)
                     } else {
-                        withContext(Dispatchers.Main.immediate) { currentIsRaw = false }
                         val bmp = decodeSampled(uri)
-                        if (currentUri != uri) return@withContext
+                        if (photo != photoGeneration) { bmp.recycle(); return@withContext }
                         val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
-                        if (currentUri != uri) return@withContext
-                        withContext(Dispatchers.Main.immediate) {
-                            if (currentUri != uri) return@withContext
+                        if (photo != photoGeneration) { bmp.recycle(); return@withContext }
+                        withContext(Dispatchers.Main.immediate) publish@{
+                            if (photo != photoGeneration) { bmp.recycle(); return@publish }
                             sourceBitmap = bmp
                             append("解码: ${bmp.width}×${bmp.height}")
                             openFrame(linear, bmp.width, bmp.height)
                         }
                     }
-                } catch (_: OutOfMemoryError) {
-                    withContext(Dispatchers.Main.immediate) {
-                        fail("照片过大，当前设备内存不足以生成预览。请关闭其他应用后重试，或选择较小尺寸导出")
-                        busy = false
-                    }
-                } catch (ex: Exception) {
-                    withContext(Dispatchers.Main.immediate) {
-                        fail("${ex::class.simpleName}: ${ex.message}")
-                        busy = false
-                    }
                 }
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (_: OutOfMemoryError) {
+                if (photo == photoGeneration) {
+                    fail("照片过大，当前设备内存不足以生成预览。请关闭其他应用后重试，或选择较小尺寸导出")
+                    busy = false
+                }
+            } catch (ex: Exception) {
+                if (photo == photoGeneration) { fail("${ex::class.simpleName}: ${ex.message}"); busy = false }
             }
         }
     }
@@ -997,24 +1116,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         photos = uris.distinct()
+        val retained = photos.toSet()
+        retainThumbnailRequests(retained)
+        thumbnails = thumbnails.filterKeys { it in retained }
+        developedPreviews = developedPreviews.filterKeys { it in retained }
         currentIndex = 0
         openPhoto(photos[0])
     }
 
-    /** Add new album picks to the stage without interrupting the current edit. */
-    fun addPhotos(uris: List<Uri>) {
+    /** Queue-only callers can retain the edit; picker callers explicitly open the selected photo. */
+    fun addPhotos(uris: List<Uri>, openSelected: Boolean = false) {
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         val merged = (photos + uris).distinct()
         val selected = currentUri
         photos = merged
         currentIndex = selected?.let { merged.indexOf(it) }?.takeIf { it >= 0 } ?: 0
-        if (selected == null) openPhoto(merged.first())
+        if (openSelected) {
+            selectPhoto(merged.indexOf(uris.first()))
+        } else if (selected == null) openPhoto(merged.first())
     }
 
     // 切换到图库中的第 [index] 张。
     fun selectPhoto(index: Int) {
         if (index !in photos.indices || isBatchExporting || isExporting) return
+        if (index == currentIndex && currentUri == photos[index] && (hasPhoto || photoLoadJob?.isActive == true)) return
         saveCurrentSidecar()
         currentIndex = index
         openPhoto(photos[index])
@@ -1031,14 +1157,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun removeCurrentPhoto() {
         if (busy || isExporting || isBatchExporting || currentIndex !in photos.indices) return
         saveCurrentSidecar()
-        renderGeneration++
-        gradeGeneration++
-        renderJob?.cancel()
-        wbJob?.cancel()
-        cameraWbJob?.cancel()
-        engine?.cancel()
+        invalidatePhotoWork()
         val removed = photos[currentIndex]
         val remaining = photos.filterIndexed { index, _ -> index != currentIndex }
+        retainThumbnailRequests(remaining.toSet())
         thumbnails = thumbnails - removed
         developedPreviews = developedPreviews - removed
         photos = remaining
@@ -1048,36 +1170,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             currentUri = null
             currentIndex = 0
-            photoInfo = emptyList()
-            sourceBitmap = null
-            rendered = null
-            lastResult = null
-            histogram = null
-            previewLinear = null
-            sourceExif = null
-            hasPhoto = false
-            dirty = false
-            isCropping = false
+            clearPhotoState()
+            busy = false
             viewModelScope.launch { withContext(engineDispatcher) { engine?.closeSession() } }
         }
     }
 
     // 切换前把当前照片的编辑落盘（避免 120ms 去抖未到就切换而丢编辑）。
     private fun saveCurrentSidecar() {
-        currentUri?.let { EditStore.save(app, it, params) }
+        currentUri?.takeIf { it == paramsUri }?.let { EditStore.save(app, it, params) }
     }
 
     // 懒加载单个缩略图（滚到才解码）。
     fun loadThumbnail(uri: Uri) {
-        if (thumbnails.containsKey(uri)) return
-        viewModelScope.launch(Dispatchers.IO) {
+        if (uri !in photos || thumbnails.containsKey(uri) || thumbnailJobs[uri]?.isActive == true) return
+        val request = viewModelScope.launch {
             try {
-                val bmp = decodeSampled(uri, 200)
-                thumbnails = thumbnails + (uri to bmp)
+                val bmp = withContext(Dispatchers.IO) { decodeSampled(uri, 200) }
+                if (uri in photos && !thumbnails.containsKey(uri)) thumbnails = thumbnails + (uri to bmp)
+                else bmp.recycle()
+            } catch (ex: CancellationException) {
+                throw ex
             } catch (e: Exception) {
                 // 忽略单个缩略图失败
+            } finally {
+                if (thumbnailJobs[uri] === currentCoroutineContext()[Job]) thumbnailJobs.remove(uri)
             }
         }
+        thumbnailJobs[uri] = request
     }
 
     // 用当前编辑参数批量导出图库所有照片。
@@ -1250,12 +1370,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openTestImage() {
+        if (isExporting || isBatchExporting) return
+        invalidatePhotoWork()
+        clearPhotoState()
         currentUri = null
+        retainThumbnailRequests(emptySet())
         rawCamXyz = null
         sourceBitmap = null
         sourceExif = null
         photos = emptyList()
         thumbnails = emptyMap()
+        developedPreviews = emptyMap()
         currentIndex = 0
         resetGeometry()
         val w = 512; val h = 512
@@ -1554,10 +1679,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        cleared = true
+        invalidatePhotoWork()
         renderJob?.cancel()
         wbJob?.cancel()
-        engine?.close()
+        cameraWbJob?.cancel()
+        val client = engine
         engine = null
+        if (client != null) {
+            CoroutineScope(SupervisorJob() + engineDispatcher).launch { client.close() }
+        }
         super.onCleared()
     }
 }

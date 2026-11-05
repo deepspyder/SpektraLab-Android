@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.SpektraLab" parent="Base.Theme.SpektraLab">
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+    <style name="Theme.SpektraLab.Starting" parent="Base.Theme.SpektraLab.Starting">
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

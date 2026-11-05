@@ -1,16 +1,17 @@
 <resources>
-    <style name="Theme.SpektraLab" parent="android:Theme.Material.NoActionBar">
+    <style name="Base.Theme.SpektraLab" parent="android:Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">@color/spektra_background</item>
         <item name="android:navigationBarColor">@color/spektra_background</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">@color/spektra_background</item>
         <item name="android:colorAccent">@color/spektra_primary</item>
     </style>
 
-    <style name="Theme.SpektraLab.Starting" parent="Theme.SplashScreen">
+    <style name="Theme.SpektraLab" parent="Base.Theme.SpektraLab" />
+
+    <style name="Base.Theme.SpektraLab.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/spektra_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_spektra_mark</item>
         <item name="windowSplashScreenAnimationDuration">520</item>
@@ -18,6 +19,6 @@
         <item name="android:statusBarColor">@color/spektra_background</item>
         <item name="android:navigationBarColor">@color/spektra_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
+    <style name="Theme.SpektraLab.Starting" parent="Base.Theme.SpektraLab.Starting" />
 </resources>

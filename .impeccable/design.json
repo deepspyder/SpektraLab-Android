@@ -1,0 +1,288 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T08:15:21.729Z",
+  "title": "Design System: SpektraLab Android",
+  "extensions": {
+    "colorRampNote": "合成色阶仅供文档可视化，不是 Android 运行时令牌；实现以主题和 DarkroomChrome 中已定义的颜色为准。",
+    "colorMeta": {
+      "navigation": {"role": "neutral", "displayName": "导航底色", "tonalRamp": ["oklch(15% 0.004 130)", "oklch(25% 0.008 130)", "oklch(35% 0.008 130)", "oklch(45% 0.008 130)", "oklch(55% 0.008 130)", "oklch(68% 0.008 130)", "oklch(82% 0.008 130)", "oklch(95% 0.004 130)"]},
+      "navigation-selected": {"role": "neutral", "displayName": "导航选中底色", "tonalRamp": ["oklch(15% 0.025 75)", "oklch(25% 0.050 75)", "oklch(35% 0.050 75)", "oklch(45% 0.050 75)", "oklch(55% 0.050 75)", "oklch(68% 0.050 75)", "oklch(82% 0.050 75)", "oklch(95% 0.025 75)"]},
+      "amber": {
+        "role": "primary",
+        "displayName": "琥珀",
+        "tonalRamp": [
+          "oklch(15% 0.060 75)",
+          "oklch(25% 0.120 75)",
+          "oklch(35% 0.120 75)",
+          "oklch(45% 0.120 75)",
+          "oklch(55% 0.120 75)",
+          "oklch(68% 0.120 75)",
+          "oklch(82% 0.120 75)",
+          "oklch(95% 0.060 75)"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "炭灰背景",
+        "tonalRamp": [
+          "oklch(15% 0.003 130)",
+          "oklch(25% 0.006 130)",
+          "oklch(35% 0.006 130)",
+          "oklch(45% 0.006 130)",
+          "oklch(55% 0.006 130)",
+          "oklch(68% 0.006 130)",
+          "oklch(82% 0.006 130)",
+          "oklch(95% 0.003 130)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "暖纸",
+        "tonalRamp": [
+          "oklch(15% 0.006 80)",
+          "oklch(25% 0.012 80)",
+          "oklch(35% 0.012 80)",
+          "oklch(45% 0.012 80)",
+          "oklch(55% 0.012 80)",
+          "oklch(68% 0.012 80)",
+          "oklch(82% 0.012 80)",
+          "oklch(95% 0.006 80)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "surface",
+        "tonalRamp": [
+          "oklch(15% 0.004 130)",
+          "oklch(25% 0.008 130)",
+          "oklch(35% 0.008 130)",
+          "oklch(45% 0.008 130)",
+          "oklch(55% 0.008 130)",
+          "oklch(68% 0.008 130)",
+          "oklch(82% 0.008 130)",
+          "oklch(95% 0.004 130)"
+        ]
+      },
+      "surface-low": {
+        "role": "neutral",
+        "displayName": "surface-low",
+        "tonalRamp": [
+          "oklch(15% 0.003 130)",
+          "oklch(25% 0.006 130)",
+          "oklch(35% 0.006 130)",
+          "oklch(45% 0.006 130)",
+          "oklch(55% 0.006 130)",
+          "oklch(68% 0.006 130)",
+          "oklch(82% 0.006 130)",
+          "oklch(95% 0.003 130)"
+        ]
+      },
+      "surface-mid": {
+        "role": "neutral",
+        "displayName": "surface-mid",
+        "tonalRamp": [
+          "oklch(15% 0.004 130)",
+          "oklch(25% 0.009 130)",
+          "oklch(35% 0.009 130)",
+          "oklch(45% 0.009 130)",
+          "oklch(55% 0.009 130)",
+          "oklch(68% 0.009 130)",
+          "oklch(82% 0.009 130)",
+          "oklch(95% 0.004 130)"
+        ]
+      },
+      "surface-high": {
+        "role": "neutral",
+        "displayName": "surface-high",
+        "tonalRamp": [
+          "oklch(15% 0.005 130)",
+          "oklch(25% 0.011 130)",
+          "oklch(35% 0.011 130)",
+          "oklch(45% 0.011 130)",
+          "oklch(55% 0.011 130)",
+          "oklch(68% 0.011 130)",
+          "oklch(82% 0.011 130)",
+          "oklch(95% 0.005 130)"
+        ]
+      },
+      "paper-muted": {
+        "role": "neutral",
+        "displayName": "paper-muted",
+        "tonalRamp": [
+          "oklch(15% 0.009 80)",
+          "oklch(25% 0.018 80)",
+          "oklch(35% 0.018 80)",
+          "oklch(45% 0.018 80)",
+          "oklch(55% 0.018 80)",
+          "oklch(68% 0.018 80)",
+          "oklch(82% 0.018 80)",
+          "oklch(95% 0.009 80)"
+        ]
+      },
+      "amber-deep": {
+        "role": "primary",
+        "displayName": "amber-deep",
+        "tonalRamp": [
+          "oklch(15% 0.035 75)",
+          "oklch(25% 0.070 75)",
+          "oklch(35% 0.070 75)",
+          "oklch(45% 0.070 75)",
+          "oklch(55% 0.070 75)",
+          "oklch(68% 0.070 75)",
+          "oklch(82% 0.070 75)",
+          "oklch(95% 0.035 75)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "line",
+        "tonalRamp": [
+          "oklch(15% 0.006 110)",
+          "oklch(25% 0.012 110)",
+          "oklch(35% 0.012 110)",
+          "oklch(45% 0.012 110)",
+          "oklch(55% 0.012 110)",
+          "oklch(68% 0.012 110)",
+          "oklch(82% 0.012 110)",
+          "oklch(95% 0.006 110)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title-medium": {
+        "displayName": "中标题",
+        "purpose": "页面与当前选择标题。"
+      },
+      "body-medium": {
+        "displayName": "正文",
+        "purpose": "参数名称与主要内容。"
+      },
+      "label-medium": {
+        "displayName": "标签",
+        "purpose": "次要标签和参数值。"
+      }
+    },
+    "breakpoints": [
+      {
+        "name": "expanded-width",
+        "value": "840dp"
+      },
+      {
+        "name": "expanded-landscape-min-width",
+        "value": "600dp"
+      },
+      {
+        "name": "film-short-landscape-max-height-exclusive",
+        "value": "500dp"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "主要操作",
+      "kind": "button",
+      "refersTo": "action-primary",
+      "description": "主要操作，最小高度 48dp。",
+      "html": "<button class=\"ds-primary\">应用</button>",
+      "css": ".ds-primary{min-height:48px;padding:0 24px;border:0;border-radius:6px;background:#E5AA55;color:#261A0C;font:500 14px sans-serif}.ds-primary:hover{filter:brightness(1.08)}.ds-primary:focus-visible{outline:2px solid #F2EEE6;outline-offset:2px}.ds-primary:active{filter:brightness(.9)}"
+    },
+    {
+      "name": "次要操作",
+      "kind": "button",
+      "description": "描边操作。",
+      "html": "<button class=\"ds-outline\">取消</button>",
+      "css": ".ds-outline{min-height:48px;padding:0 24px;border:1px solid #88877F;border-radius:6px;background:transparent;color:#E5AA55;font:500 14px sans-serif}.ds-outline:hover{background:#242622}.ds-outline:focus-visible{outline:2px solid #E5AA55;outline-offset:2px}.ds-outline:active{background:#2D2F2A}"
+    },
+    {
+      "name": "分段选择",
+      "kind": "chip",
+      "refersTo": "choice-selected",
+      "description": "低表面上的选项，选中项使用高表面并公开 selected 语义。",
+      "html": "<div class=\"ds-strip\"><button class=\"ds-choice ds-selected\">正片</button><button class=\"ds-choice\">负片</button></div>",
+      "css": ".ds-strip{display:flex;background:#191A18;border-radius:8px}.ds-choice{min-height:48px;padding:0 18px;border:0;border-radius:6px;background:transparent;color:#B8B2A8}.ds-selected{background:#2D2F2A;color:#E5AA55}.ds-choice:hover{background:#242622}.ds-choice:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}"
+    },
+    {
+      "name": "暗房分段选择",
+      "kind": "chip",
+      "description": "导航底色外框；按钮最小 48dp，内部选中背景最小 40dp、外留 4dp 内边距。处理禁用时保留选中背景。",
+      "html": "<div class=\"ds-darkroom-strip\"><button class=\"ds-darkroom-option\" aria-pressed=\"true\"><span class=\"ds-darkroom-active\">单张导出</span></button><button class=\"ds-darkroom-option\" aria-pressed=\"false\"><span>批量导出</span></button></div>",
+      "css": ".ds-darkroom-strip{display:flex;background:#20231E;border-radius:6px}.ds-darkroom-option{flex:1;min-height:48px;padding:4px;border:0;background:transparent;color:#B8B2A8;font:12px sans-serif}.ds-darkroom-option span{display:grid;place-items:center;min-height:40px;border-radius:4px}.ds-darkroom-active{background:#2D2F2A;color:#E5AA55;font-weight:600}.ds-darkroom-option:hover span{filter:brightness(1.1)}.ds-darkroom-option:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}"
+    },
+    {
+      "name": "选项选择行",
+      "kind": "input",
+      "description": "外层至少 64dp；按钮动作是展开选项，标签与当前值分别提供 contentDescription 和 stateDescription。OptionsDropdown 的菜单项公开 selected 语义。optionLabel 为测光、镜头滤镜、片边和日期枚举显示中文，wire 值与序列化不变。",
+      "html": "<button class=\"ds-selection\" aria-label=\"测光方法\" aria-description=\"均衡\"><span><small>测光方法</small><br>均衡</span><span aria-hidden=\"true\">⌄</span></button>",
+      "css": ".ds-selection{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:64px;padding:4px 2px;border:0;border-bottom:1px solid #41433D;background:transparent;color:#F2EEE6;text-align:left;font:14px sans-serif}.ds-selection small{color:#B8B2A8;font-size:12px}.ds-selection:hover{background:#242622}.ds-selection:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}.ds-selection:active{background:#2D2F2A}"
+    },
+    {
+      "name": "胶片搜索",
+      "kind": "input",
+      "description": "胶片库的描边搜索框。",
+      "html": "<input class=\"ds-search\" placeholder=\"搜索胶片名称\" aria-label=\"搜索胶片名称\">",
+      "css": ".ds-search{min-height:56px;padding:0 16px;border:1px solid #88877F;border-radius:8px;background:transparent;color:#F2EEE6;font:14px sans-serif}.ds-search::placeholder{color:#B8B2A8}.ds-search:hover{border-color:#F2EEE6}.ds-search:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}"
+    },
+    {
+      "name": "胶片行",
+      "kind": "card",
+      "refersTo": "film-row-selected",
+      "description": "选中胶片及其预览的列表行。",
+      "html": "<button class=\"ds-film\"><span class=\"ds-thumb\">NEG</span><span>胶片<br><small>负片</small></span></button>",
+      "css": ".ds-film{display:flex;align-items:center;gap:12px;width:100%;min-height:72px;padding:9px 10px;text-align:left;border:1px solid #E5AA55;border-radius:8px;background:#2D2F2A;color:#F2EEE6}.ds-thumb{display:grid;place-items:center;width:52px;height:54px;border-radius:4px;background:#586147;font-weight:bold}.ds-film small{color:#B8B2A8}.ds-film:hover{filter:brightness(1.08)}.ds-film:focus-visible{outline:2px solid #F2EEE6;outline-offset:2px}"
+    },
+    {
+      "name": "底部导航",
+      "kind": "nav",
+      "description": "紧凑底栏基准 64dp，字体放大时增高；19dp 图标、48×28dp 选中背景、11sp 标签，选项公开 Tab 和 selected 语义。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"编辑导航\"><button class=\"ds-nav-item ds-current\" aria-current=\"page\"><span class=\"ds-nav-icon\">◇</span>拍摄</button><button class=\"ds-nav-item\"><span class=\"ds-nav-icon\">□</span>放印</button><button class=\"ds-nav-item\"><span class=\"ds-nav-icon\">○</span>调色</button></nav>",
+      "css": ".ds-nav{display:flex;min-height:64px;background:#20231E}.ds-nav-item{display:flex;flex:1;flex-direction:column;align-items:center;gap:4px;padding:7px 0;border:0;background:transparent;color:#B8B2A8;font:11px sans-serif}.ds-nav-icon{display:grid;place-items:center;width:48px;height:28px;border-radius:16px;font-size:19px}.ds-current{color:#E5AA55}.ds-current .ds-nav-icon{background:#3B301E}.ds-nav-item:hover{background:#242622}.ds-nav-item:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}"
+    },
+    {
+      "name": "手机调整工作区",
+      "kind": "custom",
+      "description": "Fit 完整预览占参数面板以外的空间；面板默认最多为可用高度 50%，内容可滚动并自然收缩。56dp 工具行提供收起或展开、可拖动比例和完成；比例默认 0.5，范围 0.3–0.72，预览最小为 min(192dp, 35% 可用高度)，面板最小为 min(240dp, 50% 可用高度)。拖动控制公开 progress 语义；底部主导航切模式并保留滚动及组展开状态。48dp 对比及全屏按钮叠加预览；全屏复用现有位图和画布，关闭后保留控件状态。没有新增解码、渲染或全尺寸缓存；这不是硬件性能基准。",
+      "html": "<div class=\"ds-workspace\"><div class=\"ds-workspace-preview\">照片预览</div><div class=\"ds-workspace-panel\"><div class=\"ds-workspace-tools\"><button>收起参数</button><span class=\"ds-workspace-handle\"></span><button>完成</button></div><div class=\"ds-workspace-content\">胶片与相纸 · 参数</div></div></div>",
+      "css": ".ds-workspace{display:flex;flex-direction:column;height:360px;background:#242622;color:#F2EEE6;font:12px sans-serif}.ds-workspace-preview{display:grid;place-items:center;flex:1;color:#B8B2A8}.ds-workspace-panel{background:#191A18}.ds-workspace-tools{display:flex;align-items:center;height:56px;padding:0 8px}.ds-workspace-tools button{min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-workspace-tools button:hover{background:#242622}.ds-workspace-tools button:focus-visible{outline:2px solid #E5AA55}.ds-workspace-handle{width:36px;height:4px;margin:auto;border-radius:2px;background:#88877F}.ds-workspace-content{min-height:80px;padding:0 20px}"
+    },
+    {
+      "name": "首页照片与会话",
+      "kind": "custom",
+      "description": "紧凑首页横向内边距 20dp，主照片宽高比 1.4；显示胶片、相纸、可用拍摄时间、来源格式、尺寸和拍摄参数。会话标题行包含数量和添加操作；112×84dp、2dp 圆角的图像填充照片项在图内显示序号和格式。当前项使用 1dp 琥珀边框及编辑中标记，状态由队列选择决定。编辑器信息行共用拍摄参数格式化，显示来源格式；未知格式显示照片。",
+      "html": "<section class=\"ds-home\"><div class=\"ds-home-title\"><strong>让光，慢慢显影。</strong><small>数字暗房 / 01</small></div><div class=\"ds-home-hero\"></div><div class=\"ds-home-meta\"><span>胶片 / 相纸</span><span>16:42</span></div><div class=\"ds-home-meta\"><span class=\"ds-home-accent\">JPG</span><span>6000 × 4000</span></div><div class=\"ds-home-meta\"><span>35 mm　f/2.8　1/500 s　ISO 200</span></div><div class=\"ds-home-session\"><strong>当前会话</strong><small>2 张照片</small><button>添加照片</button></div><div class=\"ds-home-strip\"><div class=\"ds-home-photo ds-home-current\"><span>01 · 编辑中</span><em>JPG</em></div><div class=\"ds-home-photo\"><span>02 · RAW</span></div></div></section>",
+      "css": ".ds-home{max-width:393px;padding:12px 20px;background:#151615;color:#F2EEE6;font:12px sans-serif}.ds-home-title,.ds-home-meta,.ds-home-session{display:flex;align-items:center;justify-content:space-between;gap:12px}.ds-home-title{margin-bottom:14px;font-size:18px}.ds-home-title small,.ds-home-accent{color:#E5AA55}.ds-home-hero{width:100%;aspect-ratio:1.4;border-radius:2px;background:#2D2F2A}.ds-home-meta{margin-top:6px;color:#B8B2A8}.ds-home-session{margin-top:20px;border-top:1px solid #41433D}.ds-home-session small{margin-left:auto;color:#B8B2A8}.ds-home-session button{min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-home-session button:hover{background:#242622}.ds-home-session button:focus-visible{outline:2px solid #E5AA55}.ds-home-strip{display:flex;gap:10px;overflow:auto}.ds-home-photo{position:relative;flex:0 0 112px;height:84px;border-radius:2px;background:#2D2F2A}.ds-home-current{outline:1px solid #E5AA55;outline-offset:-1px}.ds-home-photo span,.ds-home-photo em{position:absolute;padding:3px 5px;border-radius:2px;background:rgba(0,0,0,.75);font-style:normal}.ds-home-photo span{bottom:6px;left:6px}.ds-home-current span{color:#E5AA55}.ds-home-photo em{top:6px;right:6px}"
+    },
+    {
+      "name": "照片展示台",
+      "kind": "custom",
+      "description": "编辑队列底部面板：16dp 顶部圆角和 20dp 拖动柄行；88×104dp 照片框、6dp 圆角，当前项以 2dp 琥珀边框、勾选及文字标识。标题行包含数量、添加和关闭；分隔线下显示文件名、位置及上一张、下一张、照片操作。选择变化时按需滚动到当前照片；支持空队列、单张、照片信息和移除。优先复用已显影预览，再使用缩略图。",
+      "html": "<section class=\"ds-stage\" aria-label=\"照片展示台示意\"><div class=\"ds-stage-handle\"><span></span></div><header class=\"ds-stage-header\"><strong>展示台</strong><small>2 张</small><button>添加照片</button><button aria-label=\"关闭展示台\">×</button></header><div class=\"ds-stage-strip\"><div><div class=\"ds-stage-photo ds-stage-current\"><span>✓</span></div><small class=\"ds-stage-label\">1 · 当前</small></div><div><div class=\"ds-stage-photo\"></div><small>2</small></div></div><footer class=\"ds-stage-footer\"><div><strong>照片文件名</strong><small>1 / 2</small></div><button aria-label=\"上一张\" disabled>‹</button><button aria-label=\"下一张\">›</button><button aria-label=\"照片操作\">···</button></footer></section>",
+      "css": ".ds-stage{max-width:440px;overflow:hidden;border-radius:16px 16px 0 0;background:#191A18;color:#F2EEE6;font:14px sans-serif}.ds-stage-handle{display:grid;place-items:center;height:20px}.ds-stage-handle span{width:32px;height:4px;border-radius:2px;background:#88877F}.ds-stage-header{display:flex;align-items:center;min-height:56px;padding:0 8px 0 20px;gap:10px}.ds-stage-header small{flex:1;color:#B8B2A8}.ds-stage button{min-width:48px;min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-stage button:hover{background:#242622}.ds-stage button:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}.ds-stage button:disabled{color:#666}.ds-stage-strip{display:flex;gap:12px;overflow:auto;padding:8px 20px 16px}.ds-stage-photo{width:88px;height:104px;border-radius:6px;background:#2D2F2A}.ds-stage-current{position:relative;outline:2px solid #E5AA55;outline-offset:-2px}.ds-stage-current span{position:absolute;top:6px;right:6px;display:grid;place-items:center;width:20px;height:20px;border-radius:4px;background:#E5AA55;color:#261A0C}.ds-stage-strip small{display:block;margin-top:8px;color:#B8B2A8}.ds-stage-strip .ds-stage-label{color:#E5AA55}.ds-stage-footer{display:flex;align-items:center;padding:8px 8px 8px 20px;border-top:1px solid #41433D}.ds-stage-footer div{flex:1;min-width:0}.ds-stage-footer strong,.ds-stage-footer small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-stage-footer small{margin-top:4px;color:#B8B2A8}"
+    },
+    {
+      "name": "导出设置",
+      "kind": "custom",
+      "description": "最大宽度 600dp；照片信息区上、下内边距 12dp、8dp，单张/批量分段后间隔 12dp，高级设置行最小 48dp。局部字号/行高为 9/12、10/14、11/16、12/16、14/20sp。DI TIFF、软打样、高清预览为实际动作；固定底部上下内边距 4dp、间距 6dp，按需显示的实际进度区内边距 8dp、间距 4dp，并提供取消。",
+      "html": "<div class=\"ds-export\"><div class=\"ds-export-row\">分辨率 <span>长边 2560 px</span></div><div class=\"ds-export-row\">色彩空间 <span>sRGB IEC61966-2.1</span></div><button class=\"ds-export-button\">导出当前照片</button></div>",
+      "css": ".ds-export{max-width:600px;padding:0 20px;background:#151615;color:#F2EEE6;font:12px sans-serif}.ds-export-row{display:flex;align-items:center;justify-content:space-between;min-height:48px;border-bottom:1px solid #41433D}.ds-export-row span{color:#B8B2A8;font-size:11px}.ds-export-button{width:100%;min-height:48px;margin-top:16px;border:0;border-radius:8px;background:#E5AA55;color:#261A0C;font-weight:600}.ds-export-button:hover{filter:brightness(1.08)}.ds-export-button:focus-visible{outline:2px solid #F2EEE6;outline-offset:2px}.ds-export-button:active{filter:brightness(.9)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "数字暗房",
+    "overview": "以 Darkroom、Lightroom 与胶片美学为方向：深炭灰工作环境、暖纸色文字和克制的琥珀强调色让照片成为视觉主体。界面专业、安静，服务反复调整和比较。\n\n基于 Kotlin、Jetpack Compose 与 Material 3。此文记录已实现的 Android UI；dp 和 sp 是源代码单位，随设备密度和字体缩放解释。",
+    "keyCharacteristics": [
+      "照片优先，控制区紧凑而可触达。",
+      "色阶区分工作区域，琥珀标记选择和关键操作。",
+      "手机与宽屏使用适合可用空间的导航和参数布局。"
+    ],
+    "rules": [],
+    "dos": [
+      "Do 让照片预览保持主要视觉权重。",
+      "Do 使用表面色阶和琥珀选中状态表达层级。",
+      "Do 保持控件的触控尺寸与语义，支持系统字体缩放。"
+    ],
+    "donts": [
+      "Don't 用大面积强调色压过照片和参数。",
+      "Don't 将参数、选中状态或导航语义仅交给颜色传达。"
+    ]
+  }
+}

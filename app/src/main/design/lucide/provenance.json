@@ -1,0 +1,26 @@
+[
+  {
+    "icon": "arrow-left",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/arrow-left.svg",
+    "sha256": "c5f4b88076108eb1a0d95336e1aa7e7bb1419a3a92af96f6247d88cd3456f933",
+    "resource": "ic_darkroom_arrow_left.xml"
+  },
+  {
+    "icon": "undo-2",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/undo-2.svg",
+    "sha256": "efad2edbbd2be6038cc23fd64df2d012fad5cc6460dfbf227cfa3d990e9e897f",
+    "resource": "ic_darkroom_undo_2.xml"
+  },
+  {
+    "icon": "redo-2",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/redo-2.svg",
+    "sha256": "4cbd2cdebc70b6b7979c681ed3f313d9cbb102465dcf7d0d2d6a72c937b344bc",
+    "resource": "ic_darkroom_redo_2.xml"
+  },
+  {
+    "icon": "columns-2",
+    "source": "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/columns-2.svg",
+    "sha256": "bddf3348a9c82d111a060d118299c90755b1ae8411bd16ea1d5ddb83c5f98a27",
+    "resource": "ic_darkroom_columns_2.xml"
+  }
+]

@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SliderDefaults
@@ -42,14 +43,65 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import com.spektralab.android.engine.Stock
 
 // ---- Tight, touch-safe editor controls ----
+
+/** Disclosure changes composition only; it never dispatches an image operation. */
+@Composable
+fun EditorSection(
+    title: String,
+    summary: String,
+    initiallyExpanded: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .clickable { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(summary, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp))
+            }
+            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "收起$title" else "展开$title")
+        }
+        if (expanded) content()
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+    }
+}
+
+@Composable
+fun ChoiceStrip(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(8.dp))) {
+        options.forEach { option ->
+            val isSelected = selected == option
+            androidx.compose.material3.TextButton(
+                onClick = { onSelect(option) },
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = isSelected },
+                shape = RoundedCornerShape(6.dp),
+                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    containerColor = if (selected == option) MaterialTheme.colorScheme.surfaceContainerHigh else androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = if (selected == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            ) { Text(option, style = MaterialTheme.typography.labelMedium) }
+        }
+    }
+}
 
 @Composable
 fun SectionLabel(text: String) {
@@ -69,17 +121,20 @@ fun SliderRow(
     range: ClosedFloatingPointRange<Float>,
     format: String,
     displayScale: Float = 1f,
+    compact: Boolean = false,
+    enabled: Boolean = true,
     onChange: (Float) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(end = 12.dp))
+            Text(label, style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f).padding(end = 12.dp))
             Text(format.format(value * displayScale), style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.End)
         }
         val accent = MaterialTheme.colorScheme.primary
         val trackColor = MaterialTheme.colorScheme.outlineVariant
-        Slider(value = value.coerceIn(range), onValueChange = onChange, valueRange = range,
+        Slider(value = value.coerceIn(range), onValueChange = onChange, valueRange = range, enabled = enabled,
             thumb = { Box(Modifier.size(16.dp).background(accent, RoundedCornerShape(8.dp))) },
             track = { state ->
                 Canvas(Modifier.fillMaxWidth().heightIn(min = 4.dp)) {
@@ -110,15 +165,18 @@ fun OptionsDropdown(
     options: List<String>,
     selected: String,
     modifier: Modifier = Modifier,
+    optionLabel: (String) -> String = { it },
     onSelect: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        SelectionRow(label, selected) { expanded = true }
+        SelectionRow(label, optionLabel(selected)) { expanded = true }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { opt ->
+                val isSelected = opt == selected
                 DropdownMenuItem(
-                    text = { Text(opt) },
+                    text = { Text(optionLabel(opt)) },
+                    modifier = Modifier.semantics { this.selected = isSelected },
                     onClick = { onSelect(opt); expanded = false }
                 )
             }
@@ -188,11 +246,15 @@ fun ActionButton(
 
 @Composable
 private fun SelectionRow(label: String, value: String, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp)) {
+    Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+        .clickable(role = Role.Button, onClickLabel = "展开选项", onClick = onClick)
+        .semantics(mergeDescendants = true) { contentDescription = label; stateDescription = value }
+        .padding(vertical = 4.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-                Text(value, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
+                Text(value, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Filled.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
         }

@@ -3,127 +3,163 @@ package com.spektralab.android
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.automirrored.outlined.NavigateBefore
+import androidx.compose.material.icons.automirrored.outlined.NavigateNext
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/**
- * The selected photo tray. It is deliberately independent from the parameter
- * panel: selection and editing remain visible while the user moves through a
- * multi-photo set.
- */
+/** A filmstrip for the existing edit queue. Browsing reuses cached previews. */
 @Composable
 fun PhotoStage(
     vm: EditorViewModel,
     onAddPhotos: () -> Unit,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showInfo by remember { mutableStateOf(false) }
-    Column(
-        modifier.fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("展示台", style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onAddPhotos, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting) {
-                Text("添加照片")
-            }
-            if (vm.photos.isNotEmpty()) {
-                IconButton(onClick = { showInfo = true }, enabled = !vm.busy) {
-                    Icon(Icons.Filled.Info, contentDescription = "照片信息")
-                }
-                IconButton(onClick = vm::removeCurrentPhoto, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting) {
-                    Icon(Icons.Filled.DeleteOutline, contentDescription = "从展示台移除照片")
-                }
-                Text("${vm.currentIndex + 1} / ${vm.photos.size}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (vm.dirty) {
-                Text(" · 已修改", style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary)
+    val colors = MaterialTheme.colorScheme
+    val enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting
+    val stripState = rememberLazyListState()
+    var showInfo by rememberSaveable { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    val fileName = vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "当前照片"
+
+    LaunchedEffect(vm.currentIndex, vm.photos.size) {
+        if (vm.currentIndex in vm.photos.indices) {
+            val selected = stripState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == vm.currentIndex }
+            if (selected == null || selected.offset < stripState.layoutInfo.viewportStartOffset ||
+                selected.offset + selected.size > stripState.layoutInfo.viewportEndOffset) {
+                stripState.animateScrollToItem(vm.currentIndex)
             }
         }
+    }
+
+    Column(modifier.fillMaxWidth().background(colors.surfaceContainerLow)) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp).heightIn(min = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("展示台", style = MaterialTheme.typography.titleMedium)
+            Text("${vm.photos.size} 张", Modifier.weight(1f).padding(start = 10.dp),
+                style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            TextButton(onClick = onAddPhotos, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
+                Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("添加照片", style = MaterialTheme.typography.labelMedium)
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Outlined.Close, "关闭展示台", Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+            }
+        }
+
         if (vm.photos.isEmpty()) {
-            Text("从手机相册选择照片后，会在这里逐张编辑。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("把照片放上展示台", style = MaterialTheme.typography.titleSmall)
+                Text("添加照片后，横向浏览并选择要编辑的一张。", style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant)
+            }
         } else {
             LazyRow(
-                modifier = Modifier.fillMaxWidth().height(76.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                state = stripState,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "展示台照片列表" },
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 itemsIndexed(vm.photos, key = { _, uri -> uri.toString() }) { index, uri ->
-                    val thumb = vm.thumbnails[uri]
+                    val selected = index == vm.currentIndex
+                    val thumb = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
                     if (thumb == null) LaunchedEffect(uri) { vm.loadThumbnail(uri) }
-                    Box(
-                        Modifier.size(72.dp).clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .then(if (index == vm.currentIndex) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)) else Modifier)
-                            .clickable(enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting) { vm.selectPhoto(index) },
+                    Column(
+                        Modifier.width(88.dp)
+                            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton,
+                                onClick = { if (!selected) vm.selectPhoto(index) })
+                            .semantics(mergeDescendants = true) {
+                                contentDescription = "展示台照片 ${index + 1}"
+                                stateDescription = if (selected) "当前照片" else "未选中"
+                            },
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth().height(72.dp), contentScale = ContentScale.Crop) }
-                        if (index == vm.currentIndex) {
-                            Text("当前", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.align(androidx.compose.ui.Alignment.BottomStart)
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .9f))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp))
+                        Box(
+                            Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(6.dp))
+                                .background(colors.surfaceContainerHigh)
+                                .then(if (selected) Modifier.border(2.dp, colors.primary, RoundedCornerShape(6.dp)) else Modifier),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (thumb != null) Image(thumb.asImageBitmap(), null,
+                                Modifier.fillMaxSize().padding(if (selected) 3.dp else 0.dp).clip(RoundedCornerShape(3.dp)),
+                                contentScale = ContentScale.Crop)
+                            else Icon(Icons.Outlined.Image, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
+                            if (selected) Box(
+                                Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)
+                                    .background(colors.primary, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(Icons.Outlined.Check, null, Modifier.size(14.dp), tint = colors.onPrimary)
+                            }
                         }
+                        Text(if (selected) "${index + 1} · 当前" else "${index + 1}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) colors.primary else colors.onSurfaceVariant)
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { vm.previousPhoto() },
-                    enabled = vm.currentIndex > 0 && !vm.busy && !vm.isExporting && !vm.isBatchExporting,
-                    modifier = Modifier.weight(1f),
-                ) { Text("上一张") }
-                OutlinedButton(
-                    onClick = { vm.nextPhoto() },
-                    enabled = vm.currentIndex < vm.photos.lastIndex && !vm.busy && !vm.isExporting && !vm.isBatchExporting,
-                    modifier = Modifier.weight(1f),
-                ) { Text("下一张") }
+
+            HorizontalDivider(color = colors.outlineVariant.copy(alpha = .65f))
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(fileName, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${vm.currentIndex + 1} / ${vm.photos.size}",
+                        style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                }
+                IconButton(onClick = vm::previousPhoto, enabled = enabled && vm.currentIndex > 0) {
+                    Icon(Icons.AutoMirrored.Outlined.NavigateBefore, "上一张", Modifier.size(22.dp))
+                }
+                IconButton(onClick = vm::nextPhoto, enabled = enabled && vm.currentIndex < vm.photos.lastIndex) {
+                    Icon(Icons.AutoMirrored.Outlined.NavigateNext, "下一张", Modifier.size(22.dp))
+                }
+                Box {
+                    IconButton(onClick = { showMenu = true }, enabled = enabled) {
+                        Icon(Icons.Outlined.MoreHoriz, "照片操作", Modifier.size(20.dp))
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(text = { Text("照片信息") },
+                            leadingIcon = { Icon(Icons.Outlined.Info, null, Modifier.size(20.dp)) },
+                            onClick = { showMenu = false; showInfo = true })
+                        DropdownMenuItem(text = { Text("从展示台移除") },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
+                            onClick = { showMenu = false; vm.removeCurrentPhoto() })
+                    }
+                }
             }
         }
     }
@@ -132,10 +168,13 @@ fun PhotoStage(
             onDismissRequest = { showInfo = false },
             title = { Text("照片信息") },
             text = {
-                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (vm.photoInfo.isEmpty()) Text("没有可用的照片信息")
                     vm.photoInfo.forEach { (label, value) ->
-                        Text("$label：$value", style = MaterialTheme.typography.bodyMedium)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                            Text(value, style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
             },

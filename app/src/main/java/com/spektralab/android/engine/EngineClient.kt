@@ -6,6 +6,9 @@ import android.graphics.Bitmap
 import android.util.Log
 import java.io.Closeable
 import java.io.File
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * 引擎客户端：Kotlin 侧对 `spk_engine.h` C ABI 的封装。
@@ -23,6 +26,8 @@ class EngineClient private constructor(
 ) : Closeable {
 
     private var sessionPtr: Long = 0L
+    // cancel() is the only JNI session call made from outside the serialized engine dispatcher.
+    private val sessionLifetime = ReentrantReadWriteLock(true)
 
     // ---- 引擎自省 ---------------------------------------------------------
 
@@ -44,30 +49,40 @@ class EngineClient private constructor(
     fun open(data: FloatArray, width: Int, height: Int, channels: Int, paramsJson: String? = null): Long {
         check(enginePtr != 0L) { "engine not created" }
         closeSession()
-        sessionPtr = nativeOpen(enginePtr, data, width, height, channels, paramsJson)
+        val opened = nativeOpen(enginePtr, data, width, height, channels, paramsJson)
+        sessionLifetime.write { sessionPtr = opened }
         return sessionPtr
     }
 
     fun openBitmap(bitmap: Bitmap, paramsJson: String): Long {
         check(enginePtr != 0L)
         closeSession()
-        sessionPtr = nativeOpenBitmap(enginePtr, bitmap, paramsJson)
+        val opened = nativeOpenBitmap(enginePtr, bitmap, paramsJson)
+        sessionLifetime.write { sessionPtr = opened }
         return sessionPtr
     }
 
     fun openRaw(image: NativeRawImage, paramsJson: String): Long {
         check(enginePtr != 0L && image.handle != 0L)
         closeSession()
-        sessionPtr = nativeOpenRaw(enginePtr, image.handle, paramsJson)
+        val opened = nativeOpenRaw(enginePtr, image.handle, paramsJson)
+        sessionLifetime.write { sessionPtr = opened }
         return sessionPtr
     }
 
     fun renderForExport(): NativeRenderResult = requireSession { nativeRenderForExport(enginePtr, sessionPtr) }
 
     fun closeSession() {
-        if (sessionPtr != 0L) {
-            nativeSessionRelease(sessionPtr)
+        sessionLifetime.write {
+            releaseSessionLocked()
+        }
+    }
+
+    private fun releaseSessionLocked() {
+        val session = sessionPtr
+        if (session != 0L) {
             sessionPtr = 0L
+            nativeSessionRelease(session)
         }
     }
 
@@ -108,11 +123,20 @@ class EngineClient private constructor(
 
     // ---- 控制 / 色彩 ------------------------------------------------------
 
-    /** 取消当前（或指定 [progressId]）进行中的渲染。null 取消当前。跨线程安全。 */
-    fun cancel(progressId: String? = null) = nativeCancel(sessionPtr, progressId)
+    /**
+     * Cancel may run across threads, but it must not race the native session destructor.
+     * The read lock lets it run beside an active render; closeSession/close take the write lock.
+     */
+    fun cancel(progressId: String? = null) = sessionLifetime.read {
+        val session = sessionPtr
+        if (session != 0L) nativeCancel(session, progressId)
+    }
 
     /** 读取当前（或指定 [progressId]）渲染的进度。返回 JSON（含 pct/stage）。 */
-    fun progress(progressId: String? = null): String = nativeProgress(enginePtr, sessionPtr, progressId)
+    fun progress(progressId: String? = null): String = sessionLifetime.read {
+        check(enginePtr != 0L) { "engine not created" }
+        nativeProgress(enginePtr, sessionPtr, progressId)
+    }
 
     fun progressSnapshot(): SpkProgress {
         val reply = org.json.JSONObject(progress())
@@ -127,10 +151,13 @@ class EngineClient private constructor(
     // ---- 生命周期 ---------------------------------------------------------
 
     override fun close() {
-        closeSession()
-        if (enginePtr != 0L) {
-            nativeEngineDestroy(enginePtr)
-            enginePtr = 0L
+        sessionLifetime.write {
+            releaseSessionLocked()
+            val engine = enginePtr
+            if (engine != 0L) {
+                enginePtr = 0L
+                nativeEngineDestroy(engine)
+            }
         }
     }
 

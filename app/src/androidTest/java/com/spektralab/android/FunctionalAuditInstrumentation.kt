@@ -12,6 +12,7 @@ import android.os.Looper
 import androidx.lifecycle.ViewModelProvider
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -50,6 +51,15 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     }
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
+        importSelectionOnly = audit == "import-selection"
+        refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
+        homeUiOnly = audit == "home-ui"
+        photoStageOnly = audit == "photo-stage"
+        layoutOnly = audit == "ui-layout"
+        nativeOnly = audit == "native"
+        effectsOnly = audit == "effect-baselines"
+        reviewImageAsset = arguments?.getString("reviewImage")
+        reviewImageSample = arguments?.getString("reviewSample")?.toIntOrNull() ?: 16
         compareOnly = audit == "compare"
         progressOnly = audit == "progress"
         exportOnly = audit == "export"
@@ -62,8 +72,47 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         largeExportEdges = arguments?.getString("edges") == "true"
         super.onCreate(arguments); start()
     }
+    private var refactorOnly = false
+    private var importSelectionOnly = false
+    private var photoStageOnly = false
+    private var homeUiOnly = false
+    private var layoutOnly = false
+    private var nativeOnly = false
+    private var effectsOnly = false
+    private var reviewImageAsset: String? = null
+    private var reviewImageSample = 16
+
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (importSelectionOnly) {
+            case("import.selection_and_async_state") { PhotoImportAudit(this, output).run() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (effectsOnly) {
+            targetedEffectAudit()
+            finish(Activity.RESULT_OK, Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (nativeOnly) {
+            nativeAudit()
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (refactorOnly) {
+            case("ui.refactor_workflow") { refactoredUiAudit() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (progressOnly) {
             case("progress.live_snapshot_is_thread_safe_monotonic") { isolatedProgressAudit() }
             writeReport()
@@ -411,6 +460,56 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         val bytes = ByteBuffer.allocate(r.rgba16.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         r.rgba16.forEach { bytes.putShort(it) }; File(output, "$name.rgba16").writeBytes(bytes.array())
     }
+    private fun targetedEffectAudit() {
+        val width = 192; val height = 128
+        val brightScene = FloatArray(width * height * 3) { index ->
+            val x = index / 3 % width; val y = index / 3 / width
+            if (x in 78..113 && y in 45..82) 16f else .008f + .025f * x / width
+        }
+        EngineClient.create(targetContext).use { engine ->
+            val parameters = EditorParams().apply {
+                autoExposure = false; grainActive = false
+                glareActive = false; halationActive = true; halationAmount = 4f
+            }
+            val base = JSONObject(parameters.openJson(width, height))
+            fun render(changes: JSONObject): SpkResult {
+                engine.open(brightScene, width, height, 3, changes.toString())
+                return engine.render("full")
+            }
+            fun changed(key: String, value: Any) = JSONObject(base.toString()).put(key, value)
+            case("diagnostic.glare_active_with_active_baseline") {
+                val on = render(changed("glare_active", true).put("glare_amount", 20.0))
+                val off = render(changed("glare_active", false).put("glare_amount", 20.0))
+                val difference = mae(on, off)
+                check(difference > 0) { "Glare toggle did not affect active bright fixture" }
+                "active/off MAE=$difference; ${if (difference > 0) "old failure used an already-disabled baseline" else "no-op reproduced on bright active fixture; existing engine behavior"}"
+            }
+            case("diagnostic.glare_amount_with_active_baseline") {
+                val low = render(changed("glare_active", true).put("glare_amount", 1.0))
+                val high = render(changed("glare_active", true).put("glare_amount", 20.0))
+                val difference = mae(low, high)
+                check(difference > 0) { "Glare amount did not affect active bright fixture" }
+                "amount 1/20 MAE=$difference; ${if (difference > 0) "old failure kept glare disabled" else "no-op reproduced with glare enabled; existing engine behavior"}"
+            }
+            case("diagnostic.halation_boost_with_bright_fixture") {
+                val on = render(base)
+                val off = render(changed("halation_active", false))
+                val boosted = render(changed("halation_boost_ev", 4.0))
+                val activeDifference = mae(on, off)
+                val boostDifference = mae(on, boosted)
+                check(activeDifference > 0 && boostDifference > 0) { "Halation or boost did not affect bright fixture" }
+                "halation on/off MAE=$activeDifference; boost 0/4 MAE=$boostDifference; ${if (boostDifference > 0) "effect needs bright highlight stimulus" else if (activeDifference > 0) "boost is a pre-existing engine no-op on active bright fixture; UI still forwards unchanged value" else "fixture inconclusive for halation; core unchanged"}"
+            }
+            case("effect.extended_dynamic_range.bright_fixture") {
+                val off = render(changed("extended_dynamic_range", false))
+                val on = render(changed("extended_dynamic_range", true))
+                val difference = mae(off, on)
+                check(difference > 0) { "EDR did not change the high dynamic range fixture" }
+                "dark-to-bright scene MAE=$difference; low-range ramp does not exercise EDR"
+            }
+        }
+    }
+
     private fun nativeAudit() {
         val catalog = StockCatalog.load(targetContext)
         EngineClient.create(targetContext).use { e ->
@@ -448,9 +547,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             val effects=listOf(
                 "exposure_compensation_ev" to 2.0,"print_exposure" to 0.5,"m_filter_shift" to 0.5,"y_filter_shift" to 0.5,
                 "grain_active" to false,"grain_amount" to 0.0,"grain_amount" to 2.0,"grain_sublayers_active" to false,
-                "halation_active" to false,"halation_amount" to 4.0,"halation_scatter_amount" to 0.2,"halation_boost_ev" to 4.0,
+                "halation_active" to false,"halation_amount" to 4.0,"halation_scatter_amount" to 0.2,
                 "antihalation_removed" to true,"dir_couplers_active" to false,"dir_couplers_amount" to 1.7,
-                "glare_active" to false,"glare_amount" to 20.0,"preflash_exposure" to 0.02,"extended_dynamic_range" to true,
+                "preflash_exposure" to 0.02,
                 "geometry_flip_h" to true,"geometry_flip_v" to true,"geometry_rotation_deg" to 12.0,
                 "camera_filter" to "w25")
             for ((key,value) in effects) case("effect.$key.$value") {
@@ -527,6 +626,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             case("engine.memory_report") {JSONObject(e.memoryReport()).toString()}
             case("engine.cancel_idle_and_recover") {render();e.cancel();valid(render())}
         }
+        // These effects need an active baseline and bright highlights rather than the low-range ramp above.
+        targetedEffectAudit()
     }
     private fun await(timeout: Long = 60000, predicate: () -> Boolean) {
         val start=SystemClock.elapsedRealtime()
@@ -748,6 +849,533 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         case("ui.rotation_portrait"){uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_0);Thread.sleep(700);capture("portrait");"portrait restored"}
         uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE)
     }
+    private fun refactoredUiAudit(): String {
+        val activity = startActivitySync(Intent(targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        await { vm.engine != null && !vm.busy }
+        fun nodes(): AccessibilityNodeInfo? {
+            if (android.os.Build.VERSION.SDK_INT >= 34) uiAutomation.clearCache()
+            return uiAutomation.rootInActiveWindow
+        }
+        fun find(n: AccessibilityNodeInfo?, label: String): AccessibilityNodeInfo? {
+            if (n == null) return null
+            if (n.text?.toString() == label || n.contentDescription?.toString() == label) return n
+            for (i in 0 until n.childCount) find(n.getChild(i), label)?.let { return it }
+            return null
+        }
+        fun click(label: String) {
+            sendStatus(0, Bundle().apply { putString("stream", "UI: $label\n") })
+            try {
+                await(10000) { find(nodes(), label) != null }
+            } catch (error: Throwable) {
+                uiAutomation.takeScreenshot()?.let { bitmap ->
+                    File(output, "refactor_failure.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    bitmap.recycle()
+                }
+                throw IllegalStateException("Missing UI control after waiting: $label", error)
+            }
+            var node = find(nodes(), label) ?: error("Missing UI control: $label")
+            while (!node.isClickable) node = node.parent ?: error("Not clickable: $label")
+            check(node.isEnabled && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Disabled: $label" }
+            waitForIdleSync(); Thread.sleep(300)
+        }
+        fun scroll(n: AccessibilityNodeInfo?, action: Int = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD): Boolean {
+            if (n == null) return false
+            if (n.isScrollable && n.performAction(action)) return true
+            for (i in 0 until n.childCount) if (scroll(n.getChild(i), action)) return true
+            return false
+        }
+        fun scrollToTop() {
+            repeat(25) {
+                if (!scroll(nodes(), AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return
+                Thread.sleep(100)
+            }
+        }
+        fun reveal(label: String) {
+            repeat(25) {
+                find(nodes(), label)?.let { node ->
+                    var target = node
+                    while (!target.isClickable && target.parent != null) target = target.parent
+                    target.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                    waitForIdleSync(); Thread.sleep(150)
+                    return
+                }
+                check(scroll(nodes())) { "Cannot find $label after scrolling" }
+                Thread.sleep(100)
+            }
+            error("Control not reachable: $label")
+        }
+        fun capture(name: String) {
+            waitForIdleSync()
+            uiAutomation.waitForIdle(250, 5000)
+            Thread.sleep(if (homeUiOnly) 900 else 160)
+            uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(output, "refactor_$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+        }
+        fun verifyAdjustmentPreview() {
+            if (find(nodes(), "全屏预览") == null) return // Expanded layouts retain the side-by-side workspace.
+            val result = vm.lastResult
+            fun bounds(label: String): android.graphics.Rect = android.graphics.Rect().also {
+                (find(nodes(), label) ?: error("Missing $label")).getBoundsInScreen(it)
+            }
+            val originalHeight = bounds("照片预览").height()
+            check(originalHeight >= 190 * activity.resources.displayMetrics.density) { "Adjustment preview is too small" }
+            capture("preview_default")
+            click("前后对比"); capture("preview_default_compare"); click("关闭前后对比")
+            click("收起参数")
+            check(bounds("照片预览").height() > originalHeight + 60 * activity.resources.displayMetrics.density) {
+                "Collapsing controls did not release space to the photo"
+            }
+            capture("preview_expanded")
+            click("前后对比")
+            val divider = find(nodes(), "前后对比分界线") ?: error("Missing comparison divider")
+            check(divider.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id, Bundle().apply {
+                putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, .72f)
+            }))
+            capture("preview_compare")
+            click("全屏预览")
+            check(find(nodes(), "关闭全屏预览") != null)
+            check(find(nodes(), "前后对比分界线") != null)
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val metrics = activity.windowManager.currentWindowMetrics
+                val nav = metrics.windowInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.navigationBars()).bottom
+                check(bounds("全屏预览说明").bottom <= metrics.bounds.bottom - nav) {
+                    "Fullscreen caption ${bounds("全屏预览说明")} is below safe bottom ${metrics.bounds.bottom - nav}"
+                }
+            }
+            capture("preview_fullscreen")
+            click("关闭全屏预览")
+            check(find(nodes(), "展开参数") != null) { "Fullscreen close lost the collapsed panel state" }
+            click("全屏预览")
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { find(nodes(), "关闭全屏预览") == null }
+            check(find(nodes(), "展开参数") != null && find(nodes(), "前后对比分界线") != null) {
+                "System Back lost the panel or comparison state"
+            }
+            click("关闭前后对比")
+            click("展开参数")
+            val dragBounds = bounds("调整预览大小")
+            val dragTime = SystemClock.uptimeMillis()
+            fun dragTouch(action: Int, delay: Long, y: Float) {
+                val event = MotionEvent.obtain(dragTime, dragTime + delay, action, dragBounds.exactCenterX(), y, 0)
+                check(uiAutomation.injectInputEvent(event, true))
+                event.recycle()
+            }
+            dragTouch(MotionEvent.ACTION_DOWN, 0, dragBounds.exactCenterY())
+            repeat(8) { step ->
+                dragTouch(MotionEvent.ACTION_MOVE, (step + 1) * 25L,
+                    dragBounds.exactCenterY() - (step + 1) * 12 * activity.resources.displayMetrics.density)
+            }
+            dragTouch(MotionEvent.ACTION_UP, 225, dragBounds.exactCenterY() - 96 * activity.resources.displayMetrics.density)
+            waitForIdleSync(); Thread.sleep(200)
+            check(bounds("照片预览").height() < originalHeight) { "Resizing did not change the split" }
+            check((find(nodes(), "调整预览大小") ?: error("Missing resize control")).performAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id, Bundle().apply {
+                    putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, .5f)
+                }))
+            check(vm.lastResult === result) { "Preview layout changes triggered an image render" }
+        }
+        await { find(nodes(), "更多操作") != null }
+        if (!vm.hasPhoto) capture("home_empty")
+        val image = reviewImageAsset?.let { asset ->
+            val decoded = context.assets.open(asset).use { BitmapFactory.decodeStream(it, null,
+                BitmapFactory.Options().apply { inSampleSize = reviewImageSample }) } ?: error("Cannot decode review image")
+            val exif = context.assets.open(asset).use { ExifInterface(it) }
+            val transform = android.graphics.Matrix().apply {
+                postRotate(exif.rotationDegrees.toFloat())
+                if (exif.isFlipped) postScale(-1f, 1f)
+            }
+            Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, transform, true).also {
+                if (it !== decoded) decoded.recycle()
+            }
+        } ?: Bitmap.createBitmap(256, 192, Bitmap.Config.ARGB_8888).apply {
+            setPixels(IntArray(256 * 192) { i -> -0x1000000 or (((i % 256) * 255 / 256) shl 16) or (((i / 256) * 255 / 192) shl 8) or 70 }, 0, 256, 0, 0, 256, 192)
+        }
+        val files = (1..if (homeUiOnly) 3 else 2).map { index ->
+          val png = homeUiOnly && index == 2
+          File(output, "ui-refactor-$index.${if (png) "png" else "jpg"}").also { file ->
+            val fixture = if (png) Bitmap.createBitmap(image, 0, 0, image.width, image.height,
+                android.graphics.Matrix().apply { postRotate(90f) }, true) else image
+            file.outputStream().use { fixture.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 95, it) }
+            if (fixture !== image) fixture.recycle()
+            if (homeUiOnly && index == 1) {
+                ExifInterface(file).apply {
+                    setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "35/1")
+                    setAttribute(ExifInterface.TAG_F_NUMBER, "2.8")
+                    setAttribute(ExifInterface.TAG_EXPOSURE_TIME, "0.002")
+                    setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, "200")
+                    setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, "2026:10:12 16:42:00")
+                    saveAttributes()
+                }
+            }
+            EditStore.save(targetContext, Uri.fromFile(file), EditorParams())
+          }
+        }
+        image.recycle()
+        runOnMainSync { vm.openPhotos(files.map(Uri::fromFile)) }
+        await { vm.hasPhoto && !vm.busy && vm.lastResult != null }
+        await { find(nodes(), "让光，慢慢显影。") != null }
+        capture("home")
+        if (homeUiOnly) {
+            val sourceFormats = mapOf("a.JPEG" to "JPG", "a.png" to "PNG", "a.TIF" to "TIFF", "a.HEIC" to "HEIC",
+                "a.webp" to "WEBP", "a.avif" to "AVIF", "a.DNG" to "RAW", "a.NEF" to "RAW", "unknown" to "照片")
+            sourceFormats.forEach { (name, label) -> check(sourcePhotoInfo(name).format == label) }
+            check(sourcePhotoInfo("a.jpg", "image/png").format == "PNG")
+            check(sourcePhotoInfo("a.dng").detail == "RAW · DNG")
+            val expectedCapture = listOf("35 mm", "f/2.8", "1/500 s", "ISO 200")
+            check(captureReadouts(vm.photoInfo) == expectedCapture) { "Incorrect EXIF readouts: ${vm.photoInfo}" }
+            check(captureClock(vm.photoInfo) == "16:42")
+            fun metadata(): AccessibilityNodeInfo = find(nodes(), "首页照片参数") ?: error("Missing home metadata")
+            fun checkHomeFormat(label: String) {
+                reveal("首页照片参数")
+                await { find(nodes(), "首页照片参数")?.let { find(it, label) != null } == true }
+            }
+            fun returnHome() {
+                waitForIdleSync()
+                uiAutomation.waitForIdle(250, 5000)
+                await {
+                    var back = find(nodes(), "返回首页")
+                    while (back != null && !back.isClickable) back = back.parent
+                    back?.isEnabled == true && !vm.busy
+                }
+                click("返回首页")
+                await { find(nodes(), "SpektraLab") != null && find(nodes(), "返回首页") == null }
+                scrollToTop()
+            }
+            reveal("当前会话")
+            await { vm.photos.take(3).all { vm.developedPreviews[it] != null || vm.thumbnails[it] != null } }
+            reveal("编辑会话照片 1")
+            var tile = find(nodes(), "编辑会话照片 1") ?: error("Missing session thumbnail")
+            while (!tile.isClickable) tile = tile.parent ?: error("Session thumbnail is not actionable")
+            val tileBounds = Rect().also(tile::getBoundsInScreen)
+            val density = activity.resources.displayMetrics.density
+            check(abs(tileBounds.height() - 84 * density) <= 2) { "Thumbnail has a detached footer: $tileBounds" }
+            if (android.os.Build.VERSION.SDK_INT >= 30) check(tile.stateDescription?.toString() == "编辑中 · JPG") {
+                "Incorrect current-photo announcement: ${tile.stateDescription}"
+            }
+            capture("home_session")
+            scrollToTop(); checkHomeFormat("JPG")
+            expectedCapture.forEach { check(find(metadata(), it) != null) { "Home missing $it" } }
+            runOnMainSync { vm.exportFormat = "TIFF" }
+            checkHomeFormat("JPG") // The source format must not follow export settings.
+            val sameResult = vm.lastResult
+            click("继续显影")
+            await { find(nodes(), "照片参数信息") != null }
+            check(vm.lastResult === sameResult) { "Opening the hero triggered rendering" }
+            expectedCapture.forEach { check(find(find(nodes(), "照片参数信息"), it) != null) { "Editor missing $it" } }
+            capture("home_editor_metadata")
+            runOnMainSync { vm.params.exposureEv = .75f; vm.scheduleRender() }
+            await { vm.lastResult !== sameResult && !vm.busy }
+            returnHome()
+            reveal("编辑会话照片 2"); click("编辑会话照片 2")
+            await { vm.currentIndex == 1 && !vm.busy && vm.lastResult != null }
+            capture("home_editor_png")
+            returnHome()
+            scrollToTop(); checkHomeFormat("PNG")
+            check(captureReadouts(vm.photoInfo).isEmpty()) { "Missing PNG EXIF was invented" }
+            capture("home_png")
+            reveal("编辑会话照片 2")
+            var selectedPng = find(nodes(), "编辑会话照片 2") ?: error("Missing PNG thumbnail")
+            while (!selectedPng.isClickable) selectedPng = selectedPng.parent ?: error("PNG thumbnail is not actionable")
+            if (android.os.Build.VERSION.SDK_INT >= 30) check(selectedPng.stateDescription?.toString() == "编辑中 · PNG") {
+                "Incorrect PNG announcement: ${selectedPng.stateDescription}"
+            }
+            reveal("编辑会话照片 1"); click("编辑会话照片 1")
+            await { vm.currentIndex == 0 && !vm.busy && vm.lastResult != null }
+            check(abs(vm.params.exposureEv - .75f) < .001f) { "Home navigation lost saved edits" }
+            returnHome(); scrollToTop(); checkHomeFormat("JPG")
+            capture("home_restored")
+            reveal("添加照片"); click("添加照片")
+            await {
+                nodes()?.let { it.packageName?.toString() != targetContext.packageName } == true
+            }
+            uiAutomation.waitForIdle(250, 5000)
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { find(nodes(), "SpektraLab") != null }
+            check(vm.photos.size == 3 && vm.currentIndex == 0)
+            val extras = (4..14).map { index -> File(output, "home-$index.jpg").also { files[0].copyTo(it, overwrite = true) } }
+            runOnMainSync { vm.addPhotos(extras.map(Uri::fromFile)); vm.selectPhoto(13) }
+            await { !vm.busy && vm.currentIndex == 13 && find(nodes(), "编辑会话照片 14") != null }
+            reveal("编辑会话照片 14")
+            await {
+                vm.photos.indices.filter { find(nodes(), "编辑会话照片 ${it + 1}")?.isVisibleToUser == true }
+                    .all { vm.developedPreviews[vm.photos[it]] != null || vm.thumbnails[vm.photos[it]] != null }
+            }
+            capture("home_many")
+            runOnMainSync { vm.openPhotos(listOf(Uri.fromFile(files[0]))) }
+            await { !vm.busy && vm.hasPhoto }
+            scrollToTop(); reveal("当前会话"); capture("home_single")
+            runOnMainSync { vm.removeCurrentPhoto() }
+            await { !vm.hasPhoto && find(nodes(), "从一张照片开始") != null }
+            scrollToTop(); capture("home_empty_final")
+            runOnMainSync { vm.openPhotos(files.map(Uri::fromFile)) }
+            await { !vm.busy && vm.hasPhoto }
+            scrollToTop(); capture("home_final")
+            check(vm.errorMessage == null)
+            return "Home: full-image 84dp session tiles, editing state and source formats, JPEG EXIF, missing PNG metadata, source/export independence, editor readouts, edit restoration, picker cancel, 14-photo auto-scroll, single and empty states passed."
+        }
+        reveal("继续显影")
+        click("继续显影")
+        await { find(nodes(), "胶片与相纸") != null }
+        capture("editor")
+        val beforeNavigation = vm.lastResult
+        if (photoStageOnly) {
+            fun bounds(label: String): Rect = Rect().also {
+                (find(nodes(), label) ?: error("Missing $label")).getBoundsInScreen(it)
+            }
+            fun openStage() {
+                click("${vm.currentIndex + 1} / ${vm.photos.size}")
+                await { find(nodes(), "关闭展示台") != null }
+                Thread.sleep(400)
+            }
+            fun control(label: String): AccessibilityNodeInfo {
+                var node = find(nodes(), label) ?: error("Missing $label")
+                while (!node.isClickable) node = node.parent ?: error("Not clickable: $label")
+                return node
+            }
+            fun checkTarget(label: String) {
+                val node = control(label)
+                val rect = Rect().also(node::getBoundsInScreen)
+                val min = 48 * activity.resources.displayMetrics.density - 1
+                check(rect.width() >= min && rect.height() >= min) { "$label touch target is $rect" }
+            }
+            fun checkStageMetadata() {
+                fun hasEditClaim(node: AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    val text = node.text?.toString().orEmpty()
+                    if ("未调整" in text || "已修改" in text) return true
+                    return (0 until node.childCount).any { hasEditClaim(node.getChild(it)) }
+                }
+                check(!hasEditClaim(nodes())) { "Stage inferred edit history from the session dirty flag" }
+                check(find(nodes(), "${vm.currentIndex + 1} / ${vm.photos.size}") != null)
+            }
+            openStage()
+            checkStageMetadata() // Untouched photo.
+            capture("stage_two_photos")
+            check(vm.lastResult === beforeNavigation) { "Opening the stage triggered a render" }
+            listOf("添加照片", "关闭展示台", "上一张", "下一张", "照片操作").forEach(::checkTarget)
+            val currentBounds = bounds("展示台照片 1")
+            check(currentBounds.width() >= 48 * activity.resources.displayMetrics.density - 1 &&
+                currentBounds.height() >= 48 * activity.resources.displayMetrics.density - 1)
+            check(!control("上一张").isEnabled) { "Previous should be disabled at the first photo" }
+            // Android does not expose ACTION_CLICK on an already selected radio item.
+            val currentTapTime = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(currentTapTime, SystemClock.uptimeMillis(), action,
+                    currentBounds.exactCenterX(), currentBounds.exactCenterY(), 0)
+                check(uiAutomation.injectInputEvent(event, true)); event.recycle()
+            }
+            waitForIdleSync(); Thread.sleep(200)
+            check(vm.lastResult === beforeNavigation) { "Tapping the current photo triggered a render" }
+            click("照片操作"); capture("stage_menu")
+            click("照片信息"); capture("stage_info"); click("关闭")
+            check(vm.lastResult === beforeNavigation) { "Inspecting photo information triggered a render" }
+            runOnMainSync { vm.params.exposureEv = 1.25f; vm.scheduleRender() }
+            await { !vm.busy && vm.lastResult !== beforeNavigation }
+            checkStageMetadata() // Currently edited photo.
+            click("展示台照片 2")
+            await { vm.currentIndex == 1 && !vm.busy && vm.lastResult != null }
+            check(abs(EditStore.load(targetContext, Uri.fromFile(files[0]))!!.exposureEv - 1.25f) < .001f)
+            check(!control("下一张").isEnabled) { "Next should be disabled at the last photo" }
+            click("上一张")
+            await { vm.currentIndex == 0 && !vm.busy }
+            check(abs(vm.params.exposureEv - 1.25f) < .001f) { "Switching lost the first photo edit" }
+            checkStageMetadata() // Saved edits restored after switching back.
+            capture("stage_restored_edit")
+            val beforePicker = vm.lastResult
+            click("添加照片")
+            Thread.sleep(600)
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { find(nodes(), "关闭展示台") != null }
+            check(vm.photos.size == 2 && vm.currentIndex == 0 && vm.lastResult === beforePicker)
+            val extras = (3..24).map { index ->
+                File(output, "stage-$index-photo-with-a-long-file-name.jpg").also { files[0].copyTo(it, overwrite = true) }
+            }
+            runOnMainSync { vm.addPhotos(extras.map(Uri::fromFile)) }
+            check(vm.lastResult === beforePicker && vm.currentIndex == 0)
+            runOnMainSync { vm.selectPhoto(23) }
+            await { vm.currentIndex == 23 && !vm.busy && find(nodes(), "展示台照片 24") != null }
+            Thread.sleep(500)
+            val selectedBounds = bounds("展示台照片 24")
+            check(selectedBounds.left >= 0 && selectedBounds.right <= activity.resources.displayMetrics.widthPixels) {
+                "Selected photo did not scroll into view: $selectedBounds"
+            }
+            await(15000) {
+                vm.photos.indices.filter { find(nodes(), "展示台照片 ${it + 1}")?.isVisibleToUser == true }
+                    .all { index -> vm.developedPreviews[vm.photos[index]] != null || vm.thumbnails[vm.photos[index]] != null }
+            }
+            capture("stage_many_photos")
+            click("照片操作"); click("从展示台移除")
+            await { vm.photos.size == 23 && !vm.busy }
+            check(extras.last().exists()) { "Removing a stage entry deleted the source file" }
+            runOnMainSync { vm.openPhotos(listOf(Uri.fromFile(files[0]))) }
+            await { !vm.busy && vm.currentUri == Uri.fromFile(files[0]) }
+            capture("stage_single_photo")
+            click("照片操作"); click("从展示台移除")
+            await { vm.photos.isEmpty() && !vm.hasPhoto }
+            capture("stage_empty")
+            check(files[0].exists() && find(nodes(), "添加照片") != null)
+            click("关闭展示台")
+            check(find(nodes(), "关闭展示台") == null)
+            runOnMainSync { vm.openPhotos(files.map(Uri::fromFile)) }
+            await { !vm.busy && vm.hasPhoto }
+            openStage()
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { find(nodes(), "关闭展示台") == null }
+            openStage()
+            capture("stage_final")
+            check(vm.errorMessage == null)
+            return "Stage: selection, compact navigation, metadata, picker cancel, add without rerender, edit preservation, auto-scroll across 24 photos, long names, removal without source deletion, single/empty states, explicit close and system Back passed."
+        }
+        if (layoutOnly) {
+            if (find(nodes(), "全部调整") != null) click("全部调整")
+            verifyAdjustmentPreview()
+            capture("shoot")
+            click("胶片与相纸")
+            val firstFilm = vm.films.first()
+            val beforeFilm = vm.lastResult
+            click(firstFilm.name)
+            await { vm.params.filmId == firstFilm.id && vm.lastResult !== beforeFilm }
+            capture("film_stocks")
+            click("应用胶片与相纸")
+            click("放印")
+            capture("print")
+            if (find(nodes(), "全屏预览") != null) {
+                click("放大机")
+                click("前后对比")
+                capture("print_overview_compare")
+                click("关闭前后对比")
+                click("放大机")
+            }
+            click("调色")
+            capture("grade")
+            reveal("几何与裁剪"); click("几何与裁剪")
+            reveal("自由裁剪"); click("自由裁剪")
+            check(vm.isCropping)
+            capture("crop")
+            click("完成裁剪")
+            await { !vm.busy && !vm.isCropping }
+            click("导出")
+            capture("export")
+            check(vm.errorMessage == null)
+            return "Responsive UI screenshots captured; film selection, grouped controls, crop and export reachable."
+        }
+        click("全部调整")
+        check(vm.lastResult === beforeNavigation) { "Opening controls triggered a render" }
+        verifyAdjustmentPreview()
+        reveal("测光方法")
+        var meteringNode = find(nodes(), "测光方法") ?: error("Missing metering selector")
+        while (!meteringNode.isClickable) meteringNode = meteringNode.parent ?: error("Metering selector is not clickable")
+        val meteringBounds = android.graphics.Rect().also(meteringNode::getBoundsInScreen)
+        check(meteringBounds.height() >= 48 * activity.resources.displayMetrics.density - 1) { "Selector target below 48dp" }
+        if (android.os.Build.VERSION.SDK_INT >= 30) check(meteringNode.stateDescription?.toString() == "均衡测光") {
+            "Metering state announcement: ${meteringNode.stateDescription}"
+        }
+        click("测光方法"); click("保护高光")
+        await { vm.params.autoExposureMethod == "protect_highlights" }
+        await { EditStore.load(targetContext, vm.currentUri!!)?.autoExposureMethod == "protect_highlights" }
+        check(editorOptionLabel(vm.params.autoExposureMethod) == "保护高光")
+        click("测光方法"); click("均衡测光")
+        await { EditStore.load(targetContext, vm.currentUri!!)?.autoExposureMethod == "balanced" }
+        capture("shoot")
+        click("返回大图预览")
+        click("1 / 2")
+        Thread.sleep(700)
+        capture("tray_open")
+        await { find(nodes(), "下一张") != null }
+        click("下一张")
+        await { vm.currentIndex == 1 && !vm.busy }
+        click("照片操作"); click("照片信息"); click("关闭")
+        capture("photo_tray")
+        sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK); Thread.sleep(300)
+        click("胶片与相纸")
+        capture("film_stocks")
+        click("黑白")
+        val bw = vm.films.first { StockCatalog.isMonochrome(it.id) }
+        click(bw.name)
+        await { vm.params.filmId == bw.id && vm.lastResult != null }
+        check(StockCatalog.canPrint(vm.params.filmId, vm.params.paperId))
+        click("应用胶片与相纸")
+        check(find(nodes(), "全部调整") != null) { "Editor layout state was not restored" }
+        click("前后对比")
+        check(find(nodes(), "前后对比分界线") != null)
+        click("关闭前后对比")
+        click("更多操作"); click("裁剪照片"); click("完成裁剪")
+        await { !vm.busy && !vm.isCropping }
+        click("放印")
+        check(find(nodes(), "放大机") != null)
+        reveal("乳剂与暗房效应")
+        click("乳剂与暗房效应")
+        reveal("颗粒")
+        val beforeGrain = vm.lastResult
+        click("颗粒")
+        await { vm.lastResult !== beforeGrain || vm.errorMessage != null }
+        check(vm.errorMessage == null) { vm.errorMessage!! }
+        val beforePrint = vm.lastResult
+        runOnMainSync { vm.params.printExposure = 1.1f; vm.scheduleRender() }
+        await { vm.lastResult !== beforePrint }
+        check(!vm.lastResult!!.rgba16.contentEquals(beforePrint!!.rgba16)) { "Print exposure did not change the output" }
+        val printReusedNegative = vm.lastResult!!.reprint
+        capture("print")
+        click("调色")
+        val negative = vm.lastResult
+        val beforeGrade = vm.rendered
+        runOnMainSync { vm.params.temperature = .4f; vm.scheduleGrade() }
+        await { vm.rendered !== beforeGrade }
+        check(vm.lastResult === negative) { "Layer 2 rebuilt the engine result" }
+        capture("grade")
+        click("导出")
+        capture("export")
+        runOnMainSync { vm.exportRes = 2048 }
+        for (format in listOf("JPEG", "PNG", "TIFF")) {
+            scrollToTop()
+            click(format)
+            check(vm.exportFormat == format)
+            val previousExports = "导出成功".toRegex().findAll(vm.log).count()
+            reveal("导出当前照片"); click("导出当前照片")
+            if (vm.isExporting) {
+                await(3000) { find(nodes(), "取消导出") != null || !vm.isExporting }
+                if (vm.isExporting) {
+                    check(find(nodes(), "导出中") != null) { "Export progress did not remain on the export page" }
+                    uiAutomation.takeScreenshot()?.let { bitmap ->
+                        File(output, "refactor_export_progress.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        bitmap.recycle()
+                    }
+                }
+            }
+            await(90000) { !vm.isExporting }
+            check(vm.errorMessage == null) { vm.errorMessage!! }
+            check("导出成功".toRegex().findAll(vm.log).count() > previousExports) { "$format export did not finish" }
+        }
+        scrollToTop(); click("JPEG")
+        click("批量导出 · 2")
+        capture("export_batch")
+        reveal("导出本次会话 (2 张)"); click("导出本次会话 (2 张)")
+        if (vm.isBatchExporting) {
+            await(3000) { find(nodes(), "取消导出") != null || !vm.isBatchExporting }
+            if (vm.isBatchExporting) {
+                check(find(nodes(), "导出中") != null)
+                uiAutomation.takeScreenshot()?.let { bitmap ->
+                    File(output, "refactor_export_batch_progress.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    bitmap.recycle()
+                }
+            }
+        }
+        await(90000) { !vm.isBatchExporting }
+        check(vm.errorMessage == null) { vm.errorMessage!! }
+        check(vm.log.contains("批量导出 2/2"))
+        click("返回暗房")
+        check(find(nodes(), "白平衡") != null) { "Export back lost Grade tab" }
+        click("返回大图预览")
+        click("返回首页")
+        check(find(nodes(), "继续显影") != null)
+        return "Home/editor/tray/film+paper/compare/crop/print/grade/JPEG+PNG+TIFF/batch/back passed; opening controls did not render; print changed output (existing full parameter delta reprint=$printReusedNegative); Layer 2 reused the cached engine result."
+    }
+
     private fun editorAudit() {
         val app=targetContext.applicationContext as Application
         lateinit var vm: EditorViewModel
