@@ -609,8 +609,15 @@ private fun EditorScreen(
                         else LinearProgressIndicator(Modifier.fillMaxWidth(), color = progressAccent, trackColor = progressTrack)
                         if (vm.isExporting || vm.isBatchExporting) {
                             FilledTonalButton(onClick = { vm.cancelRender() },
-                                enabled = vm.renderStage != "正在取消…" && !(vm.isExporting && (pct ?: 0f) >= 96f),
-                                modifier = Modifier.fillMaxWidth()) { Text(if (vm.renderStage == "正在取消…") "正在取消…" else "取消导出") }
+                                enabled = vm.renderStage != "正在取消…" && (pct ?: 0f) < 100f &&
+                                    !vm.isExportCommitCompleted,
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(when {
+                                    vm.renderStage == "正在取消…" -> "正在取消…"
+                                    vm.isExporting && !vm.isBatchExporting -> "取消处理"
+                                    else -> "取消导出"
+                                })
+                            }
                         }
                     }
                 }

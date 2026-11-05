@@ -474,16 +474,22 @@ Java_com_spektralab_android_engine_EngineClient_nativeExportDi(
 JNIEXPORT jobject JNICALL
 Java_com_spektralab_android_engine_EngineClient_nativeRenderDigitalIntermediate(
     JNIEnv* env, jobject, jlong enginePtr, jlong sessionPtr) {
-    spk_result r{};
+    auto result = std::make_unique<spk_result>();
+    std::memset(result.get(), 0, sizeof(spk_result));
     char* out = nullptr;
-    spk_status st = spk_render_digital_intermediate(asSession(sessionPtr), &r, &out);
+    spk_status st = spk_render_digital_intermediate(asSession(sessionPtr), result.get(), &out);
     if (out) spk_string_free(out);
     if (st != SPK_OK) {
+        spk_result_free(result.get());
         throwEngineError(env, asEngine(enginePtr), st);
         return nullptr;
     }
-    jobject obj = wrapResult(env, r);
-    spk_result_free(&r);
+    jclass cls = env->FindClass("com/spektralab/android/engine/NativeRenderResult");
+    jmethodID ctor = cls ? env->GetMethodID(cls, "<init>", "(JII)V") : nullptr;
+    jobject obj = ctor ? env->NewObject(cls, ctor, reinterpret_cast<jlong>(result.get()),
+        jint(result->width), jint(result->height)) : nullptr;
+    if (obj) result.release();
+    else spk_result_free(result.get());
     return obj;
 }
 

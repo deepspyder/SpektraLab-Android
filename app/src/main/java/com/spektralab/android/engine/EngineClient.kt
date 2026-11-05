@@ -118,7 +118,7 @@ class EngineClient private constructor(
     fun exportDi(printStock: String? = null): SpkResult =
         requireSession { nativeExportDi(enginePtr, sessionPtr, printStock) }
 
-    fun renderDigitalIntermediate(): SpkResult =
+    fun renderDigitalIntermediate(): NativeRenderResult =
         requireSession { nativeRenderDigitalIntermediate(enginePtr, sessionPtr) }
 
     // ---- 控制 / 色彩 ------------------------------------------------------
@@ -197,7 +197,7 @@ class EngineClient private constructor(
     private external fun nativeRenderFull(enginePtr: Long, sessionPtr: Long, tier: String): SpkResult
     private external fun nativePreviewStockLut(enginePtr: Long, sessionPtr: Long, printStock: String, tier: String): SpkResult
     private external fun nativeExportDi(enginePtr: Long, sessionPtr: Long, printStock: String?): SpkResult
-    private external fun nativeRenderDigitalIntermediate(enginePtr: Long, sessionPtr: Long): SpkResult
+    private external fun nativeRenderDigitalIntermediate(enginePtr: Long, sessionPtr: Long): NativeRenderResult
     private external fun nativeCancel(sessionPtr: Long, progressId: String?)
     private external fun nativeProgress(enginePtr: Long, sessionPtr: Long, progressId: String?): String
     private external fun nativeOutputTransform(

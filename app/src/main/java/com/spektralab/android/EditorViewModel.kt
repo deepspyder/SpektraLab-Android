@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.NonCancellable
 import com.spektralab.android.engine.CameraWhiteBalance
 import com.spektralab.android.engine.ColorPipeline
 import com.spektralab.android.engine.EngineClient
@@ -92,6 +93,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var isCropping by mutableStateOf(false)
     var cropAspect by mutableStateOf("原始")
     var isExporting by mutableStateOf(false)
+        private set
+    var isExportCommitCompleted by mutableStateOf(false)
         private set
     var exportFormat by mutableStateOf("JPEG")
     var exportRes by mutableStateOf(2560)
@@ -842,8 +845,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 取消当前进行中的渲染（跨线程安全，渲染在下个节点边界回退并返回 cancelled）。
     fun cancelRender() {
+        if (isExportCommitCompleted) return
         if (isExporting || isBatchExporting) {
-            if (isExporting && (renderProgress ?: 0f) >= 96f) return
+            if (isExporting && (renderProgress ?: 0f) >= 100f) return
             exportCancelRequested = true
             renderStage = "正在取消…"
         }
@@ -875,6 +879,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!hasPhoto || isExporting || isBatchExporting || busy) return
         isExporting = true
         exportCancelRequested = false
+        isExportCommitCompleted = false
         val uri = currentUri
         val exportParams = params.copy()
         val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
@@ -942,9 +947,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 poller?.cancelAndJoin()
                 val pl = previewLinear
-                if (uri != null && pl != null) {
+                if (pl != null) {
                     try {
                         withContext(engineDispatcher) {
+                            sourceExif = uri?.let(::readExif)
                             e.open(pl, previewW, previewH, 3, params.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
                             val pr = e.render("live")
                             updateResult(pr)
@@ -956,6 +962,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 renderProgress = null
                 renderStage = ""
                 exportCancelRequested = false
+                isExportCommitCompleted = false
                 isExporting = false
             }
         }
@@ -1210,6 +1217,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val batchColorSpace = exportColorSpace
         isBatchExporting = true
         exportCancelRequested = false
+        isExportCommitCompleted = false
         renderProgress = 0f
         renderStage = "准备批量导出"
         saveCurrentSidecar()
@@ -1223,6 +1231,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     val outputCs = if (batchFormat == "TIFF") batchColorSpace else "sRGB"
                     for ((i, uri) in batchPhotos.withIndex()) {
                         checkExportCancellation()
+                        isExportCommitCompleted = false
                         withContext(Dispatchers.Main.immediate) {
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
@@ -1276,96 +1285,154 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         renderProgress = null
                         renderStage = ""
                         exportCancelRequested = false
+                        isExportCommitCompleted = false
                     }
                 }
             }
         }
     }
 
-    // 导出数字中间片（DI）：Cineon log 编码，设备 RGB 密度，不套 Layer 2、不嵌 ICC。
-    fun exportDi() {
+    private fun runExportAction(
+        label: String,
+        maxLongEdge: Int,
+        outputColorSpace: String,
+        action: suspend (EngineClient, EditorParams, Long, Long) -> Unit,
+    ) {
         val e = engine ?: return
-        if (!hasPhoto || isExporting) return
-        isExporting = true
-        viewModelScope.launch {
-            withContext(engineDispatcher) {
-                try {
-                    val r = e.renderDigitalIntermediate()
-                    val path = saveDiTiff(r, System.currentTimeMillis().toString())
-                    append("DI 导出: ${r.width}×${r.height} → $path")
-                    toast("DI 已导出")
-                } catch (ex: SpkException) {
-                    fail("SpkException: ${ex.message}")
-                } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
-                } finally {
-                    isExporting = false
-                }
-            }
-        }
-    }
+        if (!hasPhoto || busy || isExporting || isBatchExporting) return
 
-    // 软打样：以导出分辨率重新解码 + full 渲染并显示结果（不保存），供检查导出质量。
-    fun softProof() {
-        val e = engine ?: return
-        if (!hasPhoto || isExporting) return
-        isExporting = true
         val uri = currentUri
-        val proofParams = params.copy()
+        val editParams = params.copy()
+        val photo = photoGeneration
+        val revision = renderGeneration
+        val previewPixels = previewLinear
+        val previewWidth = previewW
+        val previewHeight = previewH
+        val previewInputSpace = previewInputColorSpace
+        isExporting = true
+        exportCancelRequested = false
+        isExportCommitCompleted = false
+        renderProgress = 0f
+        renderStage = "准备$label"
+
         viewModelScope.launch {
-            withContext(engineDispatcher) {
-                try {
-                    val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
-                    if (uri != null) openExportSource(e, uri, proofParams, exportRes, outputCs)
-                    val r = e.render("full")
-                    updateResult(r, outputCs)
-                    e.setParams(JSONObject().put("output_color_space", "sRGB").toString())
-                    append("软打样: ${r.width}×${r.height}  ${r.elapsedMs}ms")
-                } catch (_: OutOfMemoryError) {
-                    fail("软打样内存不足，请选择较小的预览尺寸")
-                } catch (ex: SpkException) {
+            var progressJob: Job? = null
+            try {
+                renderStage = "读取原片"
+                withContext(engineDispatcher) {
+                    if (uri != null) {
+                        openExportSource(e, uri, editParams, maxLongEdge, outputColorSpace)
+                    } else {
+                        e.setParams(JSONObject().put("output_color_space", outputColorSpace).toString())
+                    }
+                }
+                checkExportCancellation()
+                renderProgress = 8f
+                renderStage = "正在$label"
+                val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
+                progressJob = launch(Dispatchers.IO) {
+                    while (isActive) {
+                        val progress = runCatching { e.progressSnapshot() }.getOrNull()
+                        if (exportCancelRequested) e.cancel(progress?.progressId)
+                        if (progress != null && progress.progressId != previousProgressId) {
+                            withContext(Dispatchers.Main.immediate) {
+                                renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
+                                if (progress.done && !exportCancelRequested) renderStage = "完成渲染"
+                            }
+                        }
+                        delay(120)
+                    }
+                }
+
+                action(e, editParams, photo, revision)
+                checkExportCancellation()
+                renderProgress = 100f
+                renderStage = "$label 完成"
+                delay(250)
+            } catch (_: ExportCancelled) {
+                append("$label 已取消")
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (_: OutOfMemoryError) {
+                fail("$label 内存不足，请选择较小尺寸后重试")
+            } catch (ex: SpkException) {
+                if (exportCancelRequested || ex.message?.contains("cancel", ignoreCase = true) == true) {
+                    append("$label 已取消")
+                } else {
                     fail("SpkException: ${ex.message}")
-                } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
-                } finally {
-                    isExporting = false
+                }
+            } catch (ex: Exception) {
+                if (exportCancelRequested) append("$label 已取消")
+                else fail("${ex::class.simpleName}: ${ex.message}")
+            } finally {
+                withContext(NonCancellable) {
+                    try {
+                        progressJob?.cancelAndJoin()
+                        if (previewPixels != null && photo == photoGeneration) {
+                            renderStage = "恢复编辑预览"
+                            withContext(engineDispatcher) {
+                                e.open(
+                                    previewPixels,
+                                    previewWidth,
+                                    previewHeight,
+                                    3,
+                                    editParams.openJson(previewWidth, previewHeight, inputColorSpace = previewInputSpace),
+                                )
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        fail("恢复编辑预览失败: ${ex.message}")
+                    } finally {
+                        renderProgress = null
+                        renderStage = ""
+                        exportCancelRequested = false
+                        isExportCommitCompleted = false
+                        isExporting = false
+                    }
                 }
             }
         }
     }
 
-    // 高清预览：preview tier（3400px）渲染，检查颗粒/光晕，比 full 更快、比 live 更清晰。
-    fun previewTier() {
-        val e = engine ?: return
-        if (!hasPhoto || isExporting) return
-        isExporting = true
-        viewModelScope.launch {
-            withContext(engineDispatcher) {
-                try {
-                    // The interactive input is capped at 2048px; reopen the source before asking
-                    // for 3400px, otherwise the "HD" action can never exceed the old preview.
-                    currentUri?.let { uri ->
-                        if (currentIsRaw) {
-                            val raw = resizeRaw(decodeRaw(uri, halfSize = false), 3400)
-                            e.open(raw.linearProPhoto, raw.width, raw.height, 3,
-                                params.openJson(raw.width, raw.height, inputColorSpace = "ProPhoto RGB"))
-                        } else {
-                            val bitmap = decodeBitmapForExport(uri, 3400)
-                            e.open(ColorPipeline.bitmapToLinearSrgb(bitmap), bitmap.width, bitmap.height, 3,
-                                params.openJson(bitmap.width, bitmap.height))
-                        }
-                    }
-                    val r = e.render("preview")
-                    updateResult(r)
-                    append("高清预览: ${r.width}×${r.height}  ${r.elapsedMs}ms")
-                } catch (ex: SpkException) {
-                    fail("SpkException: ${ex.message}")
-                } catch (ex: Exception) {
-                    fail("${ex::class.simpleName}: ${ex.message}")
-                } finally {
-                    isExporting = false
+    // DI TIFF：按导出分辨率读取原片，输出 Cineon log 16-bit，不套 Layer 2、不嵌 ICC。
+    fun exportDi() {
+        runExportAction("DI TIFF", exportRes, "sRGB") { e, _, _, _ ->
+            val result = withContext(engineDispatcher) { e.renderDigitalIntermediate() }
+            try {
+                checkExportCancellation()
+                renderProgress = 96f
+                renderStage = "写入 DI TIFF"
+                val path = withContext(Dispatchers.IO) {
+                    saveDiTiff(result, System.currentTimeMillis().toString())
                 }
+                append("DI 导出: ${result.width}×${result.height} → $path")
+                toast("DI 已导出")
+            } finally {
+                result.close()
             }
+        }
+    }
+
+    // 软打样：按导出尺寸/色彩空间重渲染并显示，不保存文件。
+    fun softProof() {
+        val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
+        val previewLongEdge = if (exportRes <= 0) 3400 else exportRes.coerceAtMost(3400)
+        runExportAction("软打样", previewLongEdge, outputCs) { e, editParams, photo, revision ->
+            val result = withContext(engineDispatcher) { e.render("full") }
+            checkExportCancellation()
+            updateResult(result, outputCs, photo, revision, editParams)
+            append("软打样: ${result.width}×${result.height}  ${result.elapsedMs}ms")
+        }
+    }
+
+    // 高清预览：通过原片解码器直接限制到 3400px，避免 RAW 全尺寸 managed float buffer。
+    fun previewTier() {
+        val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
+        runExportAction("高清预览", 3400, outputCs) { e, editParams, photo, revision ->
+            val result = withContext(engineDispatcher) { e.render("preview") }
+            checkExportCancellation()
+            updateResult(result, outputCs, photo, revision, editParams)
+            append("高清预览: ${result.width}×${result.height}  ${result.elapsedMs}ms")
         }
     }
 
@@ -1433,7 +1500,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
             try {
                 val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
-                tmp.outputStream().use { TiffWriter.writeNative(result, grade(editParams), icc, it) }
+                tmp.outputStream().use {
+                    TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation)
+                }
                 return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
             } finally { tmp.delete() }
         }
@@ -1478,10 +1547,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (uri != null) {
                 try {
                     val stream = app.contentResolver.openOutputStream(uri) ?: error("无法写入相册文件")
-                    stream.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                    stream.use { out ->
+                        tmp.inputStream().use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                checkExportCancellation()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                out.write(buffer, 0, count)
+                            }
+                        }
+                    }
                     checkExportCancellation()
                     values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
                     check(app.contentResolver.update(uri, values, null, null) > 0) { "无法完成相册文件" }
+                    exportCancelRequested = false // The media commit succeeded; late cancel requests cannot undo it.
+                    isExportCommitCompleted = true
                     return "相册: $uri"
                 } catch (ex: Throwable) {
                     app.contentResolver.delete(uri, null, null)
@@ -1490,7 +1571,28 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
-        return File(dir, name).also { tmp.copyTo(it, overwrite = true) }.absolutePath
+        val destination = File(dir, name)
+        val pending = File(dir, "$name.pending")
+        try {
+            FileOutputStream(pending, false).use { out ->
+                tmp.inputStream().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        checkExportCancellation()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        out.write(buffer, 0, count)
+                    }
+                }
+            }
+            checkExportCancellation()
+            check(pending.renameTo(destination)) { "无法完成相册文件" }
+            exportCancelRequested = false
+            isExportCommitCompleted = true
+            return destination.absolutePath
+        } finally {
+            pending.delete()
+        }
     }
 
     private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
@@ -1504,60 +1606,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveTiff(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
         val g = grade(editParams)
         val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
-        val name = "SpektraLab_$suffix.tiff"
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/tiff")
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
+        val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
+        try {
+            tmp.outputStream().use { out ->
+                TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation)
             }
-            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val uri = app.contentResolver.insert(collection, values)
-            if (uri != null) {
-                app.contentResolver.openOutputStream(uri)?.use { out ->
-                    TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out)
-                }
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                app.contentResolver.update(uri, values, null, null)
-                return uri.toString()
-            }
+            return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
+        } finally {
+            tmp.delete()
         }
-
-        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
-        val file = File(dir, name)
-        FileOutputStream(file).use { out -> TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out) }
-        return file.absolutePath
     }
 
     // DI TIFF：无调色、无 ICC（设备 RGB 密度）。
-    private fun saveDiTiff(result: SpkResult, suffix: String): String {
+    private fun saveDiTiff(result: NativeRenderResult, suffix: String): String {
         val name = "SpektraLab_DI_$suffix.tiff"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/tiff")
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
+        val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
+        try {
+            tmp.outputStream().use { out ->
+                TiffWriter.writeNative(
+                    result,
+                    grade = null,
+                    icc = null,
+                    out = out,
+                    checkCancelled = ::checkExportCancellation,
+                )
             }
-            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val uri = app.contentResolver.insert(collection, values)
-            if (uri != null) {
-                app.contentResolver.openOutputStream(uri)?.use { out ->
-                    TiffWriter.writeRgba16(result.rgba16, result.width, result.height, null, null, out)
-                }
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                app.contentResolver.update(uri, values, null, null)
-                return uri.toString()
-            }
+            return publishExport(tmp, name, "image/tiff")
+        } finally {
+            tmp.delete()
         }
-        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
-        val file = File(dir, name)
-        FileOutputStream(file).use { out -> TiffWriter.writeRgba16(result.rgba16, result.width, result.height, null, null, out) }
-        return file.absolutePath
     }
 
     private fun readSrgbIcc(): ByteArray? = try {

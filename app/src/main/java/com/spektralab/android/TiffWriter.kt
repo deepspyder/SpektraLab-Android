@@ -19,17 +19,25 @@ object TiffWriter {
         grade: Grade?,
         icc: ByteArray?,
         out: OutputStream,
+        checkCancelled: () -> Unit = {},
     ) {
-        writeRows(width, height, grade, icc, out) { y, rows, destination ->
+        writeRows(width, height, grade, icc, out, checkCancelled) { y, rows, destination ->
             rgba16.copyInto(destination, 0, y * width * 4, (y + rows) * width * 4)
         }
     }
 
-    fun writeNative(result: NativeRenderResult, grade: Grade?, icc: ByteArray?, out: OutputStream) {
-        writeRows(result.width, result.height, grade, icc, out, result::readRows)
+    fun writeNative(
+        result: NativeRenderResult,
+        grade: Grade?,
+        icc: ByteArray?,
+        out: OutputStream,
+        checkCancelled: () -> Unit = {},
+    ) {
+        writeRows(result.width, result.height, grade, icc, out, checkCancelled, result::readRows)
     }
 
     private fun writeRows(width: Int, height: Int, grade: Grade?, icc: ByteArray?, out: OutputStream,
+                          checkCancelled: () -> Unit,
                           read: (Int, Int, ShortArray) -> Unit) {
         val n = width * height
         val pixelBytes = n * 3 * 2
@@ -81,25 +89,32 @@ object TiffWriter {
         val px = FloatArray(3)
         val rows = minOf(32, height)
         val strip = ShortArray(width * rows * 4)
-        for (i in 0 until n) {
-            if (i % (width * rows) == 0) read(i / width, minOf(rows, height - i / width), strip)
-            val index = i % (width * rows) * 4
-            if (grade != null) {
-                grade.grade(strip[index], strip[index + 1], strip[index + 2], px)
-                chunk.putShort(toU16(px[0]))
-                chunk.putShort(toU16(px[1]))
-                chunk.putShort(toU16(px[2]))
-            } else {
-                // 无调色透传（DI 导出：设备 RGB 密度，不套 Layer 2）
-                chunk.putShort(strip[index])
-                chunk.putShort(strip[index + 1])
-                chunk.putShort(strip[index + 2])
+        var y = 0
+        while (y < height) {
+            checkCancelled()
+            val stripRows = minOf(rows, height - y)
+            read(y, stripRows, strip)
+            for (i in 0 until width * stripRows) {
+                val index = i * 4
+                if (grade != null) {
+                    grade.grade(strip[index], strip[index + 1], strip[index + 2], px)
+                    chunk.putShort(toU16(px[0]))
+                    chunk.putShort(toU16(px[1]))
+                    chunk.putShort(toU16(px[2]))
+                } else {
+                    // 无调色透传（DI 导出：设备 RGB 密度，不套 Layer 2）
+                    chunk.putShort(strip[index])
+                    chunk.putShort(strip[index + 1])
+                    chunk.putShort(strip[index + 2])
+                }
+                if (chunk.remaining() < 6) {
+                    out.write(chunk.array(), 0, chunk.position())
+                    chunk.clear()
+                }
             }
-            if (chunk.remaining() < 6) {
-                out.write(chunk.array(), 0, chunk.position())
-                chunk.clear()
-            }
+            y += stripRows
         }
+        checkCancelled()
         if (chunk.position() > 0) out.write(chunk.array(), 0, chunk.position())
     }
 

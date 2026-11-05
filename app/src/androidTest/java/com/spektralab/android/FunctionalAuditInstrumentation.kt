@@ -16,6 +16,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.spektralab.android.engine.*
@@ -36,6 +37,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var compareOnly = false
     private var progressOnly = false
     private var exportOnly = false
+    private var exportActionsOnly = false
     private var largeExportOnly = false
     private var assetBatchOnly = false
     private var largeExportResolution = 0
@@ -63,6 +65,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         compareOnly = audit == "compare"
         progressOnly = audit == "progress"
         exportOnly = audit == "export"
+        exportActionsOnly = audit == "export-actions"
         largeExportOnly = audit == "large-export"
         assetBatchOnly = audit == "assets-batch"
         exportMemoryOnly = audit == "export-memory"
@@ -127,6 +130,14 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
                 Bundle().apply {putString("stream", rows.toString(2))})
+            return
+        }
+        if (exportActionsOnly) {
+            case("export.quick_actions_tiff_and_session_restore") { exportActionAudit() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
             return
         }
         if (largeExportOnly) {
@@ -285,6 +296,183 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         return "${values.size} samples, ${levels.size} levels, ${values.first()}→${values.last()}%; single/batch cancellation and missing-file cleanup passed; stages=${phases.joinToString()}"
     }
 
+    private fun exportActionAudit(): String {
+        val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        await { vm.engine != null && !vm.busy }
+
+        val width = 3600
+        val height = 2700
+        val source = File(output, "export-actions-source.jpg")
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+        try {
+            val row = IntArray(width)
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    row[x] = -0x1000000 or ((x * 255 / width) shl 16) or
+                        ((y * 255 / height) shl 8) or ((x + y) % 255)
+                }
+                bitmap.setPixels(row, 0, width, 0, y, width, 1)
+            }
+            source.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it)) }
+        } finally {
+            bitmap.recycle()
+        }
+
+        val uri = Uri.fromFile(source)
+        EditStore.save(targetContext.applicationContext, uri, EditorParams().apply {
+            grainActive = false
+            glareActive = false
+        })
+        runOnMainSync {
+            vm.dismissError()
+            vm.exportFormat = "TIFF"
+            vm.exportColorSpace = "Display P3"
+            vm.exportRes = 1280
+            vm.openPhotos(listOf(uri))
+        }
+        await(90000) { vm.errorMessage != null || vm.lastResult != null && !vm.busy }
+        check(vm.errorMessage == null) { "export action source failed to load: ${vm.errorMessage}" }
+        check(max(vm.sourceBitmap!!.width, vm.sourceBitmap!!.height) <= 2048) { "interactive source preview exceeded 2048px" }
+
+        fun awaitAction(name: String) {
+            await(180000) { !vm.isExporting }
+            check(vm.renderProgress == null && vm.renderStage.isEmpty()) { "$name left export progress active" }
+            check(vm.errorMessage == null) { "$name failed: ${vm.errorMessage}; log=${vm.log.takeLast(1000)}" }
+        }
+        fun restoredInteractiveSession(name: String) {
+            val outputSpace = JSONObject(vm.engine!!.getParams()).optString("output_color_space")
+            check(outputSpace == "sRGB") { "$name did not restore the interactive session color space: $outputSpace" }
+        }
+
+        val createdOutputs = mutableListOf<Uri>()
+        try {
+        val galleryBeforeProof = targetContext.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID), null, null, null,
+        )?.use { it.count } ?: 0
+        runOnMainSync { vm.softProof() }
+        awaitAction("soft proof")
+        val proof = vm.lastResult ?: error("soft proof produced no preview")
+        check(max(proof.width, proof.height) == 1280) { "soft proof ignored the selected 1280px export size: ${proof.width}x${proof.height}" }
+        val galleryAfterProof = targetContext.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID), null, null, null,
+        )?.use { it.count } ?: 0
+        check(galleryAfterProof == galleryBeforeProof) { "soft proof unexpectedly saved an image" }
+        restoredInteractiveSession("soft proof")
+
+        runOnMainSync { vm.previewTier() }
+        awaitAction("3400px preview")
+        val highDefinition = vm.lastResult ?: error("high-definition preview produced no result")
+        check(max(highDefinition.width, highDefinition.height) == 3400) {
+            "high-definition preview did not decode and render at 3400px: ${highDefinition.width}x${highDefinition.height}"
+        }
+        restoredInteractiveSession("high-definition preview")
+
+        val beforeEdit = vm.lastResult
+        runOnMainSync {
+            vm.params.exposureEv = .35f
+            vm.scheduleRender()
+        }
+        await(90000) { vm.errorMessage != null || vm.lastResult !== beforeEdit && !vm.busy }
+        check(vm.errorMessage == null && vm.lastResult !== beforeEdit) {
+            "editor could not render after the high-definition preview: ${vm.errorMessage}"
+        }
+        val afterEdit = vm.lastResult
+        runOnMainSync {
+            vm.params.exposureEv = 0f
+            vm.scheduleRender()
+        }
+        await(90000) { vm.errorMessage != null || !vm.busy && vm.lastResult !== afterEdit }
+        check(vm.errorMessage == null) { "editor failed to restore test parameters: ${vm.errorMessage}" }
+
+        fun outputUri(logPrefix: String): Uri {
+            val line = vm.log.lineSequence().lastOrNull { it.startsWith(logPrefix) }
+                ?: error("Missing output log for $logPrefix: ${vm.log.takeLast(1200)}")
+            val location = line.substringAfter("→ ").trim().removePrefix("相册: ")
+            check(location.startsWith("content://")) { "expected a MediaStore URI for $logPrefix, got $location" }
+            return Uri.parse(location).also { createdOutputs.add(it) }
+        }
+        data class TiffInfo(val width: Int, val height: Int, val bits: List<Int>, val compression: Int,
+                            val samples: Int, val hasIcc: Boolean)
+        fun inspectTiff(outputUri: Uri): TiffInfo {
+            val bytes = targetContext.contentResolver.openInputStream(outputUri)?.use { it.readBytes() }
+                ?: error("cannot read TIFF $outputUri")
+            check(bytes.size >= 16 && bytes[0] == 'I'.code.toByte() && bytes[1] == 'I'.code.toByte()) { "TIFF is not little-endian" }
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            check((buffer.getShort(2).toInt() and 0xffff) == 42) { "invalid TIFF magic" }
+            val ifd = buffer.getInt(4)
+            check(ifd >= 8 && ifd + 2 <= bytes.size) { "invalid TIFF IFD offset $ifd" }
+            val count = buffer.getShort(ifd).toInt() and 0xffff
+            check(ifd + 2 + count * 12 <= bytes.size) { "truncated TIFF IFD" }
+            val entries = (0 until count).associate { index ->
+                val offset = ifd + 2 + index * 12
+                (buffer.getShort(offset).toInt() and 0xffff) to offset
+            }
+            fun scalar(tag: Int): Long {
+                val offset = entries[tag] ?: error("TIFF tag $tag missing")
+                val type = buffer.getShort(offset + 2).toInt() and 0xffff
+                val itemCount = buffer.getInt(offset + 4).toLong() and 0xffffffffL
+                check(itemCount == 1L) { "TIFF tag $tag is not scalar" }
+                return when (type) {
+                    3 -> (buffer.getShort(offset + 8).toInt() and 0xffff).toLong()
+                    4 -> buffer.getInt(offset + 8).toLong() and 0xffffffffL
+                    else -> error("unsupported TIFF scalar type $type for tag $tag")
+                }
+            }
+            val bitsOffset = entries[258] ?: error("BitsPerSample tag missing")
+            val bitCount = buffer.getInt(bitsOffset + 4)
+            check(bitCount == 3) { "RGB TIFF should declare three channel bit depths, got $bitCount" }
+            val bitOffset = buffer.getInt(bitsOffset + 8)
+            check(bitOffset >= 0 && bitOffset + 6 <= bytes.size) { "BitsPerSample offset outside TIFF" }
+            val bits = (0..2).map { buffer.getShort(bitOffset + it * 2).toInt() and 0xffff }
+            val iccEntry = entries[34675]
+            val hasIcc = iccEntry != null && (buffer.getInt(iccEntry + 4).toLong() and 0xffffffffL) > 0
+            return TiffInfo(scalar(256).toInt(), scalar(257).toInt(), bits,
+                scalar(259).toInt(), scalar(277).toInt(), hasIcc)
+        }
+        fun assertPublished(uri: Uri, expectedNamePart: String) {
+            targetContext.contentResolver.query(uri,
+                arrayOf(MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.IS_PENDING), null, null, null
+            )?.use { cursor ->
+                check(cursor.moveToFirst()) { "published TIFF is missing from MediaStore" }
+                check(cursor.getString(0).contains(expectedNamePart)) { "unexpected TIFF filename: ${cursor.getString(0)}" }
+                check(cursor.getInt(1) == 0) { "TIFF remained pending in MediaStore" }
+            } ?: error("cannot query published TIFF")
+        }
+
+        runOnMainSync { vm.exportDi() }
+        awaitAction("DI TIFF")
+        val diUri = outputUri("DI 导出:")
+        val diInfo = inspectTiff(diUri)
+        check(diInfo.width == 1280 && diInfo.height == 960) { "DI TIFF has wrong dimensions: $diInfo" }
+        check(diInfo.bits == listOf(16, 16, 16) && diInfo.samples == 3 && diInfo.compression == 1 && !diInfo.hasIcc) {
+            "DI TIFF format is wrong: $diInfo"
+        }
+        assertPublished(diUri, "SpektraLab_DI_")
+        restoredInteractiveSession("DI TIFF")
+
+        runOnMainSync { vm.export() }
+        awaitAction("16-bit TIFF export")
+        val tiffUri = outputUri("导出成功:")
+        val tiffInfo = inspectTiff(tiffUri)
+        check(tiffInfo.width == 1280 && tiffInfo.height == 960) { "export TIFF has wrong dimensions: $tiffInfo" }
+        check(tiffInfo.bits == listOf(16, 16, 16) && tiffInfo.samples == 3 && tiffInfo.compression == 1 && tiffInfo.hasIcc) {
+            "16-bit P3 TIFF format/profile is wrong: $tiffInfo"
+        }
+        assertPublished(tiffUri, "SpektraLab_")
+        restoredInteractiveSession("TIFF export")
+
+        return "Soft proof followed the selected resolution; HD preview reopened the 3600px source; editor session recovered after all actions; DI and P3 TIFF headers, bit depth, dimensions, ICC and MediaStore publication verified."
+        } finally {
+            createdOutputs.forEach { targetContext.contentResolver.delete(it, null, null) }
+            runOnMainSync { activity.finish() }
+            source.delete()
+        }
+    }
+
     private fun isolatedLargeExportAudit(): String {
         val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         lateinit var vm: EditorViewModel
@@ -402,6 +590,17 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                     }.toByteArray()
                     val actualTiff = java.io.ByteArrayOutputStream().also { TiffWriter.writeNative(actual, grade, null, it) }.toByteArray()
                     check(expectedTiff.contentEquals(actualTiff)) { "strip TIFF changed pixels or tags" }
+                    var stripeChecks = 0
+                    val cancellation = runCatching {
+                        TiffWriter.writeRgba16(pixels, actual.width, actual.height, null, null,
+                            java.io.ByteArrayOutputStream()) {
+                            stripeChecks++
+                            if (stripeChecks == 2) error("cancel sentinel")
+                        }
+                    }.exceptionOrNull()
+                    check(cancellation?.message == "cancel sentinel" && stripeChecks == 2) {
+                        "TIFF writer did not honor cancellation between strips"
+                    }
                     // Native results must remain readable after the GPU session closes.
                     engine.closeSession()
                     actual.readRows(actual.height - 1, 1, ShortArray(actual.width * 4))
@@ -620,7 +819,18 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 val r=render(JSONObject(p.openJson(w,h)).put("glare_active",false));valid(r)
             }
             case("preview.paper_lut") {render();valid(e.previewStockLut("kodak_portra_endura","live"))}
-            case("export.digital_intermediate") {render();valid(e.renderDigitalIntermediate())}
+            case("export.digital_intermediate") {
+                render()
+                e.renderDigitalIntermediate().use { result ->
+                    check(result.width > 0 && result.height > 0)
+                    val rows = ShortArray(result.width * minOf(32, result.height) * 4)
+                    result.readRows(0, minOf(32, result.height), rows)
+                    check(rows.filterIndexed { index, _ -> index % 4 != 3 }.distinct().size > 1) {
+                        "DI result has no varying RGB pixels"
+                    }
+                    "${result.width}x${result.height} native 16-bit rows are readable"
+                }
+            }
             case("export.normalized_density") {render();valid(e.exportDi())}
             case("color.output_transform") {JSONObject(e.outputTransform("ProPhoto RGB","sRGB")).toString()}
             case("engine.memory_report") {JSONObject(e.memoryReport()).toString()}
