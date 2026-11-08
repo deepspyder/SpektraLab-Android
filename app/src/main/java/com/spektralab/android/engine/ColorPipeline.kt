@@ -60,7 +60,7 @@ object ColorPipeline {
         val displayTransform = if (sourceColorSpace == "Display P3")
             ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB)) else null
         for (i in 0 until n) {
-            grade.grade(rgba16[i * 4 + 0], rgba16[i * 4 + 1], rgba16[i * 4 + 2], out)
+            grade.gradeAt(rgba16[i * 4 + 0], rgba16[i * 4 + 1], rgba16[i * 4 + 2], out, i % width, i / width, width, height)
             displayTransform?.transform(out)
             val r = (out[0] * 255f + 0.5f).toInt().coerceIn(0, 255)
             val g = (out[1] * 255f + 0.5f).toInt().coerceIn(0, 255)
@@ -168,9 +168,17 @@ class Grade(
     private val cbShadow: FloatArray,
     private val cbMid: FloatArray,
     private val cbHigh: FloatArray,
+    private val vignetteAmount: Float = 0f,
+    private val vignetteSize: Float = .5f,
+    private val vignetteFeather: Float = .7f,
 ) {
     private val midGrey = 0.4614f  // SRGB_MID_GREY（desktop adjustments.ts）
     private val encodedExposureGain = Math.pow(exposureGain.toDouble(), 1.0 / 2.2).toFloat()
+    private val vignetteGains = if (vignetteAmount > 0f) FloatArray(1025) { index ->
+        val t = index / 1024f
+        val weight = t * t * (3f - 2f * t)
+        Math.pow(2.0, (-2.5f * vignetteAmount.coerceIn(0f, 1f) * weight / 2.2f).toDouble()).toFloat()
+    } else null
     private val identity = wbR == 1f && wbG == 1f && wbB == 1f && encodedExposureGain == 1f && contrast == 0f &&
         brightness == 0f && highlights == 0f && shadows == 0f && blackPoint == 0f && whitePoint == 0f &&
         saturation == 1f && cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
@@ -231,6 +239,20 @@ class Grade(
         out[0] = (r + cbShadow[0] * wS + cbMid[0] * wM + cbHigh[0] * wH).coerceIn(0f, 1f)
         out[1] = (g + cbShadow[1] * wS + cbMid[1] * wM + cbHigh[1] * wH).coerceIn(0f, 1f)
         out[2] = (b + cbShadow[2] * wS + cbMid[2] * wM + cbHigh[2] * wH).coerceIn(0f, 1f)
+    }
+
+    /** Output-relative coordinates make preview, JPEG/PNG and strip-written TIFF agree. */
+    fun gradeAt(r16: Short, g16: Short, b16: Short, out: FloatArray, x: Int, y: Int, width: Int, height: Int) {
+        grade(r16, g16, b16, out)
+        val gains = vignetteGains ?: return
+        val nx = (2f * x + 1f) / width - 1f
+        val ny = (2f * y + 1f) / height - 1f
+        val inner = .08f + vignetteSize.coerceIn(0f, 1f) * .85f
+        val innerSquared = inner * inner
+        val span = (.08f + vignetteFeather.coerceIn(0f, 1f) * 1.7f)
+        val t = ((nx * nx + ny * ny - innerSquared) / span).coerceIn(0f, 1f)
+        val gain = gains[(t * 1024f + .5f).toInt()]
+        out[0] *= gain; out[1] *= gain; out[2] *= gain
     }
 
     private fun powAtLeast0(v: Float, e: Float): Float =

@@ -222,11 +222,11 @@
   },
   "components": [
     {
-      "name": "观景台接触印",
+      "name": "观景台自由画布",
       "kind": "custom",
-      "description": "局部暖纸和胶片色；1.25 宽高比的裁切照片框、齿孔、帧编号与当前状态。标题使用 Material headlineSmall，英文副标题使用衬线 labelSmall。灯光切换 360ms；照片首次显示采用 460ms 渐显与位移，进入查看器采用渐显及缩放。",
-      "html": "<section class=\"ds-gallery\"><header><strong>观景台</strong><small>CONTACT SHEET</small></header><div class=\"ds-gallery-film\"><div class=\"ds-gallery-sprockets\">▪ ▪ ▪ ▪ ▪ ▪ ▪</div><div class=\"ds-gallery-frames\"><div></div><div class=\"ds-gallery-current\"></div><div></div></div><small>01　　　　　　02 · 当前　　　　　　03</small></div></section>",
-      "css": ".ds-gallery{max-width:440px;padding:16px;background:#F1EEE7;color:#242321;font:14px sans-serif}.ds-gallery header{display:flex;flex-direction:column;gap:4px;margin-bottom:16px}.ds-gallery header strong{font-size:24px}.ds-gallery header small{color:#68645D;font:11px serif}.ds-gallery-film{padding:6px 8px;background:#252421;color:#B8B2A8}.ds-gallery-sprockets{color:#F1EEE7;text-align:center}.ds-gallery-frames{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.ds-gallery-frames div{aspect-ratio:1.25;background:#39372F}.ds-gallery-current{outline:1.5px solid #E5B96F;outline-offset:-1.5px}.ds-gallery-film small{font-size:10px}"
+      "description": "原比例无边框照片自由摆放；拖动照片移动单张，空白处平移，双指缩放画布35–600%。位置与叠放顺序保存，不吸附固定行列。按需串行加载可见高清预览，最多请求4张、缓存6张；已显影效果优先。显示原始尺寸与格式，原文件不改写。灯光360ms过渡，窗口亮度0.9/0.2并在退出后恢复。",
+      "html": "<section class=\"ds-photo-table\"><header>观景台</header><div class=\"ds-photo-space\"><div class=\"ds-photo a\">横向照片</div><div class=\"ds-photo b\">竖向照片</div><div class=\"ds-photo c\">全景照片</div></div><footer>拖动照片 · 双指缩放　 −　100%　＋</footer></section>",
+      "css": ".ds-photo-table{background:#F1EEE7;color:#242321;font:14px sans-serif;padding:16px}.ds-photo-table header{font-size:20px}.ds-photo-space{position:relative;min-height:280px;margin-top:20px}.ds-photo{position:absolute;display:grid;place-items:center;background:#39372F;color:#F1EEE7;font-size:11px;cursor:grab}.ds-photo.a{left:0;top:8px;width:140px;height:95px}.ds-photo.b{left:165px;top:35px;width:100px;height:160px}.ds-photo.c{left:10px;top:215px;width:220px;height:48px}.ds-photo-table footer{min-height:48px;display:flex;align-items:center;font-size:12px}"
     },
     {
       "name": "主要操作",
@@ -295,18 +295,32 @@
       "css": ".ds-home{max-width:393px;padding:12px 20px;background:#151515;color:#F2EEE6;font:12px sans-serif}.ds-home-title,.ds-home-meta,.ds-home-session{display:flex;align-items:center;justify-content:space-between;gap:12px}.ds-home-title{margin-bottom:14px;font-size:18px}.ds-home-title small,.ds-home-accent{color:#E5AA55}.ds-home-hero{width:100%;aspect-ratio:1.4;border-radius:16px;background:#2E2E2E}.ds-home-meta{margin-top:6px;color:#B8B2A8}.ds-home-session{margin-top:20px;border-top:1px solid #424242}.ds-home-session small{margin-left:auto;color:#B8B2A8}.ds-home-session button{min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-home-session button:hover{background:#252525}.ds-home-session button:focus-visible{outline:2px solid #E5AA55}.ds-home-strip{display:flex;gap:10px;overflow:auto}.ds-home-photo{position:relative;flex:0 0 112px;height:84px;border-radius:10px;background:#2E2E2E}.ds-home-current{outline:1px solid #E5AA55;outline-offset:-1px}.ds-home-photo span,.ds-home-photo em{position:absolute;padding:3px 5px;border-radius:6px;background:rgba(0,0,0,.75);font-style:normal}.ds-home-photo span{bottom:6px;left:6px}.ds-home-current span{color:#E5AA55}.ds-home-photo em{top:6px;right:6px}"
     },
     {
-      "name": "照片展示台",
+      "name": "编辑照片工作台",
       "kind": "custom",
-      "description": "编辑队列底部面板：20dp 顶部圆角和 20dp 拖动柄行；88×104dp 照片框、10dp 圆角，当前项以 2dp 琥珀边框、勾选及文字标识。标题行包含数量、添加和关闭；分隔线下显示文件名、位置及上一张、下一张、照片操作。选择变化时按需滚动到当前照片；支持空队列、单张、照片信息和移除。优先复用已显影预览，再使用缩略图。",
-      "html": "<section class=\"ds-stage\" aria-label=\"照片展示台示意\"><div class=\"ds-stage-handle\"><span></span></div><header class=\"ds-stage-header\"><strong>展示台</strong><small>2 张</small><button>添加照片</button><button aria-label=\"关闭展示台\">×</button></header><div class=\"ds-stage-strip\"><div><div class=\"ds-stage-photo ds-stage-current\"><span>✓</span></div><small class=\"ds-stage-label\">1 · 当前</small></div><div><div class=\"ds-stage-photo\"></div><small>2</small></div></div><footer class=\"ds-stage-footer\"><div><strong>照片文件名</strong><small>1 / 2</small></div><button aria-label=\"上一张\" disabled>‹</button><button aria-label=\"下一张\">›</button><button aria-label=\"照片操作\">···</button></footer></section>",
-      "css": ".ds-stage{max-width:440px;overflow:hidden;border-radius:20px 20px 0 0;background:#191919;color:#F2EEE6;font:14px sans-serif}.ds-stage-handle{display:grid;place-items:center;height:20px}.ds-stage-handle span{width:32px;height:4px;border-radius:2px;background:#888888}.ds-stage-header{display:flex;align-items:center;min-height:56px;padding:0 8px 0 20px;gap:10px}.ds-stage-header small{flex:1;color:#B8B2A8}.ds-stage button{min-width:48px;min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-stage button:hover{background:#252525}.ds-stage button:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}.ds-stage button:disabled{color:#666}.ds-stage-strip{display:flex;gap:12px;overflow:auto;padding:8px 20px 16px}.ds-stage-photo{width:88px;height:104px;border-radius:10px;background:#2E2E2E}.ds-stage-current{position:relative;outline:2px solid #E5AA55;outline-offset:-2px}.ds-stage-current span{position:absolute;top:6px;right:6px;display:grid;place-items:center;width:20px;height:20px;border-radius:6px;background:#E5AA55;color:#261A0C}.ds-stage-strip small{display:block;margin-top:8px;color:#B8B2A8}.ds-stage-strip .ds-stage-label{color:#E5AA55}.ds-stage-footer{display:flex;align-items:center;padding:8px 8px 8px 20px;border-top:1px solid #424242}.ds-stage-footer div{flex:1;min-width:0}.ds-stage-footer strong,.ds-stage-footer small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-stage-footer small{margin-top:4px;color:#B8B2A8}"
+      "description": "顶部工具栏下常驻照片列表：64×60dp Fit 缩略图，72dp条高；短横屏56×48dp/56dp条高。点图直接切换，当前项自动滚入视野。左侧当前位置打开管理，右侧48dp添加按钮。底部管理保留信息、前后切换和移除，源文件不删除。顶部列表占布局空间不遮预览；拍摄/放印/调色共用，导出/观景台/裁剪/全屏使用专用布局。短横屏导航转到底部，侧栏最小窗口高500dp。",
+      "html": "<section class=\"ds-edit-queue\"><button aria-label=\"管理照片工作台\">照片<br><strong>1/3</strong></button><div class=\"ds-edit-thumbs\"><button class=\"ds-active\" aria-pressed=\"true\"><span>1</span></button><button aria-pressed=\"false\"><span>2</span></button><button aria-pressed=\"false\"><span>3</span></button></div><button aria-label=\"添加编辑照片\">＋</button></section>",
+      "css": ".ds-edit-queue{display:flex;align-items:center;min-height:72px;padding:6px 8px;box-sizing:border-box;background:#191919;color:#F2EEE6;gap:4px;font:12px sans-serif}.ds-edit-queue>button{flex:none;min-width:48px;min-height:48px;padding:0;border:0;border-radius:8px;background:transparent;color:#B8B2A8}.ds-edit-queue strong{color:#E5AA55;font-size:11px}.ds-edit-thumbs{flex:1;display:flex;gap:8px;overflow:auto;padding:0 4px}.ds-edit-thumbs button{position:relative;flex:none;width:64px;height:60px;border:0;border-radius:8px;background:#252525;color:#B8B2A8}.ds-edit-thumbs .ds-active{border:2px solid #E5AA55}.ds-edit-thumbs span{position:absolute;bottom:3px;left:3px;background:#1C1C1C;border-radius:6px;padding:0 4px}.ds-edit-queue button:focus-visible{outline:2px solid #E5AA55;outline-offset:-2px}"
     },
     {
       "name": "导出设置",
       "kind": "custom",
-      "description": "最大宽度 600dp；照片信息区上、下内边距 12dp、8dp，单张/批量分段后间隔 12dp，高级设置行最小 48dp。局部字号/行高为 9/12、10/14、11/16、12/16、14/20sp。DI TIFF、软打样、高清预览为实际动作；固定底部上下内边距 4dp、间距 6dp，按需显示的实际进度区内边距 8dp、间距 4dp，并提供取消。",
+      "description": "最大宽度 600dp；照片信息区上、下内边距 12dp、8dp，单张/批量分段后间隔 12dp，高级设置行最小 48dp。局部字号/行高为 9/12、10/14、11/16、12/16、14/20sp。DI TIFF、软打样、高清预览为实际动作；固定底部上下内边距 4dp、间距 6dp，按需显示的实际进度区内边距 8dp、间距 4dp，并提供取消。 拍摄信息与位置信息为常驻独立开关，默认开/关，支持JPEG/PNG/TIFF、配方记忆与批量逐图复制；处理时禁用。",
       "html": "<div class=\"ds-export\"><div class=\"ds-export-row\">分辨率 <span>长边 2560 px</span></div><div class=\"ds-export-row\">色彩空间 <span>sRGB IEC61966-2.1</span></div><button class=\"ds-export-button\">导出当前照片</button></div>",
       "css": ".ds-export{max-width:600px;padding:0 20px;background:#151515;color:#F2EEE6;font:12px sans-serif}.ds-export-row{display:flex;align-items:center;justify-content:space-between;min-height:48px;border-bottom:1px solid #424242}.ds-export-row span{color:#B8B2A8;font-size:11px}.ds-export-button{width:100%;min-height:48px;margin-top:16px;border:0;border-radius:12px;background:#E5AA55;color:#261A0C;font-weight:600}.ds-export-button:hover{filter:brightness(1.08)}.ds-export-button:focus-visible{outline:2px solid #F2EEE6;outline-offset:2px}.ds-export-button:active{filter:brightness(.9)}"
+    },
+    {
+      "name": "电影裁剪",
+      "kind": "custom",
+      "description": "2.39:1、1.85:1和自定义；框内连续移动，四角缩放，固定比例约束；28dp手势安全边距。",
+      "html": "<section class=\"ds-edit-feature\">取消　裁剪照片　完成裁剪<br><div class=\"ds-crop-selection\"></div><span>比例　2.39:1　⌄</span></section>",
+      "css": ".ds-edit-feature{padding:16px;background:#191919;color:#F2EEE6;font:14px sans-serif}.ds-edit-feature input{display:block;width:100%;accent-color:#E5AA55}.ds-crop-selection{aspect-ratio:2.39;margin:32px 12px;border:2px solid #F2EEE6;background:#252525}"
+    },
+    {
+      "name": "暗角调节",
+      "kind": "custom",
+      "description": "调色中的强度、范围、羽化0–100；默认强度0，预览与JPEG/PNG/16-bit TIFF输出共用空间坐标算法。",
+      "html": "<section class=\"ds-edit-feature\">暗角<br>强度　75%<input type=\"range\" value=\"75\"><br>范围　50%<input type=\"range\" value=\"50\"><br>羽化　70%<input type=\"range\" value=\"70\"></section>",
+      "css": ".ds-edit-feature{padding:16px;background:#191919;color:#F2EEE6;font:14px sans-serif}.ds-edit-feature input{display:block;width:100%;accent-color:#E5AA55}.ds-crop-selection{aspect-ratio:2.39;margin:32px 12px;border:2px solid #F2EEE6;background:#252525}"
     }
   ],
   "narrative": {

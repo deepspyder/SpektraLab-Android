@@ -26,6 +26,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlin.math.min
 
 private enum class CropDrag { NONE, MOVE, TL, TR, BL, BR }
 
@@ -42,6 +43,7 @@ fun CropOverlay(
     cropH: Float,
     onCropChange: (x: Float, y: Float, w: Float, h: Float) -> Unit,
     modifier: Modifier = Modifier,
+    lockedAspect: Float? = null,
 ) {
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
     var drag by remember { mutableStateOf(CropDrag.NONE) }
@@ -49,6 +51,8 @@ fun CropOverlay(
 
     // 让手势 lambda 始终读到最新的 crop 值（否则 pointerInput 闭包会捕获旧值）。
     val latestCrop by rememberUpdatedState(floatArrayOf(cropX, cropY, cropW, cropH))
+    val latestChange by rememberUpdatedState(onCropChange)
+    val latestAspect by rememberUpdatedState(lockedAspect)
 
     val imgAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
 
@@ -77,7 +81,7 @@ fun CropOverlay(
     Box(
         modifier
             .onSizeChanged { boxSize = it }
-            .pointerInput(boxSize) {
+            .pointerInput(boxSize, bitmap.width, bitmap.height) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         if (disp.width <= 0f || disp.height <= 0f) {
@@ -114,16 +118,33 @@ fun CropOverlay(
                             CropDrag.BR -> { w += dx; h += dy }
                             CropDrag.NONE -> {}
                         }
-                        val minW = 0.1f
-                        val minH = 0.1f
+                        val ratio = latestAspect?.takeIf { it > 0f }?.let { it / imgAspect }
+                        if (ratio != null && drag != CropDrag.MOVE) {
+                            val left = drag == CropDrag.TL || drag == CropDrag.BL
+                            val top = drag == CropDrag.TL || drag == CropDrag.TR
+                            val anchorX = if (left) startCrop[0] + startCrop[2] else startCrop[0]
+                            val anchorY = if (top) startCrop[1] + startCrop[3] else startCrop[1]
+                            val proposedW = if (abs(dx) >= abs(dy * ratio)) w else h * ratio
+                            val limit = min(if (left) anchorX else 1f - anchorX,
+                                (if (top) anchorY else 1f - anchorY) * ratio).coerceAtLeast(.02f)
+                            w = proposedW.coerceIn(min(.1f, limit), limit)
+                            h = w / ratio
+                            x = if (left) anchorX - w else anchorX
+                            y = if (top) anchorY - h else anchorY
+                        }
+                        val minW = 0.02f
+                        val minH = 0.02f
                         // Dragging a handle outside the photo can exceed 1.0; clamp size
                         // before deriving the allowed origin, otherwise coerceIn(0, 1-w) throws.
                         w = w.coerceIn(minW, 1f)
                         h = h.coerceIn(minH, 1f)
                         x = x.coerceIn(0f, 1f - w)
                         y = y.coerceIn(0f, 1f - h)
-                        onCropChange(x, y, w, h)
+                        // Drag amounts are incremental. Advance the origin each time.
+                        startCrop = floatArrayOf(x, y, w, h)
+                        latestChange(x, y, w, h)
                     },
+                    onDragCancel = { drag = CropDrag.NONE },
                     onDragEnd = { drag = CropDrag.NONE }
                 )
             }

@@ -12,6 +12,8 @@ data class ExportRecipe(
     val res: Int,            // 0 = 原始；其它值为长边像素
     val colorSpace: String,  // "sRGB" / "Display P3"
     val jpegQuality: Int = 95,
+    val keepCapture: Boolean = true,
+    val keepLocation: Boolean = false,
 )
 
 /** 导出配方的持久化（filesDir/recipes.json）。默认配方 + 自定义配方一起存。 */
@@ -38,6 +40,8 @@ object RecipeStore {
                     o.getInt("res"),
                     o.getString("color_space"),
                     o.optInt("jpeg_quality", 95),
+                    o.optBoolean("keep_capture", true),
+                    o.optBoolean("keep_location", false),
                 )
             }
         } catch (e: Exception) {
@@ -55,6 +59,8 @@ object RecipeStore {
                     .put("res", r.res)
                     .put("color_space", r.colorSpace)
                     .put("jpeg_quality", r.jpegQuality)
+                    .put("keep_capture", r.keepCapture)
+                    .put("keep_location", r.keepLocation)
             )
         }
         try {

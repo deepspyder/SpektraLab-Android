@@ -87,6 +87,9 @@ class EditorParams {
     var shadows by mutableFloatStateOf(0f)
     var blackPoint by mutableFloatStateOf(0f)
     var whitePoint by mutableFloatStateOf(0f)
+    var vignetteAmount by mutableFloatStateOf(0f) // 0..100, zero preserves existing output
+    var vignetteSize by mutableFloatStateOf(50f)
+    var vignetteFeather by mutableFloatStateOf(70f)
     // 三区色彩平衡：shadow/mid/high 各 temp（暖↔冷）+ tint（绿↔品红）。
     var cbShadowTemp by mutableFloatStateOf(0f)
     var cbShadowTint by mutableFloatStateOf(0f)
@@ -185,6 +188,9 @@ class EditorParams {
         .put("shadows", shadows.toDouble())
         .put("black_point", blackPoint.toDouble())
         .put("white_point", whitePoint.toDouble())
+        .put("vignette_amount", vignetteAmount.toDouble())
+        .put("vignette_size", vignetteSize.toDouble())
+        .put("vignette_feather", vignetteFeather.toDouble())
         .put("cb_shadow_temp", cbShadowTemp.toDouble())
         .put("cb_shadow_tint", cbShadowTint.toDouble())
         .put("cb_mid_temp", cbMidTemp.toDouble())
@@ -247,6 +253,7 @@ class EditorParams {
         temperature = p.temperature; tint = p.tint; gradeExposure = p.gradeExposure
         contrast = p.contrast; brightness = p.brightness; saturation = p.saturation
         highlights = p.highlights; shadows = p.shadows; blackPoint = p.blackPoint; whitePoint = p.whitePoint
+        vignetteAmount = p.vignetteAmount; vignetteSize = p.vignetteSize; vignetteFeather = p.vignetteFeather
         cbShadowTemp = p.cbShadowTemp; cbShadowTint = p.cbShadowTint; cbMidTemp = p.cbMidTemp; cbMidTint = p.cbMidTint
         cbHighTemp = p.cbHighTemp; cbHighTint = p.cbHighTint; cameraFilter = p.cameraFilter
         overscanActive = p.overscanActive; overscanFormat = p.overscanFormat; overscanMode = p.overscanMode
@@ -325,6 +332,9 @@ class EditorParams {
             p.shadows = json.optDouble("shadows", 0.0).toFloat()
             p.blackPoint = json.optDouble("black_point", 0.0).toFloat()
             p.whitePoint = json.optDouble("white_point", 0.0).toFloat()
+            p.vignetteAmount = json.optDouble("vignette_amount", 0.0).toFloat().coerceIn(0f, 100f)
+            p.vignetteSize = json.optDouble("vignette_size", 50.0).toFloat().coerceIn(0f, 100f)
+            p.vignetteFeather = json.optDouble("vignette_feather", 70.0).toFloat().coerceIn(0f, 100f)
             p.cbShadowTemp = json.optDouble("cb_shadow_temp", 0.0).toFloat()
             p.cbShadowTint = json.optDouble("cb_shadow_tint", 0.0).toFloat()
             p.cbMidTemp = json.optDouble("cb_mid_temp", 0.0).toFloat()
@@ -454,9 +464,21 @@ fun computeCenteredCrop(aspect: String, srcW: Int, srcH: Int): FloatArray {
         "4:3" -> 4f / 3f
         "3:2" -> 3f / 2f
         "16:9" -> 16f / 9f
+        "2.39:1" -> 2.39f
+        "1.85:1" -> 1.85f
         else -> return floatArrayOf(0f, 0f, 1f, 1f)
     }
     return computeCenteredCropByAspect(target, srcW, srcH)
+}
+
+internal fun cropAspectRatio(aspect: String): Float? = when (aspect) {
+    "1:1" -> 1f
+    "4:3" -> 4f / 3f
+    "3:2" -> 3f / 2f
+    "16:9" -> 16f / 9f
+    "2.39:1" -> 2.39f
+    "1.85:1" -> 1.85f
+    else -> null
 }
 
 /** 按数值宽高比计算居中裁剪（归一化）。 */

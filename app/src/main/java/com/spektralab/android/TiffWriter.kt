@@ -20,8 +20,9 @@ object TiffWriter {
         icc: ByteArray?,
         out: OutputStream,
         checkCancelled: () -> Unit = {},
+        metadata: ExportMetadata = ExportMetadata.EMPTY,
     ) {
-        writeRows(width, height, grade, icc, out, checkCancelled) { y, rows, destination ->
+        writeRows(width, height, grade, icc, out, checkCancelled, metadata) { y, rows, destination ->
             rgba16.copyInto(destination, 0, y * width * 4, (y + rows) * width * 4)
         }
     }
@@ -32,24 +33,50 @@ object TiffWriter {
         icc: ByteArray?,
         out: OutputStream,
         checkCancelled: () -> Unit = {},
+        metadata: ExportMetadata = ExportMetadata.EMPTY,
     ) {
-        writeRows(result.width, result.height, grade, icc, out, checkCancelled, result::readRows)
+        writeRows(result.width, result.height, grade, icc, out, checkCancelled, metadata, result::readRows)
     }
 
     private fun writeRows(width: Int, height: Int, grade: Grade?, icc: ByteArray?, out: OutputStream,
                           checkCancelled: () -> Unit,
+                          metadata: ExportMetadata,
                           read: (Int, Int, ShortArray) -> Unit) {
         val n = width * height
         val pixelBytes = n * 3 * 2
 
-        val entryCount = if (icc != null) 14 else 13
+        val rootFields = metadata.rootFields()
+        val exifFields = metadata.exifFields()
+        val gpsFields = metadata.gpsFields()
+        val entryCount = (if (icc != null) 14 else 13) + rootFields.size +
+            (if (exifFields.isNotEmpty()) 1 else 0) + (if (gpsFields.isNotEmpty()) 1 else 0)
         val ifdSize = 2 + entryCount * 12 + 4
         val extraOffset = 8 + ifdSize
         val bitsOffset = extraOffset
         val xresOffset = bitsOffset + 6
         val yresOffset = xresOffset + 8
         val iccOffset = yresOffset + 8
-        val pixelOffset = iccOffset + (icc?.size ?: 0)
+        val metadataStart = iccOffset + (icc?.size ?: 0)
+        val payload = java.io.ByteArrayOutputStream()
+        fun store(bytes: ByteArray): Int {
+            if ((metadataStart + payload.size()) % 2 != 0) payload.write(0)
+            val offset = metadataStart + payload.size()
+            payload.write(bytes); return offset
+        }
+        fun fieldValue(field: ExportMetadata.Field): Int = if (field.bytes.size > 4) store(field.bytes)
+            else ByteBuffer.wrap(field.bytes.copyOf(4)).order(ByteOrder.LITTLE_ENDIAN).int
+        fun directory(fields: List<ExportMetadata.Field>): Int {
+            val dir = ByteBuffer.allocate(2 + fields.size * 12 + 4).order(ByteOrder.LITTLE_ENDIAN)
+            dir.putShort(fields.size.toShort())
+            fields.sortedBy { it.id }.forEach { entry(dir, it.id, it.type, it.count, fieldValue(it)) }
+            dir.putInt(0)
+            return store(dir.array())
+        }
+        val extraEntries = rootFields.map { field -> intArrayOf(field.id, field.type, field.count, fieldValue(field)) }.toMutableList()
+        if (exifFields.isNotEmpty()) extraEntries.add(intArrayOf(34665, 4, 1, directory(exifFields)))
+        if (gpsFields.isNotEmpty()) extraEntries.add(intArrayOf(34853, 4, 1, directory(gpsFields)))
+        if ((metadataStart + payload.size()) % 2 != 0) payload.write(0)
+        val pixelOffset = metadataStart + payload.size()
 
         val head = ByteBuffer.allocate(iccOffset).order(ByteOrder.LITTLE_ENDIAN)
 
@@ -60,20 +87,15 @@ object TiffWriter {
 
         // ---- IFD ----
         head.putShort(entryCount.toShort())
-        entry(head, 256, 4, 1, width)                    // ImageWidth
-        entry(head, 257, 4, 1, height)                   // ImageLength
-        entry(head, 258, 3, 3, bitsOffset)               // BitsPerSample = 16,16,16
-        entry(head, 259, 3, 1, 1)                        // Compression = none
-        entry(head, 262, 3, 1, 2)                        // PhotometricInterpretation = RGB
-        entry(head, 273, 4, 1, pixelOffset)              // StripOffsets
-        entry(head, 277, 3, 1, 3)                        // SamplesPerPixel = 3
-        entry(head, 278, 4, 1, height)                   // RowsPerStrip
-        entry(head, 279, 4, 1, pixelBytes)               // StripByteCounts
-        entry(head, 282, 5, 1, xresOffset)               // XResolution
-        entry(head, 283, 5, 1, yresOffset)               // YResolution
-        entry(head, 284, 3, 1, 1)                        // PlanarConfiguration = chunky
-        entry(head, 296, 3, 1, 2)                        // ResolutionUnit = inch
-        if (icc != null) entry(head, 34675, 7, icc.size, iccOffset)  // ICC profile
+        val entries = mutableListOf(
+            intArrayOf(256,4,1,width), intArrayOf(257,4,1,height), intArrayOf(258,3,3,bitsOffset),
+            intArrayOf(259,3,1,1), intArrayOf(262,3,1,2), intArrayOf(273,4,1,pixelOffset),
+            intArrayOf(277,3,1,3), intArrayOf(278,4,1,height), intArrayOf(279,4,1,pixelBytes),
+            intArrayOf(282,5,1,xresOffset), intArrayOf(283,5,1,yresOffset),
+            intArrayOf(284,3,1,1), intArrayOf(296,3,1,2))
+        if (icc != null) entries.add(intArrayOf(34675,7,icc.size,iccOffset))
+        entries.addAll(extraEntries)
+        entries.sortedBy { it[0] }.forEach { entry(head, it[0], it[1], it[2], it[3]) }
         head.putInt(0)                                    // 无下一个 IFD
 
         // ---- 额外数据（BitsPerSample / XRes / YRes）----
@@ -83,6 +105,7 @@ object TiffWriter {
 
         out.write(head.array(), 0, iccOffset)
         if (icc != null) out.write(icc)
+        out.write(payload.toByteArray())
 
         // ---- 像素数据（分块写，避免一次性大缓冲）----
         val chunk = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
@@ -97,7 +120,7 @@ object TiffWriter {
             for (i in 0 until width * stripRows) {
                 val index = i * 4
                 if (grade != null) {
-                    grade.grade(strip[index], strip[index + 1], strip[index + 2], px)
+                    grade.gradeAt(strip[index], strip[index + 1], strip[index + 2], px, i % width, y + i / width, width, height)
                     chunk.putShort(toU16(px[0]))
                     chunk.putShort(toU16(px[1]))
                     chunk.putShort(toU16(px[2]))

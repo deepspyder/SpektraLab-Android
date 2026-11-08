@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
@@ -28,12 +29,79 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+
+/** Always-visible edit queue. Management stays separate from one-tap switching. */
+@Composable
+internal fun EditorPhotoStrip(
+    vm: EditorViewModel,
+    onAddPhotos: () -> Unit,
+    onManagePhotos: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting
+    val strip = rememberLazyListState()
+    val colors = MaterialTheme.colorScheme
+    val shortWindow = LocalConfiguration.current.screenHeightDp < 500
+    LaunchedEffect(vm.currentIndex, vm.photos.size) {
+        if (vm.currentIndex in vm.photos.indices) {
+            val visible = strip.layoutInfo.visibleItemsInfo.firstOrNull { it.index == vm.currentIndex }
+            if (visible == null || visible.offset < strip.layoutInfo.viewportStartOffset ||
+                visible.offset + visible.size > strip.layoutInfo.viewportEndOffset) {
+                strip.animateScrollToItem(vm.currentIndex)
+            }
+        }
+    }
+    Row(modifier.fillMaxWidth().background(colors.surfaceContainerLow)
+        .padding(horizontal = 8.dp, vertical = if (shortWindow) 4.dp else 6.dp)
+        .semantics { contentDescription = "顶部照片工作台" }, verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onManagePhotos, modifier = Modifier.width(56.dp).heightIn(min = 48.dp)
+            .semantics { contentDescription = "管理照片工作台" }, contentPadding = PaddingValues(0.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("照片", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                Text("${vm.currentIndex + 1}/${vm.photos.size}", style = MaterialTheme.typography.labelSmall,
+                    color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        LazyRow(state = strip, modifier = Modifier.weight(1f).selectableGroup()
+            .semantics { contentDescription = "编辑照片列表" },
+            contentPadding = PaddingValues(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(vm.photos, key = { _, uri -> uri.toString() }) { index, uri ->
+                val current = index == vm.currentIndex
+                val thumbnail = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
+                LaunchedEffect(uri, thumbnail == null) { if (thumbnail == null) vm.loadThumbnail(uri) }
+                Box(Modifier.size(if (shortWindow) 56.dp else 64.dp, if (shortWindow) 48.dp else 60.dp).clip(SpektraShapes.compact)
+                    .background(if (current) colors.surfaceContainerHigh else colors.surface)
+                    .then(if (current) Modifier.border(2.dp, colors.primary, SpektraShapes.compact) else Modifier)
+                    .selectable(selected = current, enabled = enabled, role = Role.RadioButton,
+                        onClick = { if (!current) vm.selectPhoto(index) })
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "编辑照片 ${index + 1}"
+                        selected = current
+                        stateDescription = if (current) "正在编辑" else "点击切换编辑"
+                    }, contentAlignment = Alignment.Center) {
+                    if (thumbnail != null) Image(thumbnail.asImageBitmap(), null,
+                        Modifier.fillMaxSize().padding(if (current) 3.dp else 1.dp), contentScale = ContentScale.Fit)
+                    else Icon(Icons.Rounded.Image, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+                    Text("${index + 1}", Modifier.align(Alignment.BottomStart).padding(3.dp)
+                        .background(colors.surface.copy(alpha = .9f), SpektraShapes.badge).padding(horizontal = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (current) colors.primary else colors.onSurface)
+                }
+            }
+        }
+        IconButton(onClick = onAddPhotos, enabled = enabled, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Rounded.Add, "添加编辑照片", tint = if (enabled) colors.primary else colors.onSurfaceVariant)
+        }
+    }
+}
 
 /** A filmstrip for the existing edit queue. Browsing reuses cached previews. */
 @Composable

@@ -2,6 +2,7 @@ package com.spektralab.android
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.runtime.Composable
@@ -22,9 +23,15 @@ internal data class ViewingPhoto(
     val name: String,
     val caption: String = "",
     val error: String? = null,
+    val wallDetail: Bitmap? = null,
+    val canRefine: Boolean = false,
+    val sourceWidth: Int = 0,
+    val sourceHeight: Int = 0,
+    val sourceFormat: String = "",
 )
 
-private data class ViewingMetadata(val name: String, val caption: String)
+private data class ViewingMetadata(val name: String, val caption: String,
+    val width: Int, val height: Int, val format: String)
 
 /** One contact sheet, shared by session photos and independent imports. */
 @Composable
@@ -59,6 +66,12 @@ internal fun GalleryScreen(
             name = metadata[key]?.name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "照片",
             caption = metadata[key]?.caption.orEmpty(),
             error = vm.galleryPreviewErrors[uri],
+            // A decoded original must never replace an already-developed edit.
+            wallDetail = current ?: developed ?: vm.galleryPreviews[uri],
+            canRefine = current == null && developed == null,
+            sourceWidth = metadata[key]?.width ?: 0,
+            sourceHeight = metadata[key]?.height ?: 0,
+            sourceFormat = metadata[key]?.format.orEmpty(),
         )
     }
     ViewingStand(
@@ -71,6 +84,7 @@ internal fun GalleryScreen(
             if (key !in independent) vm.loadThumbnail(Uri.parse(key))
         },
         onLoadDetail = { vm.loadGalleryPreview(Uri.parse(it)) },
+        onLoadWallDetails = { keys -> vm.loadGalleryWallDetails(keys.map(Uri::parse)) },
         onImport = onImport,
         onRemove = { onRemovePhoto(Uri.parse(it)) },
         onEdit = { onEditPhoto(Uri.parse(it)) },
@@ -89,7 +103,16 @@ private fun readViewingMetadata(context: Context, uri: Uri): ViewingMetadata {
     val exif = runCatching {
         context.contentResolver.openInputStream(uri)?.use(::ExifInterface)
     }.getOrNull()
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } }
+    val rotated = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) in setOf(5, 6, 7, 8)
+    val width = (if (rotated) bounds.outHeight else bounds.outWidth).coerceAtLeast(0)
+    val height = (if (rotated) bounds.outWidth else bounds.outHeight).coerceAtLeast(0)
+    val format = name.substringAfterLast('.', "").uppercase(Locale.ROOT).takeIf { it.isNotBlank() }
+        ?: bounds.outMimeType?.substringAfter('/')?.uppercase(Locale.ROOT).orEmpty()
     val details = buildList {
+        if (format.isNotBlank()) add(format)
+        if (width > 0 && height > 0) add("$width × $height")
         exif?.getAttribute(ExifInterface.TAG_MODEL)?.trim()?.takeIf(String::isNotEmpty)?.let(::add)
         exif?.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)?.takeIf { it > 0 && it.isFinite() }
             ?.let { add(String.format(Locale.ROOT, "%.0f mm", it)) }
@@ -104,5 +127,5 @@ private fun readViewingMetadata(context: Context, uri: Uri): ViewingMetadata {
             }.getOrNull()?.let { add(SimpleDateFormat("yyyy.MM.dd", Locale.getDefault()).format(it)) }
         }
     }
-    return ViewingMetadata(name, details.joinToString(" · "))
+    return ViewingMetadata(name, details.joinToString(" · "), width, height, format)
 }

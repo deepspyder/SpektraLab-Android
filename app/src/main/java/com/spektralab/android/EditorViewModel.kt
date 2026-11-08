@@ -44,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -100,6 +101,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var exportRes by mutableStateOf(2560)
     var exportColorSpace by mutableStateOf("sRGB")
     var jpegQuality by mutableStateOf(95)
+    private val exportPreferences = app.getSharedPreferences("export_metadata", android.content.Context.MODE_PRIVATE)
+    private var keepCaptureState by mutableStateOf(exportPreferences.getBoolean("capture", true))
+    private var keepLocationState by mutableStateOf(exportPreferences.getBoolean("location", false))
+    var exportKeepCapture: Boolean
+        get() = keepCaptureState
+        set(value) { keepCaptureState = value; exportPreferences.edit().putBoolean("capture", value).apply() }
+    var exportKeepLocation: Boolean
+        get() = keepLocationState
+        set(value) { keepLocationState = value; exportPreferences.edit().putBoolean("location", value).apply() }
     var recipes by mutableStateOf(RecipeStore.load(app))
         private set
     var log by mutableStateOf("（未创建引擎）\n")
@@ -185,6 +195,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var developedPreviewJob: Job? = null
     private val thumbnailJobs = mutableMapOf<Uri, Job>()
     private val galleryPreviewJobs = mutableMapOf<Uri, Job>()
+    private val galleryPreviewDecodeMutex = kotlinx.coroutines.sync.Mutex()
     @Volatile private var photoGeneration = 0L
     private var paramsUri: Uri? = null
     @Volatile private var cleared = false
@@ -408,6 +419,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             zone(p.cbShadowTemp / 100f, p.cbShadowTint / 100f),
             zone(p.cbMidTemp / 100f, p.cbMidTint / 100f),
             zone(p.cbHighTemp / 100f, p.cbHighTint / 100f),
+            p.vignetteAmount / 100f, p.vignetteSize / 100f, p.vignetteFeather / 100f,
         )
     }
 
@@ -518,7 +530,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         galleryPreviewErrors = galleryPreviewErrors - uri
         val request = viewModelScope.launch {
             try {
-                val bitmap = withContext(Dispatchers.IO) { decodeSampled(uri, 1400) }
+                val bitmap = withContext(Dispatchers.IO) {
+                    galleryPreviewDecodeMutex.withLock { decodeSampled(uri, 1400) }
+                }
                 if (cleared || (uri !in photos && viewingPhotos.none { it.first == uri.toString() })) {
                     bitmap.recycle()
                 } else if (!galleryPreviews.containsKey(uri)) {
@@ -541,6 +555,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         galleryPreviewJobs[uri] = request
+    }
+
+    /** The wall requests at most four visible frames, in order of proximity.
+     * Await each existing preview request instead of launching a decode per frame.
+     * Leaving or moving the viewport cancels the remaining sequence.
+     */
+    suspend fun loadGalleryWallDetails(uris: List<Uri>) {
+        for (uri in uris.distinct().take(4)) {
+            if (!currentCoroutineContext().isActive) return
+            if (uri == currentUri || developedPreviews.containsKey(uri)) continue
+            loadGalleryPreview(uri)
+            galleryPreviewJobs[uri]?.join()
+        }
     }
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
@@ -658,6 +685,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // Native export input avoids full-frame Java arrays without reducing the requested resolution.
     private fun openExportSource(e: EngineClient, uri: Uri, editParams: EditorParams, size: Int, colorSpace: String) {
+        sourceExif = readExif(uri)
         // The interactive preview remains on screen, but its GPU session need not overlap source decoding.
         e.closeSession()
         if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
@@ -939,13 +967,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         exportRes = recipe.res
         exportColorSpace = recipe.colorSpace
         jpegQuality = recipe.jpegQuality.coerceIn(50, 100)
+        exportKeepCapture = recipe.keepCapture
+        exportKeepLocation = recipe.keepLocation
     }
 
     // 把当前导出设置保存为命名配方（同名覆盖）。
     fun saveRecipe(name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
-        val recipe = ExportRecipe(trimmed, exportFormat, exportRes, exportColorSpace, jpegQuality)
+        val recipe = ExportRecipe(trimmed, exportFormat, exportRes, exportColorSpace, jpegQuality, exportKeepCapture, exportKeepLocation)
         recipes = recipes.filter { it.name != trimmed } + recipe
         RecipeStore.save(app, recipes)
         toast("已保存配方: $trimmed")
@@ -1605,7 +1635,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             FileOutputStream(tmp).use { fos ->
                 check(bitmap.compress(fmt, jpegQuality.coerceIn(1, 100), fos)) { "图片编码失败" }
             }
-            if (fmt == Bitmap.CompressFormat.JPEG) attachSourceExif(tmp)
+            ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation).attach(tmp, bitmap.width, bitmap.height)
             return publishExport(tmp, name, mime)
         } finally {
             tmp.delete()
@@ -1619,7 +1649,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
                 tmp.outputStream().use {
-                    TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation)
+                    TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation,
+                        ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
                 }
                 return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
             } finally { tmp.delete() }
@@ -1638,7 +1669,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 val count = minOf(rows, result.height - y)
                 result.readRows(y, count, strip)
                 for (i in 0 until result.width * count) {
-                    g.grade(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel)
+                    g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
+                        i % result.width, y + i / result.width, result.width, result.height)
                     val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
                     val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
                     val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
@@ -1727,7 +1759,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
         try {
             tmp.outputStream().use { out ->
-                TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation)
+                TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation,
+                    ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
             }
             return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
         } finally {
@@ -1747,6 +1780,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     icc = null,
                     out = out,
                     checkCancelled = ::checkExportCancellation,
+                    metadata = ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation),
                 )
             }
             return publishExport(tmp, name, "image/tiff")
@@ -1770,35 +1804,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 读取源 EXIF（仅 JPEG/TIFF/DNG；RAW 抛异常时返回 null）。
-    private fun readExif(uri: Uri): ExifInterface? = try {
-        app.contentResolver.openInputStream(uri)?.use { ExifInterface(it) }
-    } catch (e: Exception) {
-        null
-    }
-
-    // JPEG 导出时透传的源 EXIF 标签（不含 orientation——解码时已应用，避免二次旋转）。
-    private val exifTagsToCopy = listOf(
-        ExifInterface.TAG_MAKE,
-        ExifInterface.TAG_MODEL,
-        ExifInterface.TAG_DATETIME_ORIGINAL,
-        ExifInterface.TAG_DATETIME,
-        ExifInterface.TAG_EXPOSURE_TIME,
-        ExifInterface.TAG_F_NUMBER,
-        ExifInterface.TAG_ISO_SPEED_RATINGS,
-        ExifInterface.TAG_FOCAL_LENGTH,
-    )
-
-    private fun attachSourceExif(file: File) {
-        val src = sourceExif ?: return
-        try {
-            val dst = ExifInterface(file)
-            for (tag in exifTagsToCopy) {
-                src.getAttribute(tag)?.let { dst.setAttribute(tag, it) }
-            }
-            dst.saveAttributes()
-        } catch (e: Exception) {
-            // EXIF 附加失败不阻塞导出
+    private fun readExif(uri: Uri): ExifInterface? {
+        if (Build.VERSION.SDK_INT >= 29 && exportKeepLocation && uri.authority == "media" &&
+            androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            runCatching { app.contentResolver.openInputStream(MediaStore.setRequireOriginal(uri))?.use(::ExifInterface) }
+                .getOrNull()?.let { return it }
         }
+        return runCatching { app.contentResolver.openInputStream(uri)?.use(::ExifInterface) }.getOrNull()
     }
 
     private fun decodeSampled(uri: Uri, maxLongEdge: Int = 2048): Bitmap {

@@ -49,6 +49,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var themeOnly = false
     private var batchSelectionOnly = false
     private var stockLibraryOnly = false
+    private var editingFeedbackOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -57,6 +58,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     }
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
+        editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
         homeUiOnly = audit == "home-ui"
@@ -95,6 +97,13 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (editingFeedbackOnly) {
+            case("editing.crop_metadata_vignette") { EditingFeedbackAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (stockLibraryOnly) {
             case("ui.stock_library_and_paper_pairing") { StockLibraryAudit(this, output).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
@@ -631,10 +640,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                     var stripeChecks = 0
                     val cancellation = runCatching {
                         TiffWriter.writeRgba16(pixels, actual.width, actual.height, null, null,
-                            java.io.ByteArrayOutputStream()) {
+                            java.io.ByteArrayOutputStream(), checkCancelled = {
                             stripeChecks++
                             if (stripeChecks == 2) error("cancel sentinel")
-                        }
+                        })
                     }.exceptionOrNull()
                     check(cancellation?.message == "cancel sentinel" && stripeChecks == 2) {
                         "TIFF writer did not honor cancellation between strips"
@@ -1038,11 +1047,31 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         } ?: error("Missing gallery photo fixture")
         val files = (1..12).map { index ->
             File(output, "gallery-$index.jpg").also { file ->
-                val matrix = android.graphics.Matrix().apply { if (index % 3 == 0) postRotate(90f) }
-                val variant = Bitmap.createBitmap(fixture, 0, 0, fixture.width, fixture.height, matrix, true)
+                val matrix = android.graphics.Matrix().apply { if (index % 4 == 0) postRotate(90f) }
+                val cropW = if (index % 4 == 2) minOf(fixture.width, fixture.height) else fixture.width
+                val cropH = when (index % 4) { 2 -> cropW; 3 -> (fixture.height / 4).coerceAtLeast(8); else -> fixture.height }
+                val transformed = Bitmap.createBitmap(fixture, (fixture.width - cropW) / 2, (fixture.height - cropH) / 2, cropW, cropH, matrix, true)
+                val variant = checkNotNull(transformed.copy(Bitmap.Config.ARGB_8888, true))
+                if (transformed !== fixture) transformed.recycle()
+                // Four edge markers prove that Fit preserves every corner for mixed ratios.
+                if (index in 2..4) {
+                    val painter = android.graphics.Canvas(variant)
+                    val paint = android.graphics.Paint()
+                    val side = minOf(variant.width, variant.height) * .24f
+                    val markerColors = intArrayOf(android.graphics.Color.RED, android.graphics.Color.GREEN,
+                        android.graphics.Color.BLUE, android.graphics.Color.YELLOW)
+                    val corners = listOf(0f to 0f, (variant.width - side) to 0f,
+                        0f to (variant.height - side), (variant.width - side) to (variant.height - side))
+                    corners.forEachIndexed { marker, (x, y) ->
+                        paint.color = markerColors[marker]; painter.drawRect(x, y, x + side, y + side, paint)
+                    }
+                }
                 file.outputStream().use { check(variant.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
                 if (variant !== fixture) variant.recycle()
-                EditStore.save(targetContext, Uri.fromFile(file), EditorParams())
+                EditStore.save(targetContext, Uri.fromFile(file), EditorParams().apply {
+                    filmId = when (index % 3) { 1 -> "kodak_gold_200"; 2 -> "fujifilm_velvia_100"; else -> "ilford_hp5_plus_400" }
+                    overscanFormat = if (index == 6) "120_6x6" else "135"
+                })
             }
         }
         fixture.recycle()
@@ -1056,29 +1085,118 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             }
             await(30000) { vm.viewingPhotos.size == 12 && !vm.isImportingViewingPhotos && !vm.busy && vm.rendered != null }
             click("继续显影"); click("观景台")
-            await { tree().contains("胶片墙") && tree().contains("查看第 4 帧 gallery-4.jpg") }
+            await { tree().contains("照片墙") && tree().contains("查看第 4 张 gallery-4.jpg") }
             check(!tree().contains("底片长廊") && !tree().contains("展厅"))
-            val first = bounds("查看第 1 帧 gallery-1.jpg")
-            val third = bounds("查看第 3 帧 gallery-3.jpg")
-            val fourth = bounds("查看第 4 帧 gallery-4.jpg")
-            if (activity.resources.configuration.screenWidthDp in 330..539) {
-                check(kotlin.math.abs(first.centerY() - third.centerY()) < 5 && fourth.centerY() > first.centerY())
-            }
+            val first = bounds("查看第 1 张 gallery-1.jpg")
+            check(!tree().contains("每条最多") && !tree().contains("片边")) { "Synthetic film chrome remained" }
+            val secondPhoto = bounds("查看第 2 张 gallery-2.jpg")
+            check(first.width() != secondPhoto.width() || first.height() != secondPhoto.height()) { "Photos were forced into identical frames" }
             Thread.sleep(700); capture("contact_sheet")
+            val fittedPixels = checkNotNull(uiAutomation.takeScreenshot())
+            try {
+                for (index in 2..4) {
+                    val area = bounds("查看第 $index 张 gallery-$index.jpg")
+                    val seen = BooleanArray(4)
+                    for (y in area.top.coerceAtLeast(0) until area.bottom.coerceAtMost(fittedPixels.height))
+                        for (x in area.left.coerceAtLeast(0) until area.right.coerceAtMost(fittedPixels.width)) {
+                            val pixel = fittedPixels.getPixel(x, y)
+                            val r = android.graphics.Color.red(pixel); val g = android.graphics.Color.green(pixel); val b = android.graphics.Color.blue(pixel)
+                            if (r > 170 && g < 95 && b < 95) seen[0] = true
+                            if (g > 150 && r < 95 && b < 95) seen[1] = true
+                            if (b > 150 && r < 95 && g < 125) seen[2] = true
+                            if (r > 170 && g > 150 && b < 95) seen[3] = true
+                        }
+                    check(seen.all { it }) { "Frame $index cropped one or more corner markers: ${seen.toList()}" }
+                }
+            } finally { fittedPixels.recycle() }
+            // A grouped visual index must still open the original source photo.
+            val originalFirst = bounds("查看第 1 张 gallery-1.jpg")
+            val secondUnmoved = bounds("查看第 2 张 gallery-2.jpg")
+            fun regionHash(area: Rect): Long {
+                val image = checkNotNull(uiAutomation.takeScreenshot())
+                var hash = 19L
+                for (y in area.top.coerceAtLeast(0) until area.bottom.coerceAtMost(image.height) step 5)
+                    for (x in area.left.coerceAtLeast(0) until area.right.coerceAtMost(image.width) step 5)
+                        hash = hash * 31 + image.getPixel(x, y)
+                image.recycle(); return hash
+            }
+            val firstBeforeMove = regionHash(originalFirst)
+            val secondBeforeMove = regionHash(secondUnmoved)
+            gesture(originalFirst.exactCenterX(), originalFirst.exactCenterY(), originalFirst.exactCenterX(), originalFirst.exactCenterY() + 70)
+            check(regionHash(originalFirst) != firstBeforeMove) { "Dragging a photo did not move its pixels" }
+            check(regionHash(secondUnmoved) == secondBeforeMove) { "Dragging one photo moved another" }
+            capture("photo_moved")
+            click("查看第 7 张 gallery-7.jpg")
+            await { tree().contains("07 / 12") && tree().contains("沉浸照片 gallery-7.jpg") }
+            click("关闭沉浸式观片")
             val before = uiAutomation.takeScreenshot()!!
             val bright = before.getPixel(first.centerX(), first.centerY()); before.recycle()
             click("关闭灯光"); await { tree().contains("打开灯光") }
+            runOnMainSync { check(activity.window.attributes.screenBrightness == .2f) }
             val after = uiAutomation.takeScreenshot()!!
             val dim = after.getPixel(first.centerX(), first.centerY()); after.recycle()
             check(android.graphics.Color.red(dim) < android.graphics.Color.red(bright)) { "Lamp did not dim the photo" }
             capture("light_off"); click("打开灯光")
+            runOnMainSync { check(activity.window.attributes.screenBrightness == .9f) }
+            click("放大画布")
+            check(find(nodes(), "照片墙")!!.stateDescription.toString().contains("125%"))
+            val wall = bounds("照片墙")
+            fun wallPixels(): Long {
+                val screenshot = checkNotNull(uiAutomation.takeScreenshot())
+                var hash = 17L
+                for (y in wall.top.coerceAtLeast(0) until wall.bottom.coerceAtMost(screenshot.height) step 8)
+                    for (x in wall.left.coerceAtLeast(0) until wall.right.coerceAtMost(screenshot.width) step 8)
+                        hash = hash * 31 + screenshot.getPixel(x, y)
+                screenshot.recycle(); return hash
+            }
+            val beforePanPixels = wallPixels()
+            // Drag empty table space, independently of dragging a photograph.
+            gesture(wall.right - 25f, wall.bottom - 100f, wall.right - 100f, wall.bottom - 180f)
+            check(wallPixels() != beforePanPixels) { "Canvas pan did not move rendered pixels; wall=$wall" }
+            capture("canvas_zoom_pan")
+            click("重置画布")
+            check(find(nodes(), "照片墙")!!.stateDescription.toString().contains("100%"))
+            // Real two-pointer gesture; unlike the zoom button this proves centroid handling.
+            fun pinch(factor: Float) {
+                val cx = wall.exactCenterX(); val cy = wall.top + wall.height() * .3f
+                val start = android.os.SystemClock.uptimeMillis()
+                val properties = Array(2) { i -> android.view.MotionEvent.PointerProperties().apply { id = i; toolType = android.view.MotionEvent.TOOL_TYPE_FINGER } }
+                fun inject(action: Int, count: Int, radius: Float) {
+                    val coordinates = Array(count) { i -> android.view.MotionEvent.PointerCoords().apply {
+                        x = cx + (if (i == 0) -radius else radius); y = cy; pressure = 1f; size = 1f
+                    } }
+                    val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(), action, count,
+                        properties, coordinates, 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+                    check(uiAutomation.injectInputEvent(event, true)); event.recycle()
+                }
+                inject(android.view.MotionEvent.ACTION_DOWN, 1, 65f)
+                inject(android.view.MotionEvent.ACTION_POINTER_DOWN or (1 shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, 65f)
+                for (step in 1..18) { inject(android.view.MotionEvent.ACTION_MOVE, 2, 65f * (1 + (factor - 1) * step / 18)); Thread.sleep(16) }
+                inject(android.view.MotionEvent.ACTION_POINTER_UP or (1 shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, 65f * factor)
+                inject(android.view.MotionEvent.ACTION_UP, 1, 65f * factor); Thread.sleep(500)
+            }
+            pinch(1.8f)
+            check(!find(nodes(), "照片墙")!!.stateDescription.toString().endsWith("缩放 100%")) { "Pinch did not zoom" }
+            capture("canvas_pinch")
+            click("重置画布")
+            val previewsBeforeZoom = vm.galleryPreviews.keys.toSet()
+            val resultBeforeZoom = vm.lastResult
+            val developedBeforeZoom = vm.developedPreviews[uris.first()]
+            pinch(7f) // Reach the 600% cap: fitted width now exceeds a 640px thumbnail.
+            await(15000) { vm.galleryPreviews.keys.any { it !in previewsBeforeZoom } }
+            check(vm.galleryPreviews.size <= 6) { "Zoom detail cache exceeded its limit" }
+            check(vm.lastResult === resultBeforeZoom && vm.developedPreviews[uris.first()] === developedBeforeZoom) {
+                "Wall refinement changed the active edit"
+            }
+            capture("canvas_detail")
+            click("重置画布")
             click("打开放大镜"); await { tree().contains("拖动放大镜") }
             val lens = bounds("拖动放大镜")
             gesture(lens.exactCenterX(), lens.exactCenterY(), lens.exactCenterX() + 100f, lens.exactCenterY() + 80f)
             val moved = bounds("拖动放大镜")
             check(moved.centerX() != lens.centerX() || moved.centerY() != lens.centerY()) { "Loupe did not move" }
             capture("wall_loupe"); click("关闭放大镜")
-            click("查看第 2 帧 gallery-2.jpg")
+            click("查看第 2 张 gallery-2.jpg")
             await { tree().contains("关闭沉浸式观片") && tree().contains("02 / 12") }
             capture("viewer_second")
             sharePreview(vm.galleryPreviews[uris[1]] ?: vm.viewingPhotos.first { it.first == uris[1].toString() }.second)
@@ -1103,7 +1221,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             await { !tree().contains("还原 220%") && tree().contains("关闭沉浸式观片") }
             click("照片操作"); click("隐藏照片信息")
             check(find(nodes(), "gallery-2.jpg") == null)
-            click("关闭沉浸式观片"); await { tree().contains("胶片墙") }
+            click("关闭沉浸式观片"); await { tree().contains("照片墙") }
             runOnMainSync { vm.loadViewingPhotos(uris) }
             await { !vm.isImportingViewingPhotos }; check(vm.viewingPhotos.size == 12)
             uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90)
@@ -1112,7 +1230,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             Thread.sleep(900)
             click("返回暗房"); await { tree().contains("胶片与相纸") }
             check(files.all(File::exists)) { "Viewing operation deleted source photos" }
-            "12-frame wrapping; real light output; spatial movable loupe; arrow, thumbnail and swipe paging; double-tap zoom and Back; info; rotation; dedup and editor return passed"
+            "Unframed free canvas; intact square/panorama/portrait corner markers; independent photo drag and blank-table pan; source-correct click; on-demand zoom detail without changing edits; real pinch/reset; lamp pixels and window brightness; spatial movable loupe; arrow, thumbnail and swipe paging; double-tap zoom and Back; info; rotation; dedup and editor return passed"
           } catch (error: Throwable) {
             capture("failure")
             throw IllegalStateException(error.message + "\n" + tree(), error)
@@ -1151,19 +1269,14 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         case("ui.gallery.removing_middle_frame_updates_selection") {
             try {
                 click("观景台")
-                click("查看第 2 帧 gallery-2.jpg")
+                click("查看第 2 张 gallery-2.jpg")
                 await { tree().contains("02 / 12") }
                 click("照片操作"); click("从观景台移除")
                 await { tree().contains("02 / 11") && tree().contains("沉浸照片 gallery-3.jpg") }
                 click("关闭沉浸式观片")
-                await { find(nodes(), "查看第 2 帧 gallery-3.jpg") != null }
+                await { find(nodes(), "查看第 2 张 gallery-3.jpg") != null }
                 capture("middle_removed")
-                await(5000) {
-                    val replacement = bounds("查看第 2 帧 gallery-3.jpg")
-                    val current = find(nodes(), "当前") ?: return@await false
-                    val currentBounds = Rect().also(current::getBoundsInScreen)
-                    replacement.contains(currentBounds.centerX(), currentBounds.centerY())
-                }
+                await(5000) { find(nodes(), "查看第 2 张 gallery-3.jpg")?.stateDescription?.toString()?.contains("当前照片") == true }
                 "viewer and wall selection follow the next photo when removing the middle frame"
             } finally {
                 if (find(nodes(), "关闭沉浸式观片") != null) click("关闭沉浸式观片")
@@ -1177,7 +1290,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             try {
                 runOnMainSync { vm.addPhotos(listOf(missing), openSelected = false) }
                 click("观景台")
-                click("查看第 2 帧 missing-viewer.jpg")
+                click("查看第 2 张 missing-viewer.jpg")
                 await(8000) { tree().contains("无法读取照片") && tree().contains("重试读取照片") }
                 capture("unreadable")
                 val recovered = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888)
@@ -1203,28 +1316,50 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             }
             await { !vm.busy }
             click("观景台")
-            await { tree().contains("让照片，连成一卷") }
+            await { tree().contains("把照片，放在光下") }
             capture("empty")
             click("导入照片")
             await(15000) { find(nodes(), "Cancel") != null }
             click("Cancel")
-            await { tree().contains("让照片，连成一卷") }
+            await { tree().contains("把照片，放在光下") }
             val invalid = Uri.fromFile(File(output, "missing-import-" + System.nanoTime() + ".jpg"))
             runOnMainSync { vm.loadViewingPhotos(listOf(invalid)) }
             await { !vm.isImportingViewingPhotos }
             check(vm.viewingPhotos.isEmpty() && vm.viewingImportCompleted == 1)
             runOnMainSync { vm.loadViewingPhotos(listOf(Uri.fromFile(files[1]))) }
-            await { !vm.isImportingViewingPhotos && tree().contains("查看第 1 帧 gallery-2.jpg") }
-            click("查看第 1 帧 gallery-2.jpg")
+            await { !vm.isImportingViewingPhotos && tree().contains("查看第 1 张 gallery-2.jpg") }
+            click("查看第 1 张 gallery-2.jpg")
             await { tree().contains("01 / 01") }
             capture("single_viewer")
             click("照片操作"); click("从观景台移除")
-            await { tree().contains("让照片，连成一卷") }
+            await { tree().contains("把照片，放在光下") }
             check(files[1].exists() && vm.viewingPhotos.isEmpty())
             capture("empty_after_remove")
+            val transparentFile = File(output, "transparent-original.png")
+            val transparentBitmap = Bitmap.createBitmap(80, 160, Bitmap.Config.ARGB_8888)
+            val pngCanvas = android.graphics.Canvas(transparentBitmap)
+            pngCanvas.drawRect(20f, 40f, 60f, 120f, android.graphics.Paint().apply { color = android.graphics.Color.CYAN })
+            transparentFile.outputStream().use { check(transparentBitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            transparentBitmap.recycle()
+            val originalPngBytes = transparentFile.readBytes()
+            val transparentUri = Uri.fromFile(transparentFile)
+            runOnMainSync { vm.loadViewingPhotos(listOf(transparentUri)) }
+            await { !vm.isImportingViewingPhotos && find(nodes(), "查看第 1 张 transparent-original.png")?.stateDescription?.toString()?.contains("80 × 160") == true }
+            val transparentBounds = bounds("查看第 1 张 transparent-original.png")
+            val alphaScreen = checkNotNull(uiAutomation.takeScreenshot())
+            try {
+                val corner = alphaScreen.getPixel(transparentBounds.left + 3, transparentBounds.top + 3)
+                check(android.graphics.Color.red(corner) > 180 && android.graphics.Color.green(corner) > 180) { "PNG transparency became an opaque border" }
+            } finally { alphaScreen.recycle() }
+            capture("transparent_png")
+            click("查看第 1 张 transparent-original.png")
+            await { tree().contains("PNG · 80 × 160") }
+            check(transparentFile.readBytes().contentEquals(originalPngBytes)) { "Viewing rewrote original PNG" }
+            click("关闭沉浸式观片")
+            runOnMainSync { vm.removeViewingPhoto(transparentUri.toString()) }
             runOnMainSync { vm.loadViewingPhotos(files.map(Uri::fromFile)) }
             await { !vm.isImportingViewingPhotos && vm.viewingPhotos.size == 12 }
-            "empty UI, real picker cancellation, failed import recovery, single-frame boundary and source-preserving removal passed"
+            "empty UI, picker cancellation, failed import recovery, single-frame boundary, original PNG format/dimensions/alpha and untouched source bytes passed"
           } catch (error: Throwable) {
             capture("edge_failure")
             throw IllegalStateException(error.message + "\n" + tree(), error)
@@ -1273,7 +1408,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             standBitmap.recycle()
             runOnMainSync { vm.loadViewingPhotos(listOf(Uri.fromFile(standFile))) }
             await { !vm.isImportingViewingPhotos && vm.viewingPhotos.isNotEmpty() }
-            click("观景台"); await { tree().contains("胶片墙") }
+            click("观景台"); await { tree().contains("照片墙") }
             capture("gallery_contact_sheet")
             click("关闭灯光"); await { tree().contains("打开灯光") }
             click("打开灯光"); click("打开放大镜"); await { tree().contains("拖动放大镜") }
@@ -1645,7 +1780,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 (find(nodes(), label) ?: error("Missing $label")).getBoundsInScreen(it)
             }
             fun openStage() {
-                click("${vm.currentIndex + 1} / ${vm.photos.size}")
+                click("管理照片工作台")
                 await { find(nodes(), "关闭展示台") != null }
                 Thread.sleep(400)
             }
@@ -1670,10 +1805,31 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 check(!hasEditClaim(nodes())) { "Stage inferred edit history from the session dirty flag" }
                 check(find(nodes(), "${vm.currentIndex + 1} / ${vm.photos.size}") != null)
             }
+            // The queue is visible on arrival; switching never requires the sheet.
+            await { find(nodes(), "编辑照片 2") != null }
+            checkTarget("管理照片工作台"); checkTarget("添加编辑照片"); checkTarget("编辑照片 2")
+            val topStrip = bounds("顶部照片工作台")
+            val preview = bounds("照片预览")
+            check(topStrip.bottom <= preview.top + 1) { "Top workbench overlaps the photo preview" }
+            check(find(nodes(), "关闭展示台") == null)
+            capture("top_queue")
+            click("编辑照片 2")
+            await { vm.currentIndex == 1 && !vm.busy }
+            click("编辑照片 1")
+            await { vm.currentIndex == 0 && !vm.busy }
+            val afterDirectSwitch = vm.lastResult
+            click("放印")
+            await { find(nodes(), "编辑照片 2") != null }
+            capture("top_queue_print")
+            check(vm.lastResult === afterDirectSwitch) { "Opening print controls rerendered the photo" }
+            click("调色")
+            await { find(nodes(), "编辑照片 2") != null }
+            capture("top_queue_grade")
+            click("拍摄")
             openStage()
             checkStageMetadata() // Untouched photo.
             capture("stage_two_photos")
-            check(vm.lastResult === beforeNavigation) { "Opening the stage triggered a render" }
+            check(vm.lastResult === afterDirectSwitch) { "Opening the stage triggered a render" }
             listOf("添加照片", "关闭展示台", "上一张", "下一张", "照片操作").forEach(::checkTarget)
             val currentBounds = bounds("展示台照片 1")
             check(currentBounds.width() >= 48 * activity.resources.displayMetrics.density - 1 &&
@@ -1687,12 +1843,12 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 check(uiAutomation.injectInputEvent(event, true)); event.recycle()
             }
             waitForIdleSync(); Thread.sleep(200)
-            check(vm.lastResult === beforeNavigation) { "Tapping the current photo triggered a render" }
+            check(vm.lastResult === afterDirectSwitch) { "Tapping the current photo triggered a render" }
             click("照片操作"); capture("stage_menu")
             click("照片信息"); capture("stage_info"); click("关闭")
-            check(vm.lastResult === beforeNavigation) { "Inspecting photo information triggered a render" }
+            check(vm.lastResult === afterDirectSwitch) { "Inspecting photo information triggered a render" }
             runOnMainSync { vm.params.exposureEv = 1.25f; vm.scheduleRender() }
-            await { !vm.busy && vm.lastResult !== beforeNavigation }
+            await { !vm.busy && vm.lastResult !== afterDirectSwitch }
             checkStageMetadata() // Currently edited photo.
             click("展示台照片 2")
             await { vm.currentIndex == 1 && !vm.busy && vm.lastResult != null }
@@ -1726,6 +1882,20 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                     .all { index -> vm.developedPreviews[vm.photos[index]] != null || vm.thumbnails[vm.photos[index]] != null }
             }
             capture("stage_many_photos")
+            click("关闭展示台")
+            await { find(nodes(), "编辑照片 24") != null }
+            val topSelected = bounds("编辑照片 24")
+            check(topSelected.left >= 0 && topSelected.right <= activity.resources.displayMetrics.widthPixels) {
+                "Top queue did not keep the active photo visible"
+            }
+            capture("top_queue_many")
+            val beforeTopPicker = vm.lastResult
+            click("添加编辑照片")
+            Thread.sleep(600)
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { find(nodes(), "编辑照片 24") != null }
+            check(vm.photos.size == 24 && vm.currentIndex == 23 && vm.lastResult === beforeTopPicker)
+            openStage()
             click("照片操作"); click("从展示台移除")
             await { vm.photos.size == 23 && !vm.busy }
             check(extras.last().exists()) { "Removing a stage entry deleted the source file" }
@@ -1746,7 +1916,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             openStage()
             capture("stage_final")
             check(vm.errorMessage == null)
-            return "Stage: selection, compact navigation, metadata, picker cancel, add without rerender, edit preservation, auto-scroll across 24 photos, long names, removal without source deletion, single/empty states, explicit close and system Back passed."
+            return "Top queue: visible without sheet, direct switching, print/grade persistence, no preview overlap, 24-photo auto-scroll. Management: selection, compact navigation, metadata, picker cancel, add without rerender, edit preservation, auto-scroll across 24 photos, long names, removal without source deletion, single/empty states, explicit close and system Back passed."
         }
         if (layoutOnly) {
             if (find(nodes(), "全部调整") != null) click("全部调整")

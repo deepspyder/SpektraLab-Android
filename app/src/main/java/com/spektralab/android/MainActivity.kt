@@ -415,7 +415,8 @@ private fun EditorScreen(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val expanded = maxWidth >= 840.dp || (maxWidth >= 600.dp && maxWidth > maxHeight)
+        // A phone held sideways is wide but too short for all five rail destinations.
+        val expanded = maxHeight >= 500.dp && (maxWidth >= 840.dp || (maxWidth >= 600.dp && maxWidth > maxHeight))
         if (adjustmentFullscreen) {
             AdjustmentFullscreen(
                 mode = selectedTab.label,
@@ -423,7 +424,7 @@ private fun EditorScreen(
                 comparing = comparing, canCompare = vm.sourceBitmap != null && vm.rendered != null,
                 onCompare = { comparing = !comparing }, onClose = { adjustmentFullscreen = false },
             ) { previewModifier ->
-                PhotoCanvas(vm, comparing, onImport = {}, modifier = previewModifier, showSessionBadge = false)
+                PhotoCanvas(vm, comparing, onImport = {}, modifier = previewModifier)
             }
         } else editorLayoutStates.SaveableStateProvider("editor") {
         Scaffold(
@@ -431,35 +432,45 @@ private fun EditorScreen(
             contentWindowInsets = if (selectedTab == EditorTab.Gallery) androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0)
                 else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             topBar = {
-                if (!vm.isCropping && selectedTab != EditorTab.Gallery) DarkroomTopBar(
-                    title = when { selectedTab == EditorTab.Export -> "导出照片"; fullParameters -> "暗房调整"
-                        else -> vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "SpektraLab" },
-                    parameterView = fullParameters, exportView = selectedTab == EditorTab.Export,
-                    enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
-                    canUndo = vm.canUndo, canRedo = vm.canRedo,
-                    canCompare = vm.sourceBitmap != null && vm.rendered != null, comparing = comparing,
-                    onBack = { when { selectedTab == EditorTab.Export -> selectedTab = previousTab
-                        fullParameters -> { selectedTab = EditorTab.Shoot; showAllShootControls = false }
-                        else -> onBackHome() } },
-                    onMenu = { showMoreMenu = true }, onUndo = vm::undo, onRedo = vm::redo,
-                    onCompare = { comparing = !comparing }, onReset = vm::resetAll,
-                    onHelp = { exportHelpVisible = true },
-                ) {
-                    DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
-                        DropdownMenuItem(text = { Text("导入照片") }, onClick = {
-                            showMoreMenu = false; addToStage = false
-                            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        })
-                        DropdownMenuItem(text = { Text("照片工作台 (${vm.photos.size})") }, enabled = vm.photos.isNotEmpty(),
-                            onClick = { showMoreMenu = false; photoTrayVisible = true })
-                        DropdownMenuItem(text = { Text("裁剪照片") }, enabled = vm.hasPhoto && !vm.params.overscanActive,
-                            onClick = { showMoreMenu = false; vm.beginCrop() })
-                        DropdownMenuItem(text = { Text("重置") }, enabled = vm.hasPhoto,
-                            onClick = { showMoreMenu = false; vm.resetAll() })
-                        DropdownMenuItem(text = { Text("测试图") }, onClick = { showMoreMenu = false; vm.openTestImage() })
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        DropdownMenuItem(text = { Text("关于") }, onClick = { showMoreMenu = false; aboutVisible = true })
+                if (!vm.isCropping && selectedTab != EditorTab.Gallery) Column {
+                    DarkroomTopBar(
+                        title = when { selectedTab == EditorTab.Export -> "导出照片"; fullParameters -> "暗房调整"
+                            else -> vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "SpektraLab" },
+                        parameterView = fullParameters, exportView = selectedTab == EditorTab.Export,
+                        enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
+                        canUndo = vm.canUndo, canRedo = vm.canRedo,
+                        canCompare = vm.sourceBitmap != null && vm.rendered != null, comparing = comparing,
+                        onBack = { when { selectedTab == EditorTab.Export -> selectedTab = previousTab
+                            fullParameters -> { selectedTab = EditorTab.Shoot; showAllShootControls = false }
+                            else -> onBackHome() } },
+                        onMenu = { showMoreMenu = true }, onUndo = vm::undo, onRedo = vm::redo,
+                        onCompare = { comparing = !comparing }, onReset = vm::resetAll,
+                        onHelp = { exportHelpVisible = true },
+                    ) {
+                        DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                            DropdownMenuItem(text = { Text("导入照片") }, onClick = {
+                                showMoreMenu = false; addToStage = false
+                                pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            })
+                            DropdownMenuItem(text = { Text("照片工作台 (${vm.photos.size})") }, enabled = vm.photos.isNotEmpty(),
+                                onClick = { showMoreMenu = false; photoTrayVisible = true })
+                            DropdownMenuItem(text = { Text("裁剪照片") }, enabled = vm.hasPhoto && !vm.params.overscanActive,
+                                onClick = { showMoreMenu = false; vm.beginCrop() })
+                            DropdownMenuItem(text = { Text("重置") }, enabled = vm.hasPhoto,
+                                onClick = { showMoreMenu = false; vm.resetAll() })
+                            DropdownMenuItem(text = { Text("测试图") }, onClick = { showMoreMenu = false; vm.openTestImage() })
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            DropdownMenuItem(text = { Text("关于") }, onClick = { showMoreMenu = false; aboutVisible = true })
+                        }
                     }
+                    if (selectedTab != EditorTab.Export && vm.photos.isNotEmpty()) EditorPhotoStrip(
+                        vm = vm,
+                        onAddPhotos = {
+                            addToStage = true
+                            pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                        onManagePhotos = { photoTrayVisible = true },
+                    )
                 }
             },
             bottomBar = {
@@ -509,7 +520,7 @@ private fun EditorScreen(
                     expanded -> Row(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         EditorNavigationRail(destination, ::selectEditorTab)
                         PhotoCanvas(vm, comparing, onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            modifier = Modifier.weight(1f).fillMaxHeight(), onOpenPhotos = { photoTrayVisible = true })
+                            modifier = Modifier.weight(1f).fillMaxHeight())
                         Column(Modifier.width(parameterWidth).fillMaxHeight()) {
                             PhotoMetadataStrip(vm)
                             EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
@@ -518,7 +529,7 @@ private fun EditorScreen(
                     }
                     landscape -> Row(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PhotoCanvas(vm, comparing, onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            modifier = Modifier.weight(1.08f).fillMaxHeight(), onOpenPhotos = { photoTrayVisible = true })
+                            modifier = Modifier.weight(1.08f).fillMaxHeight())
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             PhotoMetadataStrip(vm)
                             EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
@@ -528,7 +539,7 @@ private fun EditorScreen(
                     destination == EditorTab.Shoot && !showAllShootControls -> Column(Modifier.fillMaxSize()) {
                         PhotoCanvas(vm, comparing,
                             onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            modifier = Modifier.weight(1f).fillMaxWidth(), onOpenPhotos = { photoTrayVisible = true })
+                            modifier = Modifier.weight(1f).fillMaxWidth())
                         PhotoMetadataStrip(vm)
                         EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
@@ -555,8 +566,7 @@ private fun EditorScreen(
                         preview = { previewModifier ->
                             PhotoCanvas(vm, comparing,
                                 onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                                modifier = previewModifier,
-                                onOpenPhotos = { photoTrayVisible = true })
+                                modifier = previewModifier)
                         },
                     ) {
                         panelStates.SaveableStateProvider(destination) {
@@ -728,7 +738,7 @@ private fun CropWorkspace(vm: EditorViewModel, modifier: Modifier = Modifier) {
             }
         }
         Box(
-            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 28.dp, vertical = 12.dp)
                 .clip(RoundedCornerShape(12.dp)).background(Color.Black)
                 .semantics { contentDescription = "照片预览" },
             contentAlignment = Alignment.Center
@@ -740,9 +750,10 @@ private fun CropWorkspace(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 onCropChange = { x, y, w, h ->
                     vm.params.cropX = x; vm.params.cropY = y
                     vm.params.cropW = w; vm.params.cropH = h
-                    vm.cropAspect = "自定义"
+                    if (vm.cropAspect == "原始") vm.cropAspect = "自定义"
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                lockedAspect = cropAspectRatio(vm.cropAspect),
             )
         }
         Row(
@@ -751,10 +762,11 @@ private fun CropWorkspace(vm: EditorViewModel, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             OptionsDropdown(
-                "比例", listOf("原始", "1:1", "4:3", "3:2", "16:9"), vm.cropAspect,
+                "比例", listOf("自定义", "原始", "1:1", "4:3", "3:2", "16:9", "2.39:1", "1.85:1"), vm.cropAspect,
                 Modifier.weight(1f)
             ) { aspect ->
-                val crop = computeCenteredCrop(aspect, source.width, source.height)
+                val crop = if (aspect == "自定义") floatArrayOf(vm.params.cropX, vm.params.cropY, vm.params.cropW, vm.params.cropH)
+                    else computeCenteredCrop(aspect, source.width, source.height)
                 vm.cropAspect = aspect
                 vm.params.cropX = crop[0]; vm.params.cropY = crop[1]
                 vm.params.cropW = crop[2]; vm.params.cropH = crop[3]
@@ -763,6 +775,9 @@ private fun CropWorkspace(vm: EditorViewModel, modifier: Modifier = Modifier) {
                 Text("重置")
             }
         }
+        Text("拖动框内移动选区，拖动四角调整大小", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 20.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -844,8 +859,6 @@ private fun PhotoCanvas(
     comparing: Boolean,
     onImport: () -> Unit,
     modifier: Modifier = Modifier,
-    showSessionBadge: Boolean = true,
-    onOpenPhotos: () -> Unit = {},
 ) {
     val canCompare = vm.sourceBitmap != null && vm.rendered != null && !vm.isCropping
     BoxWithConstraints(
@@ -895,16 +908,7 @@ private fun PhotoCanvas(
                 }
             }
         }
-        if (showSessionBadge && vm.photos.isNotEmpty() && !vm.isCropping) {
-            Box(Modifier.align(Alignment.TopStart).padding(8.dp)
-                .heightIn(min = 48.dp).clickable(onClick = onOpenPhotos)
-                .semantics { contentDescription = "${vm.currentIndex + 1} / ${vm.photos.size}" }, contentAlignment = Alignment.Center) {
-                Surface(color = MaterialTheme.colorScheme.background.copy(alpha = .7f), shape = SpektraShapes.compact) {
-                    Text("${vm.currentIndex + 1} / ${vm.photos.size}  ·  适合屏幕",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.sp)
-                }
-            }
-        }
+
     }
 }
 
@@ -1085,6 +1089,17 @@ private fun PrintPanel(vm: EditorViewModel) {
 
 @Composable
 private fun GradePanel(vm: EditorViewModel) {
+    EditorSection("暗角", "柔和压暗边缘 · 不改变中心曝光", initiallyExpanded = true) {
+        SliderRow("暗角强度", vm.params.vignetteAmount, 0f..100f, "%.0f%%") {
+            vm.params.vignetteAmount = it; vm.scheduleGrade()
+        }
+        SliderRow("暗角范围", vm.params.vignetteSize, 0f..100f, "%.0f%%") {
+            vm.params.vignetteSize = it; vm.scheduleGrade()
+        }
+        SliderRow("暗角羽化", vm.params.vignetteFeather, 0f..100f, "%.0f%%") {
+            vm.params.vignetteFeather = it; vm.scheduleGrade()
+        }
+    }
     EditorSection("白平衡", "扫描白平衡 · 暖冷与色调", initiallyExpanded = true) {
         SliderRow("色温(暖/冷)", vm.params.temperature, -1f..1f, "%+.2f") { vm.params.temperature = it; vm.scheduleGrade() }
         SliderRow("色调(绿/品红)", vm.params.tint, -1f..1f, "%+.2f") { vm.params.tint = it; vm.scheduleGrade() }

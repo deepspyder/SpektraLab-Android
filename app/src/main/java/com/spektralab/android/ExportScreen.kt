@@ -1,8 +1,15 @@
 package com.spektralab.android
 
 import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +36,10 @@ import kotlin.math.roundToInt
 /** Export settings, progress and pinned action share the original ViewModel export paths. */
 @Composable
 internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, onSaveRecipe: () -> Unit) {
+    val context = LocalContext.current
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        vm.exportKeepLocation = granted
+    }
     var batch by rememberSaveable { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     var activeQuickAction by rememberSaveable { mutableStateOf<String?>(null) }
@@ -68,6 +79,13 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     enabled = !processing) { vm.jpegQuality = it.roundToInt() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f), thickness = .5.dp)
             }
+            ExportMetadataOption("保留拍摄信息", "相机、镜头、拍摄时间及曝光参数", vm.exportKeepCapture, !processing) { vm.exportKeepCapture = it }
+            ExportMetadataOption("保留位置信息", "仅复制原片已有、可读取的 GPS 信息", vm.exportKeepLocation, !processing) { keep ->
+                if (keep && Build.VERSION.SDK_INT >= 29 && vm.currentUri?.authority == "media" &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    locationPermission.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                } else vm.exportKeepLocation = keep
+            }
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .clickable(enabled = !processing, role = Role.Button, onClick = { advanced = !advanced })
                 .semantics { stateDescription = if (advanced) "已展开" else "已收起" },
@@ -85,11 +103,6 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     else -> "jpg"
                 }
                 ExportInfoRow("位深", if (vm.exportFormat == "TIFF") "RGB · 16 bit" else "RGB · 8 bit")
-                ExportInfoRow("元数据", when (vm.exportFormat) {
-                    "JPEG" -> "保留原片拍摄信息"
-                    "TIFF" -> "ICC 色彩配置 · 不含 EXIF"
-                    else -> "不保留原片 EXIF"
-                })
                 ExportInfoRow("文件命名", "SpektraLab_时间戳.$extension")
                 ExportInfoRow("保存位置", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     "相册 / Pictures/SpektraLab"
@@ -101,7 +114,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f), thickness = .5.dp)
                 Text("导出配方", Modifier.padding(top = 10.dp, bottom = 2.dp), fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.primary)
-                val currentRecipe = vm.recipes.firstOrNull { it.format == vm.exportFormat && it.res == vm.exportRes && it.colorSpace == vm.exportColorSpace && it.jpegQuality == vm.jpegQuality }
+                val currentRecipe = vm.recipes.firstOrNull { it.format == vm.exportFormat && it.res == vm.exportRes && it.colorSpace == vm.exportColorSpace && it.jpegQuality == vm.jpegQuality && it.keepCapture == vm.exportKeepCapture && it.keepLocation == vm.exportKeepLocation }
                 ExportSettingRow("当前配方", currentRecipe?.name ?: "自定义", vm.recipes.map { it.name }, !processing) { name ->
                     vm.recipes.firstOrNull { it.name == name }?.let { vm.applyRecipe(it) }
                 }
@@ -308,5 +321,18 @@ private fun ExportInlineProgress(vm: EditorViewModel) {
                 if (progress != null) Text("${progress.roundToInt()}%", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.primary)
             }
         }
+    }
+}
+
+@Composable
+private fun ExportMetadataOption(label: String, detail: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+        .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+        .semantics(mergeDescendants = true) { contentDescription = label }, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 2.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
