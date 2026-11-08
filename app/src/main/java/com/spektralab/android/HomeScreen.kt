@@ -25,14 +25,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,7 +75,6 @@ internal fun HomeScreen(
     onAddPhotos: () -> Unit,
     onOpenEditor: () -> Unit,
     onOpenTestImage: () -> Unit,
-    onOpenViewingStand: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     var moreExpanded by remember { mutableStateOf(false) }
@@ -93,16 +90,12 @@ internal fun HomeScreen(
                     Text("SpektraLab", Modifier.weight(1f).padding(start = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Box {
                         IconButton(onClick = { moreExpanded = true }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.Tune, "更多操作", modifier = Modifier.size(20.dp))
+                            Icon(Icons.Rounded.Tune, "更多操作", modifier = Modifier.size(20.dp))
                         }
                         DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
                             DropdownMenuItem(
                                 text = { Text("测试图") },
                                 onClick = { moreExpanded = false; onOpenTestImage() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("观景台") },
-                                onClick = { moreExpanded = false; onOpenViewingStand() },
                             )
                             DropdownMenuItem(
                                 text = { Text("关于") },
@@ -202,7 +195,7 @@ private fun HomeLead(
                 bitmap = preview.asImageBitmap(),
                 contentDescription = "继续显影",
                 modifier = Modifier.fillMaxWidth().aspectRatio(1.4f)
-                    .clip(RoundedCornerShape(2.dp)).clickable(role = Role.Button, onClick = onOpenEditor),
+                    .clip(SpektraShapes.panel).clickable(role = Role.Button, onClick = onOpenEditor),
                 contentScale = ContentScale.Crop,
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -235,7 +228,7 @@ private fun HomeLead(
             Surface(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 224.dp, max = 300.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = RoundedCornerShape(8.dp),
+                shape = SpektraShapes.control,
             ) {
                 Column(
                     Modifier.fillMaxSize().padding(24.dp),
@@ -243,7 +236,7 @@ private fun HomeLead(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Icon(
-                        Icons.Filled.CameraAlt,
+                        Icons.Rounded.CameraAlt,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(36.dp),
@@ -264,10 +257,10 @@ private fun HomeLead(
             onClick = onImportPhotos,
             enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            shape = RoundedCornerShape(8.dp),
+            shape = SpektraShapes.control,
         ) {
             Icon(
-                Icons.Outlined.AddPhotoAlternate,
+                Icons.Rounded.AddPhotoAlternate,
                 contentDescription = null,
                 modifier = Modifier.size(19.dp),
             )
@@ -304,9 +297,9 @@ private fun HomeSession(vm: EditorViewModel, onAddPhotos: () -> Unit, onOpenEdit
                 val thumbnail = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
                 if (thumbnail == null) LaunchedEffect(uri) { vm.loadThumbnail(uri) }
                 val identity = rememberSourcePhotoInfo(uri)
-                Box(Modifier.width(112.dp).height(84.dp).clip(RoundedCornerShape(2.dp))
+                Box(Modifier.width(112.dp).height(84.dp).clip(SpektraShapes.thumbnail)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .then(if (current) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)) else Modifier)
+                    .then(if (current) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, SpektraShapes.thumbnail) else Modifier)
                     .clickable(enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting, role = Role.Button) {
                         if (index != vm.currentIndex) vm.selectPhoto(index)
                         onOpenEditor()
@@ -319,13 +312,13 @@ private fun HomeSession(vm: EditorViewModel, onAddPhotos: () -> Unit, onOpenEdit
                     val number = (index + 1).toString().padStart(2, '0')
                     Text(if (current) "$number · 编辑中" else "$number · ${identity.format}",
                         Modifier.align(Alignment.BottomStart).padding(6.dp)
-                            .background(Color.Black.copy(alpha = .75f), RoundedCornerShape(2.dp))
+                            .background(Color.Black.copy(alpha = .75f), SpektraShapes.badge)
                             .padding(horizontal = 5.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall, maxLines = 1,
                         color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                     if (current) Text(identity.format,
                         Modifier.align(Alignment.TopEnd).padding(6.dp)
-                            .background(Color.Black.copy(alpha = .75f), RoundedCornerShape(2.dp))
+                            .background(Color.Black.copy(alpha = .75f), SpektraShapes.badge)
                             .padding(horizontal = 5.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
                 }

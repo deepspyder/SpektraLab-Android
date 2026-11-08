@@ -45,6 +45,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var largeExportFormat = "JPEG"
     private var largeExportEdges = false
     private var exportMemoryOnly = false
+    private var galleryOnly = false
+    private var themeOnly = false
+    private var batchSelectionOnly = false
+    private var stockLibraryOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -69,6 +73,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         largeExportOnly = audit == "large-export"
         assetBatchOnly = audit == "assets-batch"
         exportMemoryOnly = audit == "export-memory"
+        galleryOnly = audit == "gallery"
+        themeOnly = audit == "theme"
+        batchSelectionOnly = audit == "batch-selection"
+        stockLibraryOnly = audit == "stock-library"
         largeExportResolution = arguments?.getString("exportRes")?.toIntOrNull() ?: 0
         largeExportInput = arguments?.getString("input") ?: largeExportInput
         largeExportFormat = arguments?.getString("format") ?: largeExportFormat
@@ -87,8 +95,38 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (stockLibraryOnly) {
+            case("ui.stock_library_and_paper_pairing") { StockLibraryAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (batchSelectionOnly) {
+            case("export.selected_photos_and_selection_ui") { BatchExportAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (themeOnly) {
+            case("ui.theme.neutral_home_and_darkroom") { ThemeAudit(this, output).run() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (importSelectionOnly) {
             case("import.selection_and_async_state") { PhotoImportAudit(this, output).run() }
+            writeReport()
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (galleryOnly) {
+            galleryAudit()
             writeReport()
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
@@ -919,6 +957,284 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         return null
     }
+    private fun galleryAudit() {
+        val activity = startActivitySync(Intent(targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        await { vm.engine != null && !vm.busy }
+        fun nodes(): AccessibilityNodeInfo? {
+            if (android.os.Build.VERSION.SDK_INT >= 34) uiAutomation.clearCache()
+            return uiAutomation.rootInActiveWindow
+        }
+        fun find(node: AccessibilityNodeInfo?, label: String): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.text?.toString() == label || node.contentDescription?.toString() == label) return node
+            for (i in 0 until node.childCount) find(node.getChild(i), label)?.let { return it }
+            return null
+        }
+        fun tree(): String {
+            val lines = mutableListOf<String>()
+            fun visit(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                lines += (node.text ?: "").toString() + " [" + node.contentDescription + "]"
+                for (i in 0 until node.childCount) visit(node.getChild(i))
+            }
+            visit(nodes())
+            return lines.joinToString("\n")
+        }
+        fun click(label: String) {
+            await(10000) { find(nodes(), label) != null }
+            var node = find(nodes(), label) ?: error("Missing: $label\n" + tree())
+            while (!node.isClickable) node = node.parent ?: error("Not clickable: $label")
+            check(node.isEnabled && node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            waitForIdleSync(); Thread.sleep(450)
+        }
+        fun bounds(label: String): Rect = Rect().also {
+            (find(nodes(), label) ?: error("Missing: $label\n" + tree())).getBoundsInScreen(it)
+        }
+        fun capture(name: String) {
+            uiAutomation.waitForIdle(250, 5000)
+            uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(output, "gallery_$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            File(output, "gallery_$name.txt").writeText(tree())
+        }
+        fun pointer(action: Int, x: Float, y: Float, start: Long) {
+            val motion = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(), action, x, y, 0)
+            motion.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            check(uiAutomation.injectInputEvent(motion, true)); motion.recycle()
+        }
+        fun gesture(x1: Float, y1: Float, x2: Float, y2: Float) {
+            val start = android.os.SystemClock.uptimeMillis()
+            pointer(0, x1, y1, start)
+            for (step in 1..18) {
+                pointer(2, x1 + (x2 - x1) * step / 18, y1 + (y2 - y1) * step / 18, start)
+                Thread.sleep(16)
+            }
+            pointer(1, x2, y2, start); Thread.sleep(650)
+        }
+        fun sharePreview(expected: Bitmap) {
+            val directory = File(targetContext.cacheDir, "lighttable")
+            val previous = directory.listFiles()?.map { it.name }?.toSet().orEmpty()
+            click("照片操作"); click("分享预览图")
+            await(10000) {
+                val root = nodes()
+                root != null && root.packageName?.toString() != targetContext.packageName &&
+                    directory.listFiles()?.any { it.name !in previous } == true
+            }
+            val file = directory.listFiles()!!.first { it.name !in previous }
+            val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+            check(options.outWidth == expected.width && options.outHeight == expected.height)
+            val start = android.os.SystemClock.uptimeMillis()
+            uiAutomation.injectInputEvent(android.view.KeyEvent(start, start, 0, android.view.KeyEvent.KEYCODE_BACK, 0), true)
+            uiAutomation.injectInputEvent(android.view.KeyEvent(start, android.os.SystemClock.uptimeMillis(), 1, android.view.KeyEvent.KEYCODE_BACK, 0), true)
+            await { tree().contains("关闭沉浸式观片") }
+        }
+        val fixture = context.assets.open("13mb.jpg").use { input ->
+            android.graphics.BitmapFactory.decodeStream(input, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 })
+        } ?: error("Missing gallery photo fixture")
+        val files = (1..12).map { index ->
+            File(output, "gallery-$index.jpg").also { file ->
+                val matrix = android.graphics.Matrix().apply { if (index % 3 == 0) postRotate(90f) }
+                val variant = Bitmap.createBitmap(fixture, 0, 0, fixture.width, fixture.height, matrix, true)
+                file.outputStream().use { check(variant.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
+                if (variant !== fixture) variant.recycle()
+                EditStore.save(targetContext, Uri.fromFile(file), EditorParams())
+            }
+        }
+        fixture.recycle()
+        case("ui.gallery.contact_sheet_viewer_and_loupe") {
+          try {
+            val uris = files.map(Uri::fromFile)
+            runOnMainSync {
+                vm.loadViewingPhotos(uris)
+                check(vm.isImportingViewingPhotos)
+                vm.openPhotos(uris.take(1))
+            }
+            await(30000) { vm.viewingPhotos.size == 12 && !vm.isImportingViewingPhotos && !vm.busy && vm.rendered != null }
+            click("继续显影"); click("观景台")
+            await { tree().contains("胶片墙") && tree().contains("查看第 4 帧 gallery-4.jpg") }
+            check(!tree().contains("底片长廊") && !tree().contains("展厅"))
+            val first = bounds("查看第 1 帧 gallery-1.jpg")
+            val third = bounds("查看第 3 帧 gallery-3.jpg")
+            val fourth = bounds("查看第 4 帧 gallery-4.jpg")
+            if (activity.resources.configuration.screenWidthDp in 330..539) {
+                check(kotlin.math.abs(first.centerY() - third.centerY()) < 5 && fourth.centerY() > first.centerY())
+            }
+            Thread.sleep(700); capture("contact_sheet")
+            val before = uiAutomation.takeScreenshot()!!
+            val bright = before.getPixel(first.centerX(), first.centerY()); before.recycle()
+            click("关闭灯光"); await { tree().contains("打开灯光") }
+            val after = uiAutomation.takeScreenshot()!!
+            val dim = after.getPixel(first.centerX(), first.centerY()); after.recycle()
+            check(android.graphics.Color.red(dim) < android.graphics.Color.red(bright)) { "Lamp did not dim the photo" }
+            capture("light_off"); click("打开灯光")
+            click("打开放大镜"); await { tree().contains("拖动放大镜") }
+            val lens = bounds("拖动放大镜")
+            gesture(lens.exactCenterX(), lens.exactCenterY(), lens.exactCenterX() + 100f, lens.exactCenterY() + 80f)
+            val moved = bounds("拖动放大镜")
+            check(moved.centerX() != lens.centerX() || moved.centerY() != lens.centerY()) { "Loupe did not move" }
+            capture("wall_loupe"); click("关闭放大镜")
+            click("查看第 2 帧 gallery-2.jpg")
+            await { tree().contains("关闭沉浸式观片") && tree().contains("02 / 12") }
+            capture("viewer_second")
+            sharePreview(vm.galleryPreviews[uris[1]] ?: vm.viewingPhotos.first { it.first == uris[1].toString() }.second)
+            click("下一帧"); capture("viewer_next"); await { tree().contains("03 / 12") }
+            click("上一帧"); click("上一帧"); await { tree().contains("01 / 12") }
+            sharePreview(vm.rendered!!)
+            click("第 2 幅作品"); await { tree().contains("02 / 12") }
+            click("上一帧"); await { tree().contains("01 / 12") }
+            val image = bounds("沉浸照片 gallery-1.jpg")
+            gesture(image.left + image.width() * .8f, image.exactCenterY(), image.left + image.width() * .2f, image.exactCenterY())
+            await { tree().contains("02 / 12") }; capture("viewer_swipe")
+            click("打开放大镜"); await { tree().contains("拖动放大镜") }; capture("viewer_loupe"); click("关闭放大镜")
+            val second = bounds("沉浸照片 gallery-2.jpg")
+            repeat(2) {
+                val time = android.os.SystemClock.uptimeMillis()
+                pointer(0, second.exactCenterX(), second.exactCenterY(), time)
+                pointer(1, second.exactCenterX(), second.exactCenterY(), time)
+                Thread.sleep(70)
+            }
+            await { tree().contains("还原 220%") }; capture("viewer_zoom")
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await { !tree().contains("还原 220%") && tree().contains("关闭沉浸式观片") }
+            click("照片操作"); click("隐藏照片信息")
+            check(find(nodes(), "gallery-2.jpg") == null)
+            click("关闭沉浸式观片"); await { tree().contains("胶片墙") }
+            runOnMainSync { vm.loadViewingPhotos(uris) }
+            await { !vm.isImportingViewingPhotos }; check(vm.viewingPhotos.size == 12)
+            uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90)
+            Thread.sleep(900); capture("landscape")
+            uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_0)
+            Thread.sleep(900)
+            click("返回暗房"); await { tree().contains("胶片与相纸") }
+            check(files.all(File::exists)) { "Viewing operation deleted source photos" }
+            "12-frame wrapping; real light output; spatial movable loupe; arrow, thumbnail and swipe paging; double-tap zoom and Back; info; rotation; dedup and editor return passed"
+          } catch (error: Throwable) {
+            capture("failure")
+            throw IllegalStateException(error.message + "\n" + tree(), error)
+          }
+        }
+        case("ui.gallery.reimport_replaces_detail_cache") {
+            val file = File(output, "cache-refresh.jpg")
+            val uri = Uri.fromFile(file)
+            fun writeImage(width: Int, height: Int, color: Int) {
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(color)
+                file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it)) }
+                bitmap.recycle()
+            }
+            try {
+                writeImage(80, 40, android.graphics.Color.RED)
+                runOnMainSync { vm.loadViewingPhotos(listOf(uri)) }
+                await { !vm.isImportingViewingPhotos }
+                runOnMainSync { vm.loadGalleryPreview(uri) }
+                await { vm.galleryPreviews[uri] != null }
+                check(vm.galleryPreviews[uri]!!.width == 80)
+                runOnMainSync { vm.removeViewingPhoto(uri.toString()) }
+                writeImage(40, 80, android.graphics.Color.BLUE)
+                runOnMainSync { vm.loadViewingPhotos(listOf(uri)) }
+                await { !vm.isImportingViewingPhotos }
+                runOnMainSync { vm.loadGalleryPreview(uri) }
+                await(10000) { vm.galleryPreviews[uri] != null }
+                check(vm.galleryPreviews[uri]!!.width == 40 && vm.galleryPreviews[uri]!!.height == 80) {
+                    "Removed and reimported photo reused stale detail pixels"
+                }
+                "same URI with changed source is decoded afresh after removal"
+            } finally {
+                runOnMainSync { vm.removeViewingPhoto(uri.toString()) }
+            }
+        }
+        case("ui.gallery.removing_middle_frame_updates_selection") {
+            try {
+                click("观景台")
+                click("查看第 2 帧 gallery-2.jpg")
+                await { tree().contains("02 / 12") }
+                click("照片操作"); click("从观景台移除")
+                await { tree().contains("02 / 11") && tree().contains("沉浸照片 gallery-3.jpg") }
+                click("关闭沉浸式观片")
+                await { find(nodes(), "查看第 2 帧 gallery-3.jpg") != null }
+                capture("middle_removed")
+                await(5000) {
+                    val replacement = bounds("查看第 2 帧 gallery-3.jpg")
+                    val current = find(nodes(), "当前") ?: return@await false
+                    val currentBounds = Rect().also(current::getBoundsInScreen)
+                    replacement.contains(currentBounds.centerX(), currentBounds.centerY())
+                }
+                "viewer and wall selection follow the next photo when removing the middle frame"
+            } finally {
+                if (find(nodes(), "关闭沉浸式观片") != null) click("关闭沉浸式观片")
+                if (find(nodes(), "返回暗房") != null) click("返回暗房")
+            }
+        }
+        case("ui.gallery.unreadable_viewer_has_recovery") {
+            val missingFile = File(output, "missing-viewer.jpg")
+            if (missingFile.exists()) check(missingFile.delete())
+            val missing = Uri.fromFile(missingFile)
+            try {
+                runOnMainSync { vm.addPhotos(listOf(missing), openSelected = false) }
+                click("观景台")
+                click("查看第 2 帧 missing-viewer.jpg")
+                await(8000) { tree().contains("无法读取照片") && tree().contains("重试读取照片") }
+                capture("unreadable")
+                val recovered = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888)
+                recovered.eraseColor(android.graphics.Color.CYAN)
+                missingFile.outputStream().use { check(recovered.compress(Bitmap.CompressFormat.JPEG, 95, it)) }
+                recovered.recycle()
+                click("重试读取照片")
+                await(10000) { !tree().contains("无法读取照片") && tree().contains("沉浸照片 missing-viewer.jpg") }
+                capture("unreadable_recovered")
+                "unreadable sources show a retry action and recover when the source becomes available"
+            } finally {
+                if (find(nodes(), "关闭沉浸式观片") != null) click("关闭沉浸式观片")
+                if (find(nodes(), "返回暗房") != null) click("返回暗房")
+                runOnMainSync { vm.removePhotoFromSession(missing) }
+                if (missingFile.exists()) check(missingFile.delete())
+            }
+        }
+        case("ui.gallery.empty_import_cancel_failure_and_remove") {
+          try {
+            runOnMainSync {
+                vm.viewingPhotos.map { it.first }.forEach(vm::removeViewingPhoto)
+                vm.photos.toList().forEach(vm::removePhotoFromSession)
+            }
+            await { !vm.busy }
+            click("观景台")
+            await { tree().contains("让照片，连成一卷") }
+            capture("empty")
+            click("导入照片")
+            await(15000) { find(nodes(), "Cancel") != null }
+            click("Cancel")
+            await { tree().contains("让照片，连成一卷") }
+            val invalid = Uri.fromFile(File(output, "missing-import-" + System.nanoTime() + ".jpg"))
+            runOnMainSync { vm.loadViewingPhotos(listOf(invalid)) }
+            await { !vm.isImportingViewingPhotos }
+            check(vm.viewingPhotos.isEmpty() && vm.viewingImportCompleted == 1)
+            runOnMainSync { vm.loadViewingPhotos(listOf(Uri.fromFile(files[1]))) }
+            await { !vm.isImportingViewingPhotos && tree().contains("查看第 1 帧 gallery-2.jpg") }
+            click("查看第 1 帧 gallery-2.jpg")
+            await { tree().contains("01 / 01") }
+            capture("single_viewer")
+            click("照片操作"); click("从观景台移除")
+            await { tree().contains("让照片，连成一卷") }
+            check(files[1].exists() && vm.viewingPhotos.isEmpty())
+            capture("empty_after_remove")
+            runOnMainSync { vm.loadViewingPhotos(files.map(Uri::fromFile)) }
+            await { !vm.isImportingViewingPhotos && vm.viewingPhotos.size == 12 }
+            "empty UI, real picker cancellation, failed import recovery, single-frame boundary and source-preserving removal passed"
+          } catch (error: Throwable) {
+            capture("edge_failure")
+            throw IllegalStateException(error.message + "\n" + tree(), error)
+          }
+        }
+        uiAutomation.setRotation(android.app.UiAutomation.ROTATION_UNFREEZE)
+        runOnMainSync { activity.finish() }
+    }
+
+
     private fun uiAudit() {
         val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         lateinit var vm: EditorViewModel
@@ -949,32 +1265,23 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         case("ui.launch"){capture("launch");check(tree().contains("SpektraLab"));"main activity visible, no debugger dialog"}
         case("ui.test_image_import"){click("更多操作");click("测试图");await{vm.lastResult!=null};capture("import");check(vm.rendered!=null);"test image rendered via real menu"}
-        case("ui.viewing_stand") {
-            val preview = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888).apply {
-                setPixels(IntArray(640 * 480) { i ->
-                    val x = i % 640; val y = i / 640
-                    -0x1000000 or ((x * 255 / 640) shl 16) or ((y * 255 / 480) shl 8) or 90
-                }, 0, 640, 0, 0, 640, 480)
-            }
-            val standFiles = listOf("stand-a.jpg", "stand-b.jpg").mapIndexed { index, name ->
-                File(output, name).also { file ->
-                    file.outputStream().use { out -> preview.compress(Bitmap.CompressFormat.JPEG, 92 - index * 5, out) }
-                }
-            }
-            runOnMainSync { vm.loadViewingPhotos(standFiles.map(Uri::fromFile)) }
-            await(15000) { vm.viewingPhotos.size == 2 }
-            click("更多操作"); click("观景台")
-            await { tree().contains("关闭观景台") && tree().contains("从图库选择") }
-            check(tree().contains("2 / 2"))
-            click("放大")
-            capture("viewing_stand_light_on")
+        case("ui.gallery_entry") {
+            val standFile = File(output, "stand-a.jpg")
+            val standBitmap = Bitmap.createBitmap(320, 240, Bitmap.Config.ARGB_8888)
+            standBitmap.eraseColor(android.graphics.Color.rgb(120, 100, 70))
+            standFile.outputStream().use { check(standBitmap.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
+            standBitmap.recycle()
+            runOnMainSync { vm.loadViewingPhotos(listOf(Uri.fromFile(standFile))) }
+            await { !vm.isImportingViewingPhotos && vm.viewingPhotos.isNotEmpty() }
+            click("观景台"); await { tree().contains("胶片墙") }
+            capture("gallery_contact_sheet")
             click("关闭灯光"); await { tree().contains("打开灯光") }
-            capture("viewing_stand_light_off")
-            uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_90); Thread.sleep(500); capture("viewing_stand_landscape")
-            uiAutomation.setRotation(android.app.UiAutomation.ROTATION_FREEZE_0); Thread.sleep(500)
-            click("关闭观景台"); await { tree().contains("SpektraLab") }
-            "two gallery photos displayed together; zoom, light toggle, landscape, and close all worked"
+            click("打开灯光"); click("打开放大镜"); await { tree().contains("拖动放大镜") }
+            click("关闭放大镜"); click("返回暗房"); await { tree().contains("胶片与相纸") }
+            "new contact sheet entry, lighting, loupe and editor return passed"
         }
+
+
         for((tab,section) in listOf("拍摄" to "胶片与相纸","暗房" to "放大机","调色" to "白平衡","导出" to "配方"))case("ui.tab.$tab"){if(!tree().contains(section))click(tab);await{tree().contains(section)};capture(tab);"tab content verified: $section"}
         case("ui.grain_toggle"){
             click("暗房");await{tree().contains("放大机")}

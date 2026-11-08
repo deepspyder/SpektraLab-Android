@@ -9,18 +9,17 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.NavigateBefore
-import androidx.compose.material.icons.automirrored.outlined.NavigateNext
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.automirrored.rounded.NavigateBefore
+import androidx.compose.material.icons.automirrored.rounded.NavigateNext
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,12 +69,12 @@ fun PhotoStage(
             Text("${vm.photos.size} 张", Modifier.weight(1f).padding(start = 10.dp),
                 style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             TextButton(onClick = onAddPhotos, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("添加照片", style = MaterialTheme.typography.labelMedium)
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Outlined.Close, "关闭展示台", Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+                Icon(Icons.Rounded.Close, "关闭展示台", Modifier.size(20.dp), tint = colors.onSurfaceVariant)
             }
         }
 
@@ -108,20 +107,20 @@ fun PhotoStage(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Box(
-                            Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(6.dp))
+                            Modifier.fillMaxWidth().height(104.dp).clip(SpektraShapes.thumbnail)
                                 .background(colors.surfaceContainerHigh)
-                                .then(if (selected) Modifier.border(2.dp, colors.primary, RoundedCornerShape(6.dp)) else Modifier),
+                                .then(if (selected) Modifier.border(2.dp, colors.primary, SpektraShapes.thumbnail) else Modifier),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (thumb != null) Image(thumb.asImageBitmap(), null,
-                                Modifier.fillMaxSize().padding(if (selected) 3.dp else 0.dp).clip(RoundedCornerShape(3.dp)),
+                                Modifier.fillMaxSize().padding(if (selected) 3.dp else 0.dp).clip(SpektraShapes.thumbnailInset),
                                 contentScale = ContentScale.Crop)
-                            else Icon(Icons.Outlined.Image, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
+                            else Icon(Icons.Rounded.Image, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
                             if (selected) Box(
                                 Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)
-                                    .background(colors.primary, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center,
+                                    .background(colors.primary, SpektraShapes.badge), contentAlignment = Alignment.Center,
                             ) {
-                                Icon(Icons.Outlined.Check, null, Modifier.size(14.dp), tint = colors.onPrimary)
+                                Icon(Icons.Rounded.Check, null, Modifier.size(14.dp), tint = colors.onPrimary)
                             }
                         }
                         Text(if (selected) "${index + 1} · 当前" else "${index + 1}",
@@ -142,21 +141,21 @@ fun PhotoStage(
                         style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
                 IconButton(onClick = vm::previousPhoto, enabled = enabled && vm.currentIndex > 0) {
-                    Icon(Icons.AutoMirrored.Outlined.NavigateBefore, "上一张", Modifier.size(22.dp))
+                    Icon(Icons.AutoMirrored.Rounded.NavigateBefore, "上一张", Modifier.size(22.dp))
                 }
                 IconButton(onClick = vm::nextPhoto, enabled = enabled && vm.currentIndex < vm.photos.lastIndex) {
-                    Icon(Icons.AutoMirrored.Outlined.NavigateNext, "下一张", Modifier.size(22.dp))
+                    Icon(Icons.AutoMirrored.Rounded.NavigateNext, "下一张", Modifier.size(22.dp))
                 }
                 Box {
                     IconButton(onClick = { showMenu = true }, enabled = enabled) {
-                        Icon(Icons.Outlined.MoreHoriz, "照片操作", Modifier.size(20.dp))
+                        Icon(Icons.Rounded.MoreHoriz, "照片操作", Modifier.size(20.dp))
                     }
                     DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                         DropdownMenuItem(text = { Text("照片信息") },
-                            leadingIcon = { Icon(Icons.Outlined.Info, null, Modifier.size(20.dp)) },
+                            leadingIcon = { Icon(Icons.Rounded.Info, null, Modifier.size(20.dp)) },
                             onClick = { showMenu = false; showInfo = true })
                         DropdownMenuItem(text = { Text("从展示台移除") },
-                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(20.dp)) },
+                            leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(20.dp)) },
                             onClick = { showMenu = false; vm.removeCurrentPhoto() })
                     }
                 }

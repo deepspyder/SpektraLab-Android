@@ -1,268 +1,219 @@
 package com.spektralab.android
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Compare
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.spektralab.android.engine.Stock
 import com.spektralab.android.engine.StockCatalog
 
 private enum class FilmFilter(val label: String) {
-    All("全部"), Positive("正片"), Negative("负片"), Monochrome("黑白")
+    All("全部"), Negative("彩色负片"), Positive("正片"), Monochrome("黑白"), Cinema("电影胶片")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Photo-first workspace: one live preview and a compact horizontal filter strip. */
 @Composable
-internal fun FilmStockScreen(vm: EditorViewModel, onBack: () -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
+internal fun FilmStockScreen(vm: EditorViewModel, onBack: () -> Unit, startWithPaper: Boolean = false) {
+    var paperTab by rememberSaveable { mutableStateOf(startWithPaper) }
     var filter by rememberSaveable { mutableStateOf(FilmFilter.All) }
-    val filteredFilms = vm.films.filter { stock ->
-        val matchesQuery = query.isBlank() || stock.name.contains(query, ignoreCase = true)
-        val matchesType = when (filter) {
-            FilmFilter.All -> true
-            FilmFilter.Positive -> stock.type == "positive" && !StockCatalog.isMonochrome(stock.id)
-            FilmFilter.Negative -> stock.type != "positive" && !StockCatalog.isMonochrome(stock.id)
-            FilmFilter.Monochrome -> StockCatalog.isMonochrome(stock.id)
-        }
-        matchesQuery && matchesType
+    var comparing by rememberSaveable { mutableStateOf(false) }
+    var creditsVisible by remember { mutableStateOf(false) }
+    val enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting
+    val papers = vm.papers.filter { StockCatalog.canPrint(vm.params.filmId, it.id) }
+    val films = remember(vm.films, filter) {
+        vm.films.filter { stock ->
+            when (filter) {
+                FilmFilter.All -> true
+                FilmFilter.Negative -> stock.type != "positive" && !stock.monochrome && !stock.isCinema()
+                FilmFilter.Positive -> stock.type == "positive" && !stock.monochrome
+                FilmFilter.Monochrome -> stock.monochrome
+                FilmFilter.Cinema -> stock.isCinema()
+            }
+        }.sortedBy { filmDisplayOrder.indexOf(it.id).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
     }
-    val selectedFilm = vm.films.firstOrNull { it.id == vm.params.filmId }
-    val currentUri = vm.currentUri
-    LaunchedEffect(currentUri) { currentUri?.let(vm::loadThumbnail) }
-    val sourceThumb = currentUri?.let { vm.thumbnails[it] }
-    val developedThumb = currentUri?.let { vm.developedPreviews[it] }
-
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-      val shortLandscape = maxWidth >= 600.dp && maxHeight < 500.dp
-      Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("胶片库", style = MaterialTheme.typography.titleMedium)
-                        Text("正片 · 负片 · 黑白", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回暗房")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                expandedHeight = 60.dp,
-            )
-        },
-        bottomBar = {
-            if (!shortLandscape) Surface(color = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
-                FilmApplyActions(vm, onBack, Modifier.navigationBarsPadding().imePadding()
-                    .padding(horizontal = 16.dp, vertical = 8.dp))
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回暗房",
+                tint = MaterialTheme.colorScheme.onBackground) }
+            Text("胶片与相纸", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.onBackground)
+            IconButton(onClick = { creditsVisible = true }) { Icon(Icons.Rounded.Info, "图片来源", Modifier.size(19.dp),
+                tint = MaterialTheme.colorScheme.onBackground) }
+            TextButton(onClick = onBack, enabled = enabled,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "应用胶片与相纸" }) {
+                Text("完成", fontWeight = FontWeight.SemiBold)
             }
-        },
-    ) { insets ->
-        Row(
-            Modifier.fillMaxSize().padding(insets).padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-          Column(Modifier.weight(1f).fillMaxHeight(),
-              verticalArrangement = Arrangement.spacedBy(if (shortLandscape) 8.dp else 12.dp)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                placeholder = { Text("搜索胶片名称") },
-                shape = RoundedCornerShape(8.dp),
-                keyboardOptions = KeyboardOptions.Default,
-            )
-
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilmFilter.entries.forEach { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { filter = option },
-                        label = { Text(option.label) },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    )
-                }
-            }
-
-            Text("${filteredFilms.size} 款胶片 · 点击实时试片", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-            if (filteredFilms.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("没有匹配的胶片", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val sidePanel = maxWidth >= 700.dp && maxWidth > maxHeight
+            if (sidePanel) {
+                Row(Modifier.fillMaxSize()) {
+                    StockPhotoPreview(vm, comparing, { comparing = it }, Modifier.weight(1f).fillMaxHeight())
+                    Column(Modifier.width(340.dp).fillMaxHeight().clip(SpektraShapes.panel)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .verticalScroll(rememberScrollState())) {
+                        StockFilterPanel(vm, paperTab, { paperTab = it }, filter, { filter = it }, films, papers, enabled)
+                    }
                 }
             } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(filteredFilms, key = { it.id }) { stock ->
-                        FilmStockRow(
-                            stock = stock,
-                            pairedPaperName = stock.targetPrint?.let { target -> vm.papers.firstOrNull { it.id == target }?.name },
-                            thumbnail = if (stock.id == vm.params.filmId) developedThumb ?: sourceThumb else sourceThumb,
-                            selected = stock.id == vm.params.filmId,
-                            onClick = { vm.selectFilm(stock.id) },
-                        )
+                Column(Modifier.fillMaxSize()) {
+                    StockPhotoPreview(vm, comparing, { comparing = it }, Modifier.weight(1f).fillMaxWidth())
+                    StockFilterPanel(vm, paperTab, { paperTab = it }, filter, { filter = it }, films, papers, enabled)
+                }
+            }
+        }
+    }
+    if (creditsVisible) StockImageCredits(onDismiss = { creditsVisible = false })
+}
+
+@Composable
+private fun StockPhotoPreview(vm: EditorViewModel, comparing: Boolean, onCompare: (Boolean) -> Unit, modifier: Modifier) {
+    val photo = if (comparing) vm.sourceBitmap else vm.rendered ?: vm.sourceBitmap
+    Box(modifier.padding(horizontal = 12.dp, vertical = 8.dp).semantics { contentDescription = "胶片实时预览" }) {
+        if (photo != null) {
+            Image(photo.asImageBitmap(), if (comparing) "原片预览" else "胶片效果预览",
+                Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            IconToggleButton(checked = comparing, onCheckedChange = onCompare,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), SpektraShapes.control)) {
+                Icon(Icons.Rounded.Compare, if (comparing) "查看胶片效果" else "对比原片",
+                    tint = if (comparing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(21.dp))
+            }
+            if (comparing) Text("原片", Modifier.align(Alignment.BottomStart).padding(12.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), SpektraShapes.badge)
+                .padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+        } else {
+            Text("导入照片后可实时试片", Modifier.align(Alignment.Center),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun StockFilterPanel(vm: EditorViewModel, paperTab: Boolean, onPaperTab: (Boolean) -> Unit,
+    filter: FilmFilter, onFilter: (FilmFilter) -> Unit, films: List<Stock>, papers: List<Stock>, enabled: Boolean) {
+    val stocks = if (paperTab) papers else films
+    val selectedId = if (paperTab) vm.params.paperId else vm.params.filmId
+    val selected = (if (paperTab) vm.papers else vm.films).firstOrNull { it.id == selectedId }
+    val filmState = rememberLazyListState()
+    val paperState = rememberLazyListState()
+    val state = if (paperTab) paperState else filmState
+    // Keep the active emulsion visible on entry, after filtering and after a paper auto-pair.
+    LaunchedEffect(paperTab, filter, selectedId, stocks.map { it.id }) {
+        val index = stocks.indexOfFirst { it.id == selectedId }
+        if (stocks.isNotEmpty()) state.animateScrollToItem(index.coerceAtLeast(0))
+    }
+    Column(Modifier.fillMaxWidth().clip(SpektraShapes.sheet).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(bottom = 8.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f), thickness = .5.dp)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).selectableGroup(),
+            verticalAlignment = Alignment.CenterVertically) {
+            listOf(false to "胶片库", true to "相纸").forEach { (paper, label) ->
+                Column(Modifier.heightIn(min = 48.dp).clip(SpektraShapes.control).selectable(selected = paperTab == paper, role = Role.Tab,
+                    onClick = { onPaperTab(paper) }).padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Text(label, fontSize = 13.sp, fontWeight = if (paperTab == paper) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (paperTab == paper) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Text(if (paperTab) "${papers.size} 款兼容材料" else "${films.size} 款胶片",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (!paperTab) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp).selectableGroup().semantics { contentDescription = "胶片分类" }) {
+            FilmFilter.entries.forEach { option ->
+                Box(Modifier.heightIn(min = 48.dp).clip(SpektraShapes.control).selectable(selected = filter == option, role = Role.Tab,
+                    onClick = { onFilter(option) }).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                    Text(option.label, fontSize = 11.sp,
+                        color = if (filter == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (stocks.isEmpty()) Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+            Text("正在载入材料…", style = MaterialTheme.typography.bodySmall)
+        } else {
+            LazyRow(state = state, modifier = Modifier.fillMaxWidth().selectableGroup()
+                .semantics { contentDescription = if (paperTab) "相纸列表" else "胶片列表" },
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(stocks, key = { it.id }) { stock ->
+                    StockFilterItem(stock, stock.id == selectedId, enabled) {
+                        if (paperTab) vm.selectPaper(stock.id) else vm.selectFilm(stock.id)
                     }
                 }
             }
-          }
-          if (shortLandscape) {
-              Column(Modifier.width(260.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
-                  verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                  Text("当前胶片", style = MaterialTheme.typography.labelMedium,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant)
-                  Text(selectedFilm?.name ?: "选择胶片", style = MaterialTheme.typography.titleMedium)
-                  FilmApplyActions(vm, onBack)
-              }
-          }
         }
-      }
+        Text(selected?.name ?: "选择材料", Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+            fontSize = 12.sp, lineHeight = 17.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
 @Composable
-private fun FilmApplyActions(vm: EditorViewModel, onApply: () -> Unit, modifier: Modifier = Modifier) {
-    val papers = vm.papers.filter { StockCatalog.canPrint(vm.params.filmId, it.id) }
-    Column(modifier) {
-        StockDropdown("兼容相纸配对", papers, vm.params.paperId, Modifier.fillMaxWidth()) { vm.selectPaper(it.id) }
-        Button(
-            onClick = onApply,
-            enabled = vm.films.any { it.id == vm.params.filmId },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).heightIn(min = 48.dp),
-            shape = RoundedCornerShape(8.dp),
-        ) {
-            Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("应用胶片与相纸")
+private fun StockFilterItem(stock: Stock, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val width = 76.dp * LocalDensity.current.fontScale.coerceIn(1f, 1.25f)
+    val shape = SpektraShapes.thumbnail
+    Column(Modifier.width(width).selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+        .semantics(mergeDescendants = true) { contentDescription = stock.name },
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(Modifier.fillMaxWidth().height(88.dp).clip(shape)
+            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .then(if (selected) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)) {
+            StockArtwork(stock.id, Modifier.fillMaxSize())
+            if (selected) Icon(Icons.Rounded.Check, null, Modifier.align(Alignment.BottomEnd).padding(3.dp).size(13.dp),
+                tint = MaterialTheme.colorScheme.primary)
         }
+        Text(stock.stripLabel(), fontSize = 10.sp, lineHeight = 14.sp, minLines = 2, maxLines = 2,
+            textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
-@Composable
-private fun FilmStockRow(stock: Stock, pairedPaperName: String?, thumbnail: Bitmap?, selected: Boolean, onClick: () -> Unit) {
-    val monochrome = StockCatalog.isMonochrome(stock.id)
-    val positive = stock.type == "positive" && !monochrome
-    val swatch = when {
-        monochrome -> Color(0xFF52514D)
-        positive -> Color(0xFF7B6748)
-        else -> Color(0xFF586147)
-    }
-    val typeLabel = when {
-        monochrome -> "黑白"
-        positive -> "正片"
-        else -> "负片"
-    }
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 72.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow)
-            .then(if (selected) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)) else Modifier)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier.size(52.dp, 54.dp).clip(RoundedCornerShape(4.dp)).background(swatch),
-            contentAlignment = Alignment.Center,
-        ) {
-          if (thumbnail != null) {
-            Image(thumbnail.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-          } else {
-            Text(
-                when {
-                    monochrome -> "B&W"
-                    positive -> "REV"
-                    else -> "NEG"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFFF3EEE6),
-            )
-          }
-        }
-        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(stock.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                "$typeLabel  ·  ${pairedPaperName ?: "自动配对"}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (selected) {
-            Icon(Icons.Filled.Check, contentDescription = "已选择", tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
+private fun Stock.stripLabel(): String = name.removePrefix("Kodak Professional ").removePrefix("Kodak ")
+    .removePrefix("Fujifilm ").removePrefix("Ilford ").replace("Professional ", "")
+    .replace("Neopan 100 Acros II", "Acros II 100").replace("(Push 1)", "+1").replace("(Push 2)", "+2")
+
+private fun Stock.isCinema() = id.startsWith("kodak_vision3_") || id == "kodak_verita_200d"
+
+private val filmDisplayOrder = listOf(
+    "kodak_portra_400", "kodak_gold_200", "fujifilm_pro_400h", "kodak_ektar_100",
+    "kodak_portra_160", "kodak_portra_800", "kodak_ultramax_400", "fujifilm_c200", "fujifilm_xtra_400",
+    "kodak_portra_800_push1", "kodak_portra_800_push2", "kodak_ektachrome_100", "fujifilm_provia_100f",
+    "fujifilm_velvia_100", "kodak_kodachrome_64", "ilford_hp5_plus_400", "kodak_tri_x_400",
+    "kodak_tmax_100", "fujifilm_neopan_acros_100_ii", "kodak_vision3_50d", "kodak_vision3_200t",
+    "kodak_vision3_250d", "kodak_vision3_500t", "kodak_verita_200d",
+)

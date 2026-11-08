@@ -7,7 +7,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -20,14 +20,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal object DarkroomChrome {
-    val navigation = Color(0xFF20231E)
+    val navigation = Color(0xFF222222)
     val selected = Color(0xFF3B301E)
 }
 
@@ -65,7 +64,6 @@ internal fun DarkroomTopBar(
                         .semantics { if (!exportView) contentDescription = "更多操作" }
                         .wrapContentHeight(Alignment.CenterVertically),
                     fontSize = if (parameterView || exportView) 18.sp else 11.sp,
-                    fontFamily = if (parameterView || exportView) FontFamily.Default else FontFamily.Monospace,
                     fontWeight = if (parameterView || exportView) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 menu()
@@ -126,14 +124,14 @@ internal fun DarkroomBottomBar(
 
 @Composable
 internal fun DarkroomChoiceStrip(options: List<String>, selected: String, enabled: Boolean = true, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(DarkroomChrome.navigation, RoundedCornerShape(6.dp)).selectableGroup()) {
+    Row(Modifier.fillMaxWidth().background(DarkroomChrome.navigation, SpektraShapes.control).selectableGroup()) {
         options.forEach { option ->
             val active = option == selected
             TextButton(onClick = { onSelect(option) }, enabled = enabled,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = active },
-                shape = RoundedCornerShape(4.dp), contentPadding = PaddingValues(4.dp)) {
+                shape = SpektraShapes.compact, contentPadding = PaddingValues(4.dp)) {
               Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)
-                .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent, RoundedCornerShape(4.dp))
+                .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent, SpektraShapes.compact)
                 .padding(horizontal = 6.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 Text(option, color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,

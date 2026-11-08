@@ -9,10 +9,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.OpenInFull
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,21 +65,21 @@ internal fun AdjustmentWorkspace(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 preview(Modifier.fillMaxSize())
                 Row(Modifier.align(Alignment.TopEnd).padding(8.dp)
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = .85f), RoundedCornerShape(8.dp))) {
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = .85f), SpektraShapes.control)) {
                     PreviewComparisonButton(comparing, canCompare, onCompare)
                     IconButton(onClick = onFullScreen, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.OpenInFull, "全屏预览", modifier = Modifier.size(20.dp))
+                        Icon(Icons.Rounded.OpenInFull, "全屏预览", modifier = Modifier.size(20.dp))
                     }
                 }
             }
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp,
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp, shape = SpektraShapes.sheet,
                 modifier = Modifier.fillMaxWidth()) {
                 Column {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f), thickness = .5.dp)
                     Row(Modifier.fillMaxWidth().height(handleHeight).padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = { controlsCollapsed = !controlsCollapsed }) {
-                            Icon(if (controlsCollapsed) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            Icon(if (controlsCollapsed) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                                 null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(if (controlsCollapsed) "展开参数" else "收起参数", fontSize = 12.sp)
@@ -132,7 +132,7 @@ internal fun AdjustmentFullscreen(
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.Close, "关闭全屏预览", modifier = Modifier.size(22.dp))
+                            Icon(Icons.Rounded.Close, "关闭全屏预览", modifier = Modifier.size(22.dp))
                         }
                         Text(fileName, Modifier.weight(1f).padding(horizontal = 8.dp), fontSize = 13.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)

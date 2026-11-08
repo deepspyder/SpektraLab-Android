@@ -7,10 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -20,7 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,6 +34,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
     var activeQuickAction by rememberSaveable { mutableStateOf<String?>(null) }
     val processing = vm.busy || vm.isExporting || vm.isBatchExporting
     val exporting = vm.isExporting || vm.isBatchExporting
+    val selectedCount = vm.selectedBatchExportPhotos.size
     LaunchedEffect(processing, activeQuickAction) {
         if (!processing && activeQuickAction != null) activeQuickAction = null
     }
@@ -48,6 +47,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
             DarkroomChoiceStrip(listOf(singleLabel, batchLabel), if (batch) batchLabel else singleLabel, !processing) {
                 batch = it == batchLabel
             }
+            if (batch) BatchExportSelection(vm, enabled = !processing)
             Spacer(Modifier.height(12.dp))
             Text("文件格式", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             Spacer(Modifier.height(4.dp))
@@ -76,7 +76,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     Text("高级设置", fontSize = 12.sp)
                     Text("位深 · 元数据 · 文件命名 · 保存位置", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Icon(if (advanced) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, modifier = Modifier.size(18.dp))
+                Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, modifier = Modifier.size(18.dp))
             }
             if (advanced) {
                 val extension = when (vm.exportFormat) {
@@ -110,14 +110,14 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                         onClick = onSaveRecipe,
                         enabled = !processing,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                        shape = RoundedCornerShape(6.dp),
+                        shape = SpektraShapes.control,
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.primary,
                         ),
                         contentPadding = PaddingValues(horizontal = 8.dp),
                     ) {
-                        Icon(Icons.Outlined.SaveAlt, null, Modifier.size(16.dp))
+                        Icon(Icons.Rounded.SaveAlt, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("保存配方", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -125,14 +125,14 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                         onClick = vm::syncSettingsToOtherPhotos,
                         enabled = vm.photos.size > 1 && vm.currentUri != null && !processing,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                        shape = RoundedCornerShape(6.dp),
+                        shape = SpektraShapes.control,
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.primary,
                         ),
                         contentPadding = PaddingValues(horizontal = 8.dp),
                     ) {
-                        Icon(Icons.Outlined.Sync, null, Modifier.size(16.dp))
+                        Icon(Icons.Rounded.Sync, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("同步其他照片", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -157,7 +157,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     modifier = Modifier.weight(1f),
                 ) { activeQuickAction = "preview"; vm.previewTier() }
             }
-            if (batch && vm.photos.size <= 1) Text("添加两张以上照片后可批量导出", fontSize = 11.sp, lineHeight = 16.sp,
+            if (batch && selectedCount == 0) Text("请选择至少一张照片", fontSize = 11.sp, lineHeight = 16.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
             Spacer(Modifier.height(8.dp))
         }
@@ -165,11 +165,11 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (exporting) ExportInlineProgress(vm)
             Button(onClick = { if (batch) vm.batchExport() else vm.export() },
-                enabled = vm.hasPhoto && !processing && (!batch || vm.photos.size > 1),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(8.dp)) {
-                Icon(Icons.Outlined.SaveAlt, null, modifier = Modifier.size(18.dp))
+                enabled = !processing && (if (batch) selectedCount > 0 else vm.hasPhoto),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = SpektraShapes.control) {
+                Icon(Icons.Rounded.SaveAlt, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (batch) "导出本次会话 (${vm.photos.size} 张)" else "导出当前照片", fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text(if (batch) "导出所选照片 ($selectedCount 张)" else "导出当前照片", fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
             }
             Text("导出到相册 · 会话不是永久图库", Modifier.fillMaxWidth(), fontSize = 10.sp, lineHeight = 14.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -197,14 +197,14 @@ private fun ExportPhotoIdentity(vm: EditorViewModel) {
     val fileName = vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: vm.currentUri?.lastPathSegment ?: "当前照片"
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         (vm.rendered ?: vm.sourceBitmap)?.let {
-            Image(it.asImageBitmap(), "导出照片预览", Modifier.size(56.dp, 64.dp).clip(RoundedCornerShape(2.dp)), contentScale = ContentScale.Crop)
+            Image(it.asImageBitmap(), "导出照片预览", Modifier.size(56.dp, 64.dp).clip(SpektraShapes.thumbnail), contentScale = ContentScale.Crop)
         }
         Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(fileName.substringBeforeLast('.'), fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("$fileName · ${if (vm.exportRes == 0) "原始尺寸" else "${vm.exportRes} px"}",
-                fontSize = 10.sp, lineHeight = 14.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("当前会话 · 已选 ${vm.photos.size.coerceAtLeast(1)} 张", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.primary)
+            Text("当前会话 · 共 ${vm.photos.size.coerceAtLeast(1)} 张", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -221,7 +221,7 @@ private fun ExportSettingRow(label: String, value: String, options: List<String>
             Text(label, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.padding(end = 16.dp))
             Text(value, fontSize = 11.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1f))
-            if (options.isNotEmpty()) Icon(Icons.Outlined.ChevronRight, null, modifier = Modifier.padding(start = 6.dp).size(16.dp),
+            if (options.isNotEmpty()) Icon(Icons.Rounded.ChevronRight, null, modifier = Modifier.padding(start = 6.dp).size(16.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -243,7 +243,7 @@ private fun ExportQuickAction(
 ) {
     Column(
         modifier.heightIn(min = 80.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(SpektraShapes.control)
             .clickable(enabled = enabled, role = Role.Button, onClick = action)
             .semantics(mergeDescendants = true) {
                 contentDescription = "$description · $subtitle"
@@ -287,7 +287,7 @@ private fun ExportInlineProgress(vm: EditorViewModel) {
         vm.renderStage.contains("高清预览") -> "高清预览中"
         else -> "导出中"
     }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(6.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = SpektraShapes.control) {
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

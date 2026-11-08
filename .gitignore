@@ -14,7 +14,7 @@
 .externalNativeBuild
 .cxx
 local.properties
-
+.impeccable
 
 
 # Gradle wrapper jar（二进制，由 `gradle wrapper` 或 Android Studio 生成）
@@ -30,3 +30,12 @@ UI布局规范.md
 app/src/main/assets/engine/resources/
 !app/src/main/assets/engine/resources/README.md
 /app/build
+
+# Local tooling, crash logs and generated release packages
+/.tmp/
+/hs_err_pid*.log
+/app/release/
+
+# User-provided local fixtures (see docs/export-memory-reproduction.md)
+/app/src/androidTest/assets/13mb.jpg
+/app/src/androidTest/assets/xiaomi-dng.tiff

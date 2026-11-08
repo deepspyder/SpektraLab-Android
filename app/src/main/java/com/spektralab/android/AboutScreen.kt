@@ -15,13 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -74,7 +73,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 title = { Text("关于", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回编辑器")
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回编辑器")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -100,7 +99,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         painter = painterResource(R.drawable.author_avatar),
                         contentDescription = "米瑞斯的猫的头像",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.size(80.dp).clip(RoundedCornerShape(12.dp)),
+                        modifier = Modifier.size(80.dp).clip(SpektraShapes.panel),
                     )
                     Spacer(Modifier.width(16.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -120,7 +119,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.bodyLarge)
 
                 Spacer(Modifier.height(20.dp))
-                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(8.dp)) {
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = SpektraShapes.panel) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("遇到收费？请申请退款", style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -147,10 +146,10 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                             scope.launch { snackbar.showSnackbar("暂时无法打开链接，请复制仓库地址") }
                         }
                     },
-                    shape = RoundedCornerShape(6.dp),
+                    shape = SpektraShapes.control,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(Icons.Filled.OpenInNew, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.OpenInNew, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("打开 GitHub 仓库")
                 }
@@ -158,7 +157,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                     clipboard.setText(AnnotatedString(PROJECT_REPOSITORY_URL))
                     scope.launch { snackbar.showSnackbar("仓库地址已复制") }
                 }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("复制仓库地址")
                 }

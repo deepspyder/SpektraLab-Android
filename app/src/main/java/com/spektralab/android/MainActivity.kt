@@ -12,6 +12,13 @@ import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -41,26 +48,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.outlined.CameraAlt
-import androidx.compose.material.icons.outlined.CropFree
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.Upload
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Compare
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Redo
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.RotateLeft
-import androidx.compose.material.icons.filled.RotateRight
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.CropFree
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Compare
+import androidx.compose.material.icons.rounded.Crop
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Print
+import androidx.compose.material.icons.rounded.Redo
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material.icons.rounded.RotateLeft
+import androidx.compose.material.icons.rounded.RotateRight
+import androidx.compose.material.icons.rounded.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
@@ -92,6 +98,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -152,7 +159,7 @@ class MainActivity : ComponentActivity() {
                 .start()
         }
         window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.rgb(18, 19, 21)
+        window.navigationBarColor = android.graphics.Color.rgb(21, 21, 21)
         val insetsController = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
         insetsController.isAppearanceLightStatusBars = false
         insetsController.isAppearanceLightNavigationBars = false
@@ -259,10 +266,11 @@ private fun LaunchSplash() {
 }
 
 private enum class EditorTab(val label: String, val icon: ImageVector) {
-    Shoot("拍摄", Icons.Outlined.CameraAlt),
-    Print("放印", Icons.Outlined.CropFree),
-    Grade("调色", Icons.Outlined.Tune),
-    Export("导出", Icons.Outlined.Upload)
+    Shoot("拍摄", Icons.Rounded.CameraAlt),
+    Print("放印", Icons.Rounded.CropFree),
+    Grade("调色", Icons.Rounded.Tune),
+    Export("导出", Icons.Rounded.Upload),
+    Gallery("观景台", Icons.Rounded.PhotoLibrary),
 }
 
 private enum class AppRoute { Home, Editor, FilmStocks, About }
@@ -271,7 +279,8 @@ private enum class AppRoute { Home, Editor, FilmStocks, About }
 private fun SpektraLabRoot(vm: EditorViewModel) {
     var route by rememberSaveable { mutableStateOf(AppRoute.Home) }
     var addToHomeSession by rememberSaveable { mutableStateOf(false) }
-    var openStandOnEditor by rememberSaveable { mutableStateOf(false) }
+    var libraryStartsWithPaper by rememberSaveable { mutableStateOf(false) }
+    var libraryVisit by rememberSaveable { mutableStateOf(0) }
     val screenStates = rememberSaveableStateHolder()
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
@@ -306,17 +315,21 @@ private fun SpektraLabRoot(vm: EditorViewModel) {
                 onAddPhotos = { launchPhotoPicker(add = true) },
                 onOpenEditor = { route = AppRoute.Editor },
                 onOpenTestImage = { vm.openTestImage(); route = AppRoute.Editor },
-                onOpenViewingStand = { openStandOnEditor = true; route = AppRoute.Editor },
                 onOpenAbout = { route = AppRoute.About },
             )
             AppRoute.Editor -> EditorScreen(
                 vm = vm,
                 onBackHome = { route = AppRoute.Home },
-                onOpenFilmStocks = { route = AppRoute.FilmStocks },
-                initialViewingStand = openStandOnEditor,
-                onViewingStandOpened = { openStandOnEditor = false },
+                onOpenFilmStocks = {
+                    libraryStartsWithPaper = false; libraryVisit++; route = AppRoute.FilmStocks
+                },
+                onOpenPaperStocks = {
+                    libraryStartsWithPaper = true; libraryVisit++; route = AppRoute.FilmStocks
+                },
             )
-            AppRoute.FilmStocks -> FilmStockScreen(vm, onBack = { route = AppRoute.Editor })
+            AppRoute.FilmStocks -> key(libraryVisit) {
+                FilmStockScreen(vm, onBack = { route = AppRoute.Editor }, startWithPaper = libraryStartsWithPaper)
+            }
             AppRoute.About -> AboutScreen(onBack = { route = AppRoute.Home }, modifier = Modifier.fillMaxSize())
           }
         }
@@ -339,63 +352,49 @@ private fun EditorScreen(
     vm: EditorViewModel,
     onBackHome: () -> Unit,
     onOpenFilmStocks: () -> Unit,
-    initialViewingStand: Boolean,
-    onViewingStandOpened: () -> Unit,
+    onOpenPaperStocks: () -> Unit,
 ) {
     var addToStage by rememberSaveable { mutableStateOf(false) }
-    var viewingStandVisible by rememberSaveable { mutableStateOf(initialViewingStand) }
     var aboutVisible by rememberSaveable { mutableStateOf(false) }
-    var viewingLightOn by rememberSaveable { mutableStateOf(true) }
-    var viewingSelectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var previousTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var showAllShootControls by rememberSaveable { mutableStateOf(false) }
+    var galleryReturnTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var photoTrayVisible by rememberSaveable { mutableStateOf(false) }
     var exportHelpVisible by remember { mutableStateOf(false) }
     var adjustmentFullscreen by rememberSaveable { mutableStateOf(false) }
     val editorLayoutStates = rememberSaveableStateHolder()
-    val fullParameters = selectedTab != EditorTab.Export && (selectedTab != EditorTab.Shoot || showAllShootControls)
+    val fullParameters = selectedTab !in setOf(EditorTab.Export, EditorTab.Gallery) &&
+        (selectedTab != EditorTab.Shoot || showAllShootControls)
     val panelStates = rememberSaveableStateHolder()
-    val viewingPhotos = vm.viewingPhotos
-
-    LaunchedEffect(initialViewingStand) {
-        if (initialViewingStand) {
-            viewingSelectedKey = viewingPhotos.firstOrNull()?.first
-            viewingStandVisible = true
-            onViewingStandOpened()
-        }
-    }
-
-    BackHandler(enabled = adjustmentFullscreen || aboutVisible || vm.isCropping || viewingStandVisible || photoTrayVisible || selectedTab == EditorTab.Export || fullParameters) {
+    BackHandler(enabled = adjustmentFullscreen || aboutVisible || vm.isCropping || photoTrayVisible || selectedTab in setOf(EditorTab.Export, EditorTab.Gallery) || fullParameters) {
         when {
             adjustmentFullscreen -> adjustmentFullscreen = false
             aboutVisible -> aboutVisible = false
             vm.isCropping -> vm.cancelCrop()
-            viewingStandVisible -> viewingStandVisible = false
             photoTrayVisible -> photoTrayVisible = false
+            selectedTab == EditorTab.Gallery -> selectedTab = galleryReturnTab
             selectedTab == EditorTab.Export -> selectedTab = previousTab
             else -> { selectedTab = EditorTab.Shoot; showAllShootControls = false }
         }
     }
-    val viewingPicker = rememberLauncherForActivityResult(
+    val galleryPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 24)
     ) { uris ->
         if (uris.isNotEmpty()) {
             uris.forEach(vm::persistReadPermission)
             vm.loadViewingPhotos(uris)
-            viewingSelectedKey = uris.first().toString()
         }
-    }
-    fun openViewingStand() {
-        viewingSelectedKey = viewingPhotos.firstOrNull()?.first
-        viewingStandVisible = true
     }
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
         if (uris.isNotEmpty()) {
             uris.forEach(vm::persistReadPermission)
-            if (addToStage) vm.addPhotos(uris, openSelected = true) else vm.openPhotos(uris)
+            when {
+                addToStage -> vm.addPhotos(uris, openSelected = true)
+                else -> vm.openPhotos(uris)
+            }
             photoTrayVisible = false
         }
         addToStage = false
@@ -405,6 +404,15 @@ private fun EditorScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var recipeName by remember { mutableStateOf("") }
     var comparing by rememberSaveable(vm.currentUri?.toString()) { mutableStateOf(false) }
+
+    fun selectEditorTab(tab: EditorTab) {
+        if (tab == EditorTab.Gallery) {
+            if (selectedTab != EditorTab.Gallery) galleryReturnTab = selectedTab
+        } else if (tab != EditorTab.Export) {
+            previousTab = tab
+        }
+        selectedTab = tab
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp || (maxWidth >= 600.dp && maxWidth > maxHeight)
@@ -420,8 +428,10 @@ private fun EditorScreen(
         } else editorLayoutStates.SaveableStateProvider("editor") {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = if (selectedTab == EditorTab.Gallery) androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0)
+                else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             topBar = {
-                if (!vm.isCropping) DarkroomTopBar(
+                if (!vm.isCropping && selectedTab != EditorTab.Gallery) DarkroomTopBar(
                     title = when { selectedTab == EditorTab.Export -> "导出照片"; fullParameters -> "暗房调整"
                         else -> vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "SpektraLab" },
                     parameterView = fullParameters, exportView = selectedTab == EditorTab.Export,
@@ -447,16 +457,14 @@ private fun EditorScreen(
                         DropdownMenuItem(text = { Text("重置") }, enabled = vm.hasPhoto,
                             onClick = { showMoreMenu = false; vm.resetAll() })
                         DropdownMenuItem(text = { Text("测试图") }, onClick = { showMoreMenu = false; vm.openTestImage() })
-                        DropdownMenuItem(text = { Text("观景台") }, onClick = { showMoreMenu = false; openViewingStand() })
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         DropdownMenuItem(text = { Text("关于") }, onClick = { showMoreMenu = false; aboutVisible = true })
                     }
                 }
             },
             bottomBar = {
-                if (!expanded && !vm.isCropping) EditorNavigationBar(selectedTab, !vm.busy && !vm.isExporting && !vm.isBatchExporting) { tab ->
-                    if (tab != EditorTab.Export) previousTab = tab
-                    selectedTab = tab
+                if (!expanded && !vm.isCropping && selectedTab != EditorTab.Gallery) {
+                    EditorNavigationBar(selectedTab, !vm.busy && !vm.isExporting && !vm.isBatchExporting, ::selectEditorTab)
                 }
             }
         ) { contentPadding ->
@@ -467,19 +475,45 @@ private fun EditorScreen(
                 val parameterWidth = (maxWidth * .44f).coerceIn(280.dp, 440.dp)
                 if (vm.isCropping && vm.sourceBitmap != null) {
                     CropWorkspace(vm, Modifier.fillMaxSize())
-                } else when {
-                    selectedTab == EditorTab.Export -> ExportScreen(vm, Modifier.fillMaxSize(), onSaveRecipe = { showSaveRecipeDialog = true })
+                } else AnimatedContent(
+                    targetState = selectedTab,
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        (fadeIn(tween(250, easing = FastOutSlowInEasing)) +
+                            slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 24 }) togetherWith
+                            (fadeOut(tween(165, easing = FastOutSlowInEasing)) +
+                                slideOutHorizontally(tween(190, easing = FastOutSlowInEasing)) { -it / 32 })
+                    },
+                    label = "editor-destination-transition",
+                ) { destination ->
+                    when {
+                    destination == EditorTab.Export -> ExportScreen(vm, Modifier.fillMaxSize(), onSaveRecipe = { showSaveRecipeDialog = true })
+                    destination == EditorTab.Gallery -> {
+                        GalleryScreen(
+                            vm = vm,
+                            onImport = { galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            onBackToDarkroom = { selectedTab = galleryReturnTab },
+                            onRemovePhoto = { uri ->
+                                if (vm.viewingPhotos.any { it.first == uri.toString() }) vm.removeViewingPhoto(uri.toString())
+                                if (uri in vm.photos) vm.removePhotoFromSession(uri)
+                            },
+                            onEditPhoto = { uri ->
+                                val index = vm.photos.indexOf(uri)
+                                if (index >= 0) vm.selectPhoto(index) else vm.addPhotos(listOf(uri), openSelected = true)
+                                selectedTab = EditorTab.Shoot
+                                showAllShootControls = false
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     expanded -> Row(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        EditorNavigationRail(selectedTab) { tab ->
-                            if (tab != EditorTab.Export) previousTab = tab
-                            selectedTab = tab
-                        }
+                        EditorNavigationRail(destination, ::selectEditorTab)
                         PhotoCanvas(vm, comparing, onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             modifier = Modifier.weight(1f).fillMaxHeight(), onOpenPhotos = { photoTrayVisible = true })
                         Column(Modifier.width(parameterWidth).fillMaxHeight()) {
                             PhotoMetadataStrip(vm)
-                            EditorStockSelection(vm, onOpenFilmStocks)
-                            EditorPanel(vm, selectedTab, Modifier.weight(1f).fillMaxWidth(), panelStates, onSaveRecipe = { showSaveRecipeDialog = true })
+                            EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
+                            EditorPanel(vm, destination, Modifier.weight(1f).fillMaxWidth(), panelStates, onSaveRecipe = { showSaveRecipeDialog = true })
                         }
                     }
                     landscape -> Row(Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -487,16 +521,16 @@ private fun EditorScreen(
                             modifier = Modifier.weight(1.08f).fillMaxHeight(), onOpenPhotos = { photoTrayVisible = true })
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             PhotoMetadataStrip(vm)
-                            EditorStockSelection(vm, onOpenFilmStocks)
-                            EditorPanel(vm, selectedTab, Modifier.weight(1f).fillMaxWidth(), panelStates, onSaveRecipe = { showSaveRecipeDialog = true })
+                            EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
+                            EditorPanel(vm, destination, Modifier.weight(1f).fillMaxWidth(), panelStates, onSaveRecipe = { showSaveRecipeDialog = true })
                         }
                     }
-                    selectedTab == EditorTab.Shoot && !showAllShootControls -> Column(Modifier.fillMaxSize()) {
+                    destination == EditorTab.Shoot && !showAllShootControls -> Column(Modifier.fillMaxSize()) {
                         PhotoCanvas(vm, comparing,
                             onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             modifier = Modifier.weight(1f).fillMaxWidth(), onOpenPhotos = { photoTrayVisible = true })
                         PhotoMetadataStrip(vm)
-                        EditorStockSelection(vm, onOpenFilmStocks)
+                        EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("拍摄参数", Modifier.weight(1f), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -512,7 +546,7 @@ private fun EditorScreen(
                         }
                     }
                     else -> AdjustmentWorkspace(
-                        mode = selectedTab.label,
+                        mode = destination.label,
                         fileName = vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "当前照片",
                         comparing = comparing, canCompare = vm.sourceBitmap != null && vm.rendered != null,
                         onCompare = { comparing = !comparing },
@@ -525,38 +559,18 @@ private fun EditorScreen(
                                 onOpenPhotos = { photoTrayVisible = true })
                         },
                     ) {
-                        panelStates.SaveableStateProvider(selectedTab) {
+                        panelStates.SaveableStateProvider(destination) {
                             ParameterStockCaption(vm, onOpenFilmStocks)
                             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)) {
-                                EditorParameterContent(vm, selectedTab)
+                                EditorParameterContent(vm, destination)
                                 Spacer(Modifier.height(8.dp))
                             }
                         }
                     }
                 }
+                }
             }
         }
-        }
-
-        if (viewingStandVisible) {
-            ViewingStand(
-                photos = viewingPhotos,
-                selectedKey = viewingSelectedKey,
-                lightOn = viewingLightOn,
-                onLightChange = { viewingLightOn = it },
-                onSelect = { viewingSelectedKey = it },
-                onRemove = { key ->
-                    val index = viewingPhotos.indexOfFirst { it.first == key }
-                    val remaining = viewingPhotos.filterNot { it.first == key }
-                    vm.removeViewingPhoto(key)
-                    if (viewingSelectedKey == key) {
-                        viewingSelectedKey = remaining.getOrNull(index.coerceAtMost(remaining.lastIndex))?.first
-                    }
-                },
-                onPickPhotos = { viewingPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                onClose = { viewingStandVisible = false },
-                modifier = Modifier.fillMaxSize().zIndex(4f),
-            )
         }
 
         if (photoTrayVisible) {
@@ -565,7 +579,7 @@ private fun EditorScreen(
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                shape = SpektraShapes.sheet,
                 dragHandle = {
                     Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.Center) {
                         Box(Modifier.size(32.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
@@ -587,14 +601,14 @@ private fun EditorScreen(
             AboutScreen(onBack = { aboutVisible = false }, modifier = Modifier.fillMaxSize().zIndex(5f))
         }
 
-        if ((vm.busy || vm.isExporting || vm.isBatchExporting) && !(selectedTab == EditorTab.Export && (vm.isExporting || vm.isBatchExporting))) {
+        if ((vm.busy || vm.isExporting || vm.isBatchExporting) && selectedTab !in setOf(EditorTab.Export, EditorTab.Gallery)) {
             Box(
                 Modifier.fillMaxSize().background(Color.Black.copy(alpha = .55f))
                     .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { }
                     .zIndex(2f),
                 contentAlignment = Alignment.Center
             ) {
-                        Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                        Surface(shape = SpektraShapes.panel, color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     Column(Modifier.widthIn(min = 280.dp, max = 360.dp).padding(horizontal = 22.dp, vertical = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         val pct = vm.renderProgress
@@ -794,11 +808,10 @@ private fun ParameterStockCaption(vm: EditorViewModel, onBrowse: () -> Unit) {
 }
 
 @Composable
-private fun EditorStockSelection(vm: EditorViewModel, onBrowseFilms: () -> Unit) {
+private fun EditorStockSelection(vm: EditorViewModel, onBrowseFilms: () -> Unit, onBrowsePapers: () -> Unit) {
     val film = vm.films.firstOrNull { it.id == vm.params.filmId }
     val papers = vm.papers.filter { StockCatalog.canPrint(vm.params.filmId, it.id) }
     val paper = papers.firstOrNull { it.id == vm.params.paperId }
-    var papersVisible by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().background(DarkroomChrome.navigation).padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1.15f).heightIn(min = 64.dp).clickable(onClick = onBrowseFilms)
@@ -809,21 +822,16 @@ private fun EditorStockSelection(vm: EditorViewModel, onBrowseFilms: () -> Unit)
                 Box(Modifier.width(2.dp).height(22.dp).background(MaterialTheme.colorScheme.primary))
                 Text(film?.name ?: "选择胶片", Modifier.weight(1f).padding(start = 8.dp), fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Filled.ExpandMore, null, modifier = Modifier.size(14.dp))
+                Icon(Icons.Rounded.ExpandMore, null, modifier = Modifier.size(14.dp))
             }
         }
         Box(Modifier.width(1.dp).height(48.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)))
         Box(Modifier.weight(1f)) {
-            Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { papersVisible = true }
+            Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable(onClick = onBrowsePapers)
                 .semantics { contentDescription = "相纸" }.padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("相纸", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(paper?.name ?: "选择相纸", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            DropdownMenu(expanded = papersVisible, onDismissRequest = { papersVisible = false }) {
-                papers.forEach { stock -> DropdownMenuItem(text = { Text(stock.name) }, onClick = {
-                    vm.selectPaper(stock.id); papersVisible = false
-                }) }
             }
         }
     }
@@ -866,7 +874,7 @@ private fun PhotoCanvas(
             Image(source.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Filled.AddPhotoAlternate, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp))
+                Icon(Icons.Rounded.AddPhotoAlternate, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp))
                 Text("导入照片", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 Button(onClick = onImport) { Text("选择照片") }
             }
@@ -882,7 +890,7 @@ private fun PhotoCanvas(
                         .padding(end = (maxWidth - photoWidth) / 2 + 12.dp,
                             bottom = (maxHeight - photoHeight) / 2 + 12.dp)
                         .size(112.dp, 46.dp)
-                        .background(Color.Black.copy(alpha = .5f), RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = .5f), SpektraShapes.badge)
                         .padding(4.dp))
                 }
             }
@@ -891,7 +899,7 @@ private fun PhotoCanvas(
             Box(Modifier.align(Alignment.TopStart).padding(8.dp)
                 .heightIn(min = 48.dp).clickable(onClick = onOpenPhotos)
                 .semantics { contentDescription = "${vm.currentIndex + 1} / ${vm.photos.size}" }, contentAlignment = Alignment.Center) {
-                Surface(color = MaterialTheme.colorScheme.background.copy(alpha = .7f), shape = RoundedCornerShape(3.dp)) {
+                Surface(color = MaterialTheme.colorScheme.background.copy(alpha = .7f), shape = SpektraShapes.compact) {
                     Text("${vm.currentIndex + 1} / ${vm.photos.size}  ·  适合屏幕",
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), fontSize = 9.sp)
                 }
@@ -909,7 +917,7 @@ private fun EditorPanel(
     showHeader: Boolean = true,
     onSaveRecipe: () -> Unit,
 ) {
-    Surface(modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
+    Surface(modifier = modifier.fillMaxWidth().clip(SpektraShapes.panel), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
         Column {
             if (showHeader) Row(
                 Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 16.dp),
@@ -940,6 +948,7 @@ private fun EditorParameterContent(vm: EditorViewModel, selectedTab: EditorTab) 
         EditorTab.Print -> PrintPanel(vm)
         EditorTab.Grade -> GradePanel(vm)
         EditorTab.Export -> Unit
+        EditorTab.Gallery -> Unit
     }
 }
 
@@ -1104,22 +1113,22 @@ private fun GradePanel(vm: EditorViewModel) {
     EditorSection("几何与裁剪", "旋转 · 翻转 · 拉直 · 自由裁剪", initiallyExpanded = false) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(onClick = { vm.params.quarterTurns = (vm.params.quarterTurns + 3) % 4; vm.scheduleRender() }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.RotateLeft, contentDescription = "左转90度")
+                Icon(Icons.Rounded.RotateLeft, contentDescription = "左转90度")
             }
             IconButton(onClick = { vm.params.quarterTurns = (vm.params.quarterTurns + 1) % 4; vm.scheduleRender() }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.RotateRight, contentDescription = "右转90度")
+                Icon(Icons.Rounded.RotateRight, contentDescription = "右转90度")
             }
             IconToggleButton(checked = vm.params.flipH, onCheckedChange = { vm.params.flipH = it; vm.scheduleRender() }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.SwapHoriz, contentDescription = "水平翻转")
+                Icon(Icons.Rounded.SwapHoriz, contentDescription = "水平翻转")
             }
             IconToggleButton(checked = vm.params.flipV, onCheckedChange = { vm.params.flipV = it; vm.scheduleRender() }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.SwapVert, contentDescription = "垂直翻转")
+                Icon(Icons.Rounded.SwapVert, contentDescription = "垂直翻转")
             }
         }
         SliderRow("旋转/拉直", vm.params.rotationDeg, -45f..45f, "%+.1f°") { vm.params.rotationDeg = it; vm.scheduleRender() }
         OutlinedButton(onClick = vm::beginCrop, enabled = vm.hasPhoto && !vm.busy && !vm.params.overscanActive,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Icon(Icons.Filled.Crop, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Rounded.Crop, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("自由裁剪")
         }

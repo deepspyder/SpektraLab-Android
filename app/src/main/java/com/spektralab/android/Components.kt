@@ -12,8 +12,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SliderDefaults
@@ -77,7 +77,7 @@ fun EditorSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp))
             }
-            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                 contentDescription = if (expanded) "收起$title" else "展开$title")
         }
         if (expanded) content()
@@ -87,13 +87,13 @@ fun EditorSection(
 
 @Composable
 fun ChoiceStrip(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(8.dp))) {
+    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, SpektraShapes.control)) {
         options.forEach { option ->
             val isSelected = selected == option
             androidx.compose.material3.TextButton(
                 onClick = { onSelect(option) },
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = isSelected },
-                shape = RoundedCornerShape(6.dp),
+                shape = SpektraShapes.control,
                 colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
                     containerColor = if (selected == option) MaterialTheme.colorScheme.surfaceContainerHigh else androidx.compose.ui.graphics.Color.Transparent,
                     contentColor = if (selected == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -233,11 +233,11 @@ fun ActionButton(
     onClick: () -> Unit,
 ) {
     if (primary) {
-        Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(6.dp), modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
+        Button(onClick = onClick, enabled = enabled, shape = SpektraShapes.control, modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
             Text(label)
         }
     } else {
-        OutlinedButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(6.dp),
+        OutlinedButton(onClick = onClick, enabled = enabled, shape = SpektraShapes.control,
             modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
             Text(label)
         }
@@ -256,7 +256,7 @@ private fun SelectionRow(label: String, value: String, onClick: () -> Unit) {
                 Text(value, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Filled.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            Icon(Icons.Rounded.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
     }

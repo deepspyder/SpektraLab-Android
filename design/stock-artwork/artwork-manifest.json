@@ -1,0 +1,271 @@
+[
+  {
+    "id": "kodak_portra_400",
+    "type": "film",
+    "label": "Kodak PORTRA 400",
+    "reference": [
+      "p2",
+      1,
+      3
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_gold_200",
+    "type": "film",
+    "label": "Kodak GOLD 200",
+    "reference": [
+      "p2",
+      0,
+      1
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_pro_400h",
+    "type": "film",
+    "label": "FUJICOLOR PRO 400H",
+    "reference": [
+      "p1",
+      2,
+      0
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_ektar_100",
+    "type": "film",
+    "label": "Kodak EKTAR 100",
+    "reference": [
+      "p2",
+      0,
+      3
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_portra_160",
+    "type": "film",
+    "label": "Kodak PORTRA 160",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_portra_800",
+    "type": "film",
+    "label": "Kodak PORTRA 800",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_ultramax_400",
+    "type": "film",
+    "label": "Kodak ULTRAMAX 400",
+    "reference": [
+      "p2",
+      2,
+      1
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_c200",
+    "type": "film",
+    "label": "FUJICOLOR  C200",
+    "reference": [
+      "p1",
+      1,
+      1
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_xtra_400",
+    "type": "film",
+    "label": "FUJIFILM X-TRA 400",
+    "reference": [
+      "p1",
+      1,
+      0
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_ektachrome_100",
+    "type": "film",
+    "label": "Kodak EKTACHROME 100",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_provia_100f",
+    "type": "film",
+    "label": "FUJICHROME PROVIA 100F",
+    "reference": [
+      "p1",
+      2,
+      2
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_velvia_100",
+    "type": "film",
+    "label": "FUJICHROME VELVIA 100",
+    "reference": [
+      "p1",
+      3,
+      1
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_kodachrome_64",
+    "type": "film",
+    "label": "Kodak KODACHROME 64",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "ilford_hp5_plus_400",
+    "type": "film",
+    "label": "ILFORD HP5 PLUS 400",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_tri_x_400",
+    "type": "film",
+    "label": "Kodak TRI-X 400",
+    "reference": [
+      "p2",
+      2,
+      3
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_tmax_100",
+    "type": "film",
+    "label": "Kodak T-MAX 100",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_neopan_acros_100_ii",
+    "type": "film",
+    "label": "NEOPAN ACROS II 100",
+    "reference": [
+      "p1",
+      3,
+      2
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_vision3_50d",
+    "type": "film",
+    "label": "KODAK 50D 5203",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_vision3_200t",
+    "type": "film",
+    "label": "KODAK 200T 5213",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_vision3_250d",
+    "type": "film",
+    "label": "KODAK 250D 5207",
+    "reference": [
+      "p2",
+      3,
+      1
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_vision3_500t",
+    "type": "film",
+    "label": "KODAK 500T 5219",
+    "reference": [
+      "p2",
+      3,
+      3
+    ],
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_verita_200d",
+    "type": "film",
+    "label": "KODAK 200D 5206",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "fujifilm_crystal_archive_typeii",
+    "type": "paper",
+    "label": "FUJIFILM CRYSTAL ARCHIVE II",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_ektacolor_edge",
+    "type": "paper",
+    "label": "Kodak EKTACOLOR EDGE",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_endura_premier",
+    "type": "paper",
+    "label": "Kodak ENDURA PREMIER",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_portra_endura",
+    "type": "paper",
+    "label": "Kodak ENDURA PORTRA",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_supra_endura",
+    "type": "paper",
+    "label": "Kodak ENDURA SUPRA",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_ultra_endura",
+    "type": "paper",
+    "label": "Kodak ENDURA ULTRA",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "ilford_multigrade_iv_rc",
+    "type": "paper",
+    "label": "ILFORD MULTIGRADE IV RC",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_2383",
+    "type": "paper",
+    "label": "KODAK VISION 2383",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "kodak_2393",
+    "type": "paper",
+    "label": "KODAK VISION 2393",
+    "reference": "matching label family",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  }
+]

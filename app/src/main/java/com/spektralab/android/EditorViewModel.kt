@@ -110,6 +110,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var photos by mutableStateOf<List<Uri>>(emptyList())
         private set
+    var batchExportSelection by mutableStateOf<Set<Uri>>(emptySet())
+        private set
+    val selectedBatchExportPhotos: List<Uri>
+        get() = photos.filter { it in batchExportSelection }
     var currentIndex by mutableStateOf(0)
         private set
     var thumbnails by mutableStateOf<Map<Uri, Bitmap>>(emptyMap())
@@ -117,7 +121,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** Small, already-developed previews used by the viewing stand. */
     var developedPreviews by mutableStateOf<Map<Uri, Bitmap>>(emptyMap())
         private set
+    /** Bounded, decoded previews for the Gallery's immersive viewer. */
+    var galleryPreviews by mutableStateOf<Map<Uri, Bitmap>>(emptyMap())
+        private set
+    var galleryPreviewErrors by mutableStateOf<Map<Uri, String>>(emptyMap())
+        private set
     var viewingPhotos by mutableStateOf<List<Pair<String, Bitmap>>>(emptyList())
+        private set
+    private var viewingImportRequests by mutableStateOf(0)
+    private val viewingImportMutex = kotlinx.coroutines.sync.Mutex()
+    val isImportingViewingPhotos: Boolean get() = viewingImportRequests > 0
+    var viewingImportCompleted by mutableStateOf(0)
+        private set
+    var viewingImportTotal by mutableStateOf(0)
         private set
     var isBatchExporting by mutableStateOf(false)
         private set
@@ -168,6 +184,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var stockPreviewJob: Job? = null
     private var developedPreviewJob: Job? = null
     private val thumbnailJobs = mutableMapOf<Uri, Job>()
+    private val galleryPreviewJobs = mutableMapOf<Uri, Job>()
     @Volatile private var photoGeneration = 0L
     private var paramsUri: Uri? = null
     @Volatile private var cleared = false
@@ -447,21 +464,83 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** Add gallery photos to the independent viewing-stand queue. */
     fun loadViewingPhotos(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        viewingImportRequests += 1
         viewModelScope.launch {
-            val existing = viewingPhotos.map { it.first }.toSet()
-            val loaded = withContext(Dispatchers.IO) {
-                uris.distinct().filter { it.toString() !in existing }.mapNotNull { uri ->
-                    runCatching { uri.toString() to decodeSampled(uri, 1400) }.getOrNull()
+            try {
+                viewingImportMutex.lock()
+                try {
+                    val existing = viewingPhotos.map { it.first }.toSet()
+                    val pending = uris.distinct().filter { it.toString() !in existing }
+                    viewingImportTotal = pending.size
+                    viewingImportCompleted = 0
+                    var failed = 0
+                    for (uri in pending) {
+                        val bitmap = try {
+                            withContext(Dispatchers.IO) { decodeSampled(uri, 640) }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            failed += 1
+                            null
+                        }
+                        if (bitmap != null) {
+                            if (cleared || viewingPhotos.any { it.first == uri.toString() }) bitmap.recycle()
+                            else viewingPhotos = viewingPhotos + (uri.toString() to bitmap)
+                        }
+                        viewingImportCompleted += 1
+                    }
+                    if (failed > 0) toast("有 $failed 张照片无法读取，请重新选择")
+                } finally {
+                    viewingImportMutex.unlock()
                 }
+            } finally {
+                viewingImportRequests -= 1
             }
-            val currentKeys = viewingPhotos.map { it.first }.toSet()
-            viewingPhotos = viewingPhotos + loaded.filter { it.first !in currentKeys }
         }
     }
 
     /** Remove only the viewing-stand entry; the original photo is untouched. */
     fun removeViewingPhoto(key: String) {
+        discardGalleryPreview(Uri.parse(key))
         viewingPhotos = viewingPhotos.filterNot { it.first == key }
+    }
+
+    private fun discardGalleryPreview(uri: Uri) {
+        galleryPreviewJobs.remove(uri)?.cancel()
+        galleryPreviews = galleryPreviews - uri
+        galleryPreviewErrors = galleryPreviewErrors - uri
+    }
+
+    /** Decode a detail-sized preview on demand without opening an editor render session. */
+    fun loadGalleryPreview(uri: Uri) {
+        if (galleryPreviews.containsKey(uri) || galleryPreviewJobs[uri]?.isActive == true) return
+        if (uri !in photos && viewingPhotos.none { it.first == uri.toString() }) return
+        galleryPreviewErrors = galleryPreviewErrors - uri
+        val request = viewModelScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) { decodeSampled(uri, 1400) }
+                if (cleared || (uri !in photos && viewingPhotos.none { it.first == uri.toString() })) {
+                    bitmap.recycle()
+                } else if (!galleryPreviews.containsKey(uri)) {
+                    val next = LinkedHashMap(galleryPreviews)
+                    next[uri] = bitmap
+                    val evicted = next.keys.take((next.size - GALLERY_PREVIEW_CACHE_SIZE).coerceAtLeast(0))
+                    evicted.forEach(next::remove)
+                    galleryPreviews = next
+                } else {
+                    bitmap.recycle()
+                }
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (_: Exception) {
+                if (!cleared && (uri in photos || viewingPhotos.any { it.first == uri.toString() })) {
+                    galleryPreviewErrors = galleryPreviewErrors + (uri to "原照片可能已移走，或访问权限已失效。")
+                }
+            } finally {
+                if (galleryPreviewJobs[uri] === currentCoroutineContext()[Job]) galleryPreviewJobs.remove(uri)
+            }
+        }
+        galleryPreviewJobs[uri] = request
     }
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
@@ -1123,10 +1202,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         photos = uris.distinct()
+        batchExportSelection = photos.toSet()
         val retained = photos.toSet()
         retainThumbnailRequests(retained)
         thumbnails = thumbnails.filterKeys { it in retained }
         developedPreviews = developedPreviews.filterKeys { it in retained }
+        galleryPreviews = galleryPreviews.filterKeys { it in retained }
         currentIndex = 0
         openPhoto(photos[0])
     }
@@ -1136,8 +1217,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         val merged = (photos + uris).distinct()
+        val added = merged.filterNot { it in photos }
         val selected = currentUri
         photos = merged
+        batchExportSelection = batchExportSelection.intersect(merged.toSet()) + added
         currentIndex = selected?.let { merged.indexOf(it) }?.takeIf { it >= 0 } ?: 0
         if (openSelected) {
             selectPhoto(merged.indexOf(uris.first()))
@@ -1170,7 +1253,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         retainThumbnailRequests(remaining.toSet())
         thumbnails = thumbnails - removed
         developedPreviews = developedPreviews - removed
+        discardGalleryPreview(removed)
         photos = remaining
+        batchExportSelection = batchExportSelection - removed
         if (remaining.isNotEmpty()) {
             currentIndex = currentIndex.coerceAtMost(remaining.lastIndex)
             openPhoto(remaining[currentIndex])
@@ -1181,6 +1266,26 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             busy = false
             viewModelScope.launch { withContext(engineDispatcher) { engine?.closeSession() } }
         }
+    }
+
+    /** Remove a photo from the temporary edit session without touching its source file. */
+    fun removePhotoFromSession(uri: Uri) {
+        if (busy || isExporting || isBatchExporting) return
+        val index = photos.indexOf(uri)
+        if (index < 0) return
+        if (index == currentIndex) {
+            removeCurrentPhoto()
+            return
+        }
+        val remaining = photos.filterNot { it == uri }
+        retainThumbnailRequests(remaining.toSet())
+        thumbnails = thumbnails - uri
+        developedPreviews = developedPreviews - uri
+        discardGalleryPreview(uri)
+        photos = remaining
+        batchExportSelection = batchExportSelection - uri
+        if (index < currentIndex) currentIndex -= 1
+        toast("已从当前展厅移除；原始照片未删除")
     }
 
     // 切换前把当前照片的编辑落盘（避免 120ms 去抖未到就切换而丢编辑）。
@@ -1207,11 +1312,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         thumbnailJobs[uri] = request
     }
 
-    // 用当前编辑参数批量导出图库所有照片。
+    fun setBatchExportPhotoSelected(uri: Uri, selected: Boolean) {
+        if (busy || isExporting || isBatchExporting || uri !in photos) return
+        batchExportSelection = if (selected) batchExportSelection + uri else batchExportSelection - uri
+    }
+
+    fun selectAllBatchExportPhotos(selected: Boolean) {
+        if (busy || isExporting || isBatchExporting) return
+        batchExportSelection = if (selected) photos.toSet() else emptySet()
+    }
+
+    // Snapshot selected session photos in queue order; preserve each photo's own edits.
     fun batchExport() {
         val e = engine ?: return
-        if (photos.isEmpty() || isBatchExporting || isExporting) return
-        val batchPhotos = photos.toList()
+        if (busy || isBatchExporting || isExporting) return
+        val batchPhotos = selectedBatchExportPhotos
+        if (batchPhotos.isEmpty()) return
         val batchFormat = exportFormat
         val batchResolution = exportRes
         val batchColorSpace = exportColorSpace
@@ -1446,8 +1562,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         sourceBitmap = null
         sourceExif = null
         photos = emptyList()
+        batchExportSelection = emptySet()
         thumbnails = emptyMap()
         developedPreviews = emptyMap()
+        galleryPreviews = emptyMap()
         currentIndex = 0
         resetGeometry()
         val w = 512; val h = 512
@@ -1758,6 +1876,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         cleared = true
         invalidatePhotoWork()
+        galleryPreviewJobs.values.forEach(Job::cancel)
+        galleryPreviewJobs.clear()
+        (thumbnails.values + developedPreviews.values + galleryPreviews.values + viewingPhotos.map { it.second })
+            .distinctBy(System::identityHashCode)
+            .forEach { bitmap -> if (!bitmap.isRecycled) bitmap.recycle() }
         renderJob?.cancel()
         wbJob?.cancel()
         cameraWbJob?.cancel()
@@ -1767,5 +1890,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             CoroutineScope(SupervisorJob() + engineDispatcher).launch { client.close() }
         }
         super.onCleared()
+    }
+
+    private companion object {
+        const val GALLERY_PREVIEW_CACHE_SIZE = 6
     }
 }
