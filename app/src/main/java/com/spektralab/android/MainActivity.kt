@@ -273,7 +273,7 @@ private enum class EditorTab(val label: String, val icon: ImageVector) {
     Gallery("观景台", Icons.Rounded.PhotoLibrary),
 }
 
-private enum class AppRoute { Home, Editor, FilmStocks, About }
+private enum class AppRoute { Home, Editor, FilmStocks, About, ViewingStand }
 
 @Composable
 private fun SpektraLabRoot(vm: EditorViewModel) {
@@ -281,7 +281,17 @@ private fun SpektraLabRoot(vm: EditorViewModel) {
     var addToHomeSession by rememberSaveable { mutableStateOf(false) }
     var libraryStartsWithPaper by rememberSaveable { mutableStateOf(false) }
     var libraryVisit by rememberSaveable { mutableStateOf(0) }
+    var homeStandEditRequest by rememberSaveable { mutableStateOf(0) }
     val screenStates = rememberSaveableStateHolder()
+    val viewingCanvasState=rememberFilmCanvasState()
+    val homeViewingPicker=rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems=24)
+    ){uris ->
+        if(uris.isNotEmpty()){
+            uris.forEach(vm::persistReadPermission)
+            vm.loadViewingPhotos(uris)
+        }
+    }
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
@@ -301,7 +311,7 @@ private fun SpektraLabRoot(vm: EditorViewModel) {
     BackHandler(enabled = route != AppRoute.Home) {
         route = when (route) {
             AppRoute.Home -> AppRoute.Home
-            AppRoute.Editor, AppRoute.About -> AppRoute.Home
+            AppRoute.Editor, AppRoute.About, AppRoute.ViewingStand -> AppRoute.Home
             AppRoute.FilmStocks -> AppRoute.Editor
         }
     }
@@ -314,6 +324,7 @@ private fun SpektraLabRoot(vm: EditorViewModel) {
                 onImportPhotos = { launchPhotoPicker(add = false) },
                 onAddPhotos = { launchPhotoPicker(add = true) },
                 onOpenEditor = { route = AppRoute.Editor },
+                onOpenViewingStand = { route = AppRoute.ViewingStand },
                 onOpenTestImage = { vm.openTestImage(); route = AppRoute.Editor },
                 onOpenAbout = { route = AppRoute.About },
             )
@@ -326,6 +337,24 @@ private fun SpektraLabRoot(vm: EditorViewModel) {
                 onOpenPaperStocks = {
                     libraryStartsWithPaper = true; libraryVisit++; route = AppRoute.FilmStocks
                 },
+                viewingCanvasState=viewingCanvasState,
+                homeStandEditRequest=homeStandEditRequest,
+            )
+            AppRoute.ViewingStand -> GalleryScreen(
+                vm=vm,
+                onImport={homeViewingPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},
+                onBackToDarkroom={route=AppRoute.Home},
+                onRemovePhoto={uri ->
+                    if(vm.viewingPhotos.any{it.first==uri.toString()})vm.removeViewingPhoto(uri.toString())
+                    if(uri in vm.photos)vm.removePhotoFromSession(uri)
+                },
+                onEditPhoto={uri ->
+                    val index=vm.photos.indexOf(uri)
+                    if(index>=0)vm.selectPhoto(index)else vm.addPhotos(listOf(uri),openSelected=true)
+                    homeStandEditRequest++
+                    route=AppRoute.Editor
+                },
+                modifier=Modifier.fillMaxSize(),canvasState=viewingCanvasState,backDescription="返回首页",
             )
             AppRoute.FilmStocks -> key(libraryVisit) {
                 FilmStockScreen(vm, onBack = { route = AppRoute.Editor }, startWithPaper = libraryStartsWithPaper)
@@ -353,12 +382,18 @@ private fun EditorScreen(
     onBackHome: () -> Unit,
     onOpenFilmStocks: () -> Unit,
     onOpenPaperStocks: () -> Unit,
+    viewingCanvasState: FilmCanvasState,
+    homeStandEditRequest: Int,
 ) {
     var addToStage by rememberSaveable { mutableStateOf(false) }
+    var smartDevelopVisible by rememberSaveable { mutableStateOf(false) }
     var aboutVisible by rememberSaveable { mutableStateOf(false) }
     var selectedTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var previousTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var showAllShootControls by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(homeStandEditRequest) {
+        if(homeStandEditRequest>0){selectedTab=EditorTab.Shoot;showAllShootControls=false}
+    }
     var galleryReturnTab by rememberSaveable { mutableStateOf(EditorTab.Shoot) }
     var photoTrayVisible by rememberSaveable { mutableStateOf(false) }
     var exportHelpVisible by remember { mutableStateOf(false) }
@@ -470,6 +505,7 @@ private fun EditorScreen(
                             pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
                         onManagePhotos = { photoTrayVisible = true },
+                        onSmartDevelop = { smartDevelopVisible = true },
                     )
                 }
             },
@@ -515,6 +551,7 @@ private fun EditorScreen(
                                 showAllShootControls = false
                             },
                             modifier = Modifier.fillMaxSize(),
+                            canvasState=viewingCanvasState,
                         )
                     }
                     expanded -> Row(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -583,6 +620,7 @@ private fun EditorScreen(
         }
         }
 
+        if(smartDevelopVisible)SmartDevelopSheet(vm,onDismiss={smartDevelopVisible=false})
         if (photoTrayVisible) {
             ModalBottomSheet(
                 onDismissRequest = { photoTrayVisible = false },
@@ -652,7 +690,8 @@ private fun EditorScreen(
 
     if (exportHelpVisible) {
         AlertDialog(onDismissRequest = { exportHelpVisible = false }, title = { Text("导出帮助") },
-            text = { Text("JPEG / PNG 使用 sRGB。TIFF 保留 16 位输出，并可选择 Display P3。\n\n原始尺寸会从原文件重新解码导出；DI、软打样和高清预览沿用各自的输出流程。导出文件保存到系统相册。") },
+            text = { Text("JPEG / PNG 使用 sRGB。TIFF 保留 16 位输出，并可选择 Display P3。\n\n原始尺寸会从原文件重新解码导出；DI、软打样和高清预览沿用各自的输出流程。导出文件保存到系统相册。\n\n大尺寸照片建议：如果照片像素较大，尽量避免使用「原始尺寸」全尺寸导出。建议优先选择长边 2048、2560 或 3840 px，以减少内存占用和等待时间；确有需要时再尝试全尺寸导出。",
+                modifier = Modifier.verticalScroll(rememberScrollState())) },
             confirmButton = { TextButton(onClick = { exportHelpVisible = false }) { Text("关闭") } })
     }
 

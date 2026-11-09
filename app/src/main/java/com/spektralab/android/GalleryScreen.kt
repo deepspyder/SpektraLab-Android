@@ -42,6 +42,8 @@ internal fun GalleryScreen(
     onRemovePhoto: (Uri) -> Unit,
     onEditPhoto: (Uri) -> Unit,
     modifier: Modifier = Modifier,
+    canvasState: FilmCanvasState? = null,
+    backDescription: String = "返回暗房",
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val keys = remember(vm.photos, vm.viewingPhotos) {
@@ -90,6 +92,8 @@ internal fun GalleryScreen(
         onEdit = { onEditPhoto(Uri.parse(it)) },
         onBack = onBackToDarkroom,
         modifier = modifier,
+        sharedCanvasState=canvasState,
+        backDescription=backDescription,
     )
 }
 

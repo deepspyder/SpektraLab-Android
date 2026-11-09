@@ -31,7 +31,10 @@ import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +78,7 @@ internal fun HomeScreen(
     onImportPhotos: () -> Unit,
     onAddPhotos: () -> Unit,
     onOpenEditor: () -> Unit,
+    onOpenViewingStand: () -> Unit,
     onOpenTestImage: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
@@ -121,6 +126,7 @@ internal fun HomeScreen(
                         preview = preview,
                         onImportPhotos = onImportPhotos,
                         onOpenEditor = onOpenEditor,
+                        onOpenViewingStand = onOpenViewingStand,
                         modifier = Modifier.weight(1.15f).fillMaxHeight().verticalScroll(rememberScrollState()),
                     )
                     Column(
@@ -152,6 +158,7 @@ internal fun HomeScreen(
                         preview = preview,
                         onImportPhotos = onImportPhotos,
                         onOpenEditor = onOpenEditor,
+                        onOpenViewingStand = onOpenViewingStand,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (vm.photos.isNotEmpty()) HomeSession(vm, onAddPhotos, onOpenEditor)
@@ -167,8 +174,10 @@ private fun HomeLead(
     preview: android.graphics.Bitmap?,
     onImportPhotos: () -> Unit,
     onOpenEditor: () -> Unit,
+    onOpenViewingStand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var smartVisible by rememberSaveable { mutableStateOf(false) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           Text(
@@ -253,10 +262,12 @@ private fun HomeLead(
             }
         }
 
+        SmartDevelopEntry(vm,onOpen={smartVisible=true})
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
         Button(
             onClick = onImportPhotos,
             enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            modifier = Modifier.weight(1.15f).heightIn(min = 52.dp),
             shape = SpektraShapes.control,
         ) {
             Icon(
@@ -267,9 +278,24 @@ private fun HomeLead(
             Spacer(Modifier.width(9.dp))
             Text("导入照片", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
+        FilledTonalButton(
+            onClick=onOpenViewingStand,
+            enabled=!vm.busy && !vm.isExporting && !vm.isBatchExporting,
+            modifier=Modifier.weight(1f).heightIn(min=52.dp).semantics { contentDescription="打开观景台" },
+            shape=SpektraShapes.control,
+            colors=ButtonDefaults.filledTonalButtonColors(containerColor=MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor=MaterialTheme.colorScheme.onSurface),
+            contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=12.dp),
+        ) {
+            Icon(Icons.Rounded.PhotoLibrary,null,Modifier.size(19.dp),tint=MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text("观景台",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.SemiBold)
+        }
+        }
         Text("通过 Android 照片选择器导入，仅读取你选择的照片。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if(smartVisible)SmartDevelopSheet(vm,onDismiss={smartVisible=false})
 }
 
 @Composable

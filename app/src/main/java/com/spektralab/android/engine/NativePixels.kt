@@ -24,11 +24,18 @@ class NativeRawImage internal constructor(
         nativeCorrectLens(handle, profile.distModel, profile.distTerms, profile.vigK, profile.tcaVr, profile.tcaVb)
     }
 
+    /** Only small decoder previews may cross into the managed heap for image analysis. */
+    fun copySmallLinearRgb(): FloatArray {
+        check(handle != 0L && width.toLong() * height <= 512L * 512L)
+        return nativeCopySmallLinearRgb(handle)
+    }
+
     override fun close() {
         if (handle != 0L) { nativeRelease(handle); handle = 0L }
     }
 
     private external fun nativeResize(handle: Long, maxLongEdge: Int): IntArray
+    private external fun nativeCopySmallLinearRgb(handle: Long): FloatArray
     private external fun nativeCorrectLens(handle: Long, model: String, terms: FloatArray, vignette: FloatArray, vr: Float, vb: Float)
     private external fun nativeRelease(handle: Long)
 }

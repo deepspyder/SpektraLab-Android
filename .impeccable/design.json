@@ -224,7 +224,7 @@
     {
       "name": "观景台自由画布",
       "kind": "custom",
-      "description": "原比例无边框照片自由摆放；拖动照片移动单张，空白处平移，双指缩放画布35–600%。位置与叠放顺序保存，不吸附固定行列。按需串行加载可见高清预览，最多请求4张、缓存6张；已显影效果优先。显示原始尺寸与格式，原文件不改写。灯光360ms过渡，窗口亮度0.9/0.2并在退出后恢复。",
+      "description": "原比例无边框照片自由摆放；拖动照片移动单张，空白处平移，双指缩放画布35–600%。接近相邻边缘时按18dp屏幕距离、至少30%公共边和最近锚点自动对齐；超过较小照片26%面积的深度重叠保持自由叠放。240ms FastOutSlowIn平移并淡出接缝提示，重叠区域120ms将上层透明度降至0.58，未覆盖区域保持原alpha；可单独拉开，不形成群组或拼接导出。位置与叠放顺序保存，按需串行加载可见高清预览，最多请求4张、缓存6张；已显影效果优先。显示原始尺寸与格式，原文件不改写。灯光360ms过渡，窗口亮度0.9/0.2并在退出后恢复；动画遵守系统缩放。",
       "html": "<section class=\"ds-photo-table\"><header>观景台</header><div class=\"ds-photo-space\"><div class=\"ds-photo a\">横向照片</div><div class=\"ds-photo b\">竖向照片</div><div class=\"ds-photo c\">全景照片</div></div><footer>拖动照片 · 双指缩放　 −　100%　＋</footer></section>",
       "css": ".ds-photo-table{background:#F1EEE7;color:#242321;font:14px sans-serif;padding:16px}.ds-photo-table header{font-size:20px}.ds-photo-space{position:relative;min-height:280px;margin-top:20px}.ds-photo{position:absolute;display:grid;place-items:center;background:#39372F;color:#F1EEE7;font-size:11px;cursor:grab}.ds-photo.a{left:0;top:8px;width:140px;height:95px}.ds-photo.b{left:165px;top:35px;width:100px;height:160px}.ds-photo.c{left:10px;top:215px;width:220px;height:48px}.ds-photo-table footer{min-height:48px;display:flex;align-items:center;font-size:12px}"
     },
@@ -290,7 +290,7 @@
     {
       "name": "首页照片与会话",
       "kind": "custom",
-      "description": "紧凑首页横向内边距 20dp，主照片宽高比 1.4；显示胶片、相纸、可用拍摄时间、来源格式、尺寸和拍摄参数。会话标题行包含数量和添加操作；112×84dp、10dp 圆角的图像填充照片项在图内显示序号和格式。当前项使用 1dp 琥珀边框及编辑中标记，状态由队列选择决定。编辑器信息行共用拍摄参数格式化，显示来源格式；未知格式显示照片。",
+      "description": "紧凑首页横向内边距 20dp，主照片宽高比 1.4；显示胶片、相纸、可用拍摄时间、来源格式、尺寸和拍摄参数。操作区并列提供主色填充的导入照片与52dp高的次级色调观景台按钮，观景台使用PhotoLibrary图标、12dp圆角并公开打开观景台标签。观景台支持空首页和已有会话进入，使用独立照片选择器，取消后留在观景台；返回箭头与系统Back返回Home。Home与编辑器入口共享根路由提升的FilmCanvasState；从Home观景台编辑照片会进入编辑器拍摄页。会话标题行包含数量和添加操作；112×84dp、10dp圆角的图像填充照片项在图内显示序号和格式。当前项使用1dp琥珀边框及编辑中标记，状态由队列选择决定。编辑器信息行共用拍摄参数格式化，显示来源格式；未知格式显示照片。",
       "html": "<section class=\"ds-home\"><div class=\"ds-home-title\"><strong>让光，慢慢显影。</strong><small>数字暗房 / 01</small></div><div class=\"ds-home-hero\"></div><div class=\"ds-home-meta\"><span>胶片 / 相纸</span><span>16:42</span></div><div class=\"ds-home-meta\"><span class=\"ds-home-accent\">JPG</span><span>6000 × 4000</span></div><div class=\"ds-home-meta\"><span>35 mm　f/2.8　1/500 s　ISO 200</span></div><div class=\"ds-home-session\"><strong>当前会话</strong><small>2 张照片</small><button>添加照片</button></div><div class=\"ds-home-strip\"><div class=\"ds-home-photo ds-home-current\"><span>01 · 编辑中</span><em>JPG</em></div><div class=\"ds-home-photo\"><span>02 · RAW</span></div></div></section>",
       "css": ".ds-home{max-width:393px;padding:12px 20px;background:#151515;color:#F2EEE6;font:12px sans-serif}.ds-home-title,.ds-home-meta,.ds-home-session{display:flex;align-items:center;justify-content:space-between;gap:12px}.ds-home-title{margin-bottom:14px;font-size:18px}.ds-home-title small,.ds-home-accent{color:#E5AA55}.ds-home-hero{width:100%;aspect-ratio:1.4;border-radius:16px;background:#2E2E2E}.ds-home-meta{margin-top:6px;color:#B8B2A8}.ds-home-session{margin-top:20px;border-top:1px solid #424242}.ds-home-session small{margin-left:auto;color:#B8B2A8}.ds-home-session button{min-height:48px;border:0;background:transparent;color:#E5AA55}.ds-home-session button:hover{background:#252525}.ds-home-session button:focus-visible{outline:2px solid #E5AA55}.ds-home-strip{display:flex;gap:10px;overflow:auto}.ds-home-photo{position:relative;flex:0 0 112px;height:84px;border-radius:10px;background:#2E2E2E}.ds-home-current{outline:1px solid #E5AA55;outline-offset:-1px}.ds-home-photo span,.ds-home-photo em{position:absolute;padding:3px 5px;border-radius:6px;background:rgba(0,0,0,.75);font-style:normal}.ds-home-photo span{bottom:6px;left:6px}.ds-home-current span{color:#E5AA55}.ds-home-photo em{top:6px;right:6px}"
     },
@@ -304,7 +304,7 @@
     {
       "name": "导出设置",
       "kind": "custom",
-      "description": "最大宽度 600dp；照片信息区上、下内边距 12dp、8dp，单张/批量分段后间隔 12dp，高级设置行最小 48dp。局部字号/行高为 9/12、10/14、11/16、12/16、14/20sp。DI TIFF、软打样、高清预览为实际动作；固定底部上下内边距 4dp、间距 6dp，按需显示的实际进度区内边距 8dp、间距 4dp，并提供取消。 拍摄信息与位置信息为常驻独立开关，默认开/关，支持JPEG/PNG/TIFF、配方记忆与批量逐图复制；处理时禁用。",
+      "description": "最大宽度 600dp；照片信息区上、下内边距 12dp、8dp，单张/批量分段后间隔 12dp。高级设置使用低表面、12dp圆角的自适应行，最小高度56dp，水平内边距12dp、垂直内边距8dp，标题与摘要间距4dp、图标与文字间距12dp，并公开高级设置标签及展开状态；展开内容与三列快捷操作之间保留12dp间隔，折叠时仍保留该间隔。局部字号/行高为 9/12、10/14、11/16、12/16、14/20sp。DI TIFF、软打样、高清预览为实际动作；固定底部上下内边距4dp、间距6dp，按需显示的实际进度区内边距8dp、间距4dp，并提供取消。拍摄信息与位置信息为常驻独立开关，默认开/关，支持JPEG/PNG/TIFF、配方记忆与批量逐图复制；处理时禁用。",
       "html": "<div class=\"ds-export\"><div class=\"ds-export-row\">分辨率 <span>长边 2560 px</span></div><div class=\"ds-export-row\">色彩空间 <span>sRGB IEC61966-2.1</span></div><button class=\"ds-export-button\">导出当前照片</button></div>",
       "css": ".ds-export{max-width:600px;padding:0 20px;background:#151515;color:#F2EEE6;font:12px sans-serif}.ds-export-row{display:flex;align-items:center;justify-content:space-between;min-height:48px;border-bottom:1px solid #424242}.ds-export-row span{color:#B8B2A8;font-size:11px}.ds-export-button{width:100%;min-height:48px;margin-top:16px;border:0;border-radius:12px;background:#E5AA55;color:#261A0C;font-weight:600}.ds-export-button:hover{filter:brightness(1.08)}.ds-export-button:focus-visible{outline:2px solid #F2EEE6;outline-offset:2px}.ds-export-button:active{filter:brightness(.9)}"
     },
@@ -321,6 +321,13 @@
       "description": "调色中的强度、范围、羽化0–100；默认强度0，预览与JPEG/PNG/16-bit TIFF输出共用空间坐标算法。",
       "html": "<section class=\"ds-edit-feature\">暗角<br>强度　75%<input type=\"range\" value=\"75\"><br>范围　50%<input type=\"range\" value=\"50\"><br>羽化　70%<input type=\"range\" value=\"70\"></section>",
       "css": ".ds-edit-feature{padding:16px;background:#191919;color:#F2EEE6;font:14px sans-serif}.ds-edit-feature input{display:block;width:100%;accent-color:#E5AA55}.ds-crop-selection{aspect-ratio:2.39;margin:32px 12px;border:2px solid #F2EEE6;background:#252525}"
+    },
+    {
+      "name": "智能显影",
+      "kind": "custom",
+      "description": "首页导入上方和编辑器顶部48dp星芒入口。自然耐看、电影浓郁、轻柔复古三选并记忆；可关闭导入自动处理，已有编辑优先。局部统计逐图选片/相纸/调色，不是语义AI或客观最佳保证。显式应用可撤销并保留几何。",
+      "html": "<section class=\"ds-smart\"><header><strong>智能显影</strong></header><label><input type=\"radio\" name=\"smart\">自然耐看<small>保留现场色彩，柔和修整明暗</small></label><label class=\"ds-smart-selected\"><input type=\"radio\" name=\"smart\" checked>电影浓郁<small>更有层次的反差与电影胶片色彩</small></label><label><input type=\"radio\" name=\"smart\">轻柔复古<small>温润色彩、柔和影调与适量颗粒</small></label><footer>导入后自动显影　<input type=\"checkbox\" checked></footer></section>",
+      "css": ".ds-smart{max-width:420px;background:#191919;color:#F2EEE6;padding:20px;font:14px sans-serif;border-radius:20px 20px 0 0}.ds-smart header{display:flex;align-items:center;min-height:48px}.ds-smart label{display:block;min-height:48px;margin-top:6px;padding:12px;border-radius:12px}.ds-smart small{display:block;margin:6px 0 0 24px;color:#B8B2A8}.ds-smart-selected{background:#2E2E2E}.ds-smart input{accent-color:#E5AA55}.ds-smart footer{min-height:56px;display:flex;align-items:center;justify-content:space-between}"
     }
   ],
   "narrative": {

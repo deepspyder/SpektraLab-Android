@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,6 +45,7 @@ internal fun EditorPhotoStrip(
     vm: EditorViewModel,
     onAddPhotos: () -> Unit,
     onManagePhotos: () -> Unit,
+    onSmartDevelop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting
@@ -96,6 +98,10 @@ internal fun EditorPhotoStrip(
                         color = if (current) colors.primary else colors.onSurface)
                 }
             }
+        }
+        IconButton(onClick=onSmartDevelop,modifier=Modifier.size(48.dp)) {
+            Icon(Icons.Rounded.AutoAwesome,"智能显影",Modifier.size(20.dp),
+                tint=if(vm.smartAutoEnabled)colors.primary else colors.onSurfaceVariant)
         }
         IconButton(onClick = onAddPhotos, enabled = enabled, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Rounded.Add, "添加编辑照片", tint = if (enabled) colors.primary else colors.onSurfaceVariant)

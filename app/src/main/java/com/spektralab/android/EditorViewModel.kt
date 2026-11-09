@@ -112,6 +112,27 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         set(value) { keepLocationState = value; exportPreferences.edit().putBoolean("location", value).apply() }
     var recipes by mutableStateOf(RecipeStore.load(app))
         private set
+    private val smartPreferences = app.getSharedPreferences("smart_develop", android.content.Context.MODE_PRIVATE)
+    private var smartAutoState by mutableStateOf(smartPreferences.getBoolean("automatic", true))
+    private var smartStyleState by mutableStateOf(SmartDevelopStyle.from(smartPreferences.getString("style", "cinema").orEmpty()))
+    internal var smartAutoEnabled: Boolean
+        get() = smartAutoState
+        set(value) {
+            smartAutoState=value;smartPreferences.edit().putBoolean("automatic",value).apply()
+            if(!value){smartQueueGeneration++;smartQueueJob?.cancel();smartImportRunning=false}
+        }
+    internal var smartStyle: SmartDevelopStyle
+        get() = smartStyleState
+        set(value) { smartStyleState=value;smartPreferences.edit().putString("style",value.id).apply() }
+    var smartImportRunning by mutableStateOf(false); private set
+    var smartImportCompleted by mutableStateOf(0); private set
+    var smartImportTotal by mutableStateOf(0); private set
+    var smartMessage by mutableStateOf(""); private set
+    private var smartQueueJob: Job? = null
+    private var smartApplyJob: Job? = null
+    private var smartQueueGeneration = 0L
+    private val smartAnalysisMutex = kotlinx.coroutines.sync.Mutex()
+    private val freshlySmartDeveloped = mutableSetOf<Uri>()
     var log by mutableStateOf("（未创建引擎）\n")
         private set
     var currentUri by mutableStateOf<Uri?>(null)
@@ -305,7 +326,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val key = historyKey(uri)
         val snapshot = initial.toJson().toString()
         if (undoHistory[key]?.lastOrNull() != snapshot) {
-            undoHistory[key] = mutableListOf(snapshot)
+            undoHistory[key] = if (freshlySmartDeveloped.remove(uri))
+                mutableListOf(EditorParams().toJson().toString(), snapshot) else mutableListOf(snapshot)
             redoHistory.remove(key)
         }
         lastHistoryKey = null
@@ -1106,6 +1128,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Invalidate before changing identity; cancellation alone cannot stop synchronous native work. */
     private fun invalidatePhotoWork(): Long {
+        smartApplyJob?.cancel()
         photoGeneration++
         renderGeneration++
         gradeGeneration++
@@ -1158,14 +1181,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (isExporting || isBatchExporting) return
         val photo = invalidatePhotoWork()
         currentUri = uri
+        smartMessage=""
         clearPhotoState()
         params = EditorParams()
         busy = true
+        val importStyle=smartStyle
+        val autoDevelop=smartAutoEnabled
         photoLoadJob = viewModelScope.launch {
             try {
                 withContext(engineDispatcher) {
                     if (photo != photoGeneration) return@withContext
-                    val saved = EditStore.load(app, uri)
+                    val saved = if(autoDevelop) ensureSmartParams(uri, importStyle, true) else EditStore.load(app, uri)
                     val name = queryDisplayName(uri)
                     val exif = readExif(uri)
                     val imageBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1227,6 +1253,101 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun decodeSmartPreview(uri: Uri): Bitmap {
+        if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
+            readExif(uri)?.thumbnail?.let { data ->
+                BitmapFactory.decodeByteArray(data,0,data.size)?.let { bitmap ->
+                    val edge=max(bitmap.width,bitmap.height)
+                    if(edge<=320)return bitmap
+                    val scale=320f/edge
+                    return Bitmap.createScaledBitmap(bitmap,(bitmap.width*scale).roundToInt().coerceAtLeast(1),
+                        (bitmap.height*scale).roundToInt().coerceAtLeast(1),true).also { if(it!==bitmap)bitmap.recycle() }
+                }
+            }
+            RawDecoder.decodeForExport(app,uri,320).use { raw ->
+                val argb=ColorPipeline.proPhotoLinearToSrgbArgb(raw.copySmallLinearRgb(),raw.width,raw.height)
+                return Bitmap.createBitmap(argb,raw.width,raw.height,Bitmap.Config.ARGB_8888)
+            }
+        }
+        return decodeSampled(uri,320)
+    }
+
+    /** No renderer/session work here. The import queue and first-photo load share this lock. */
+    private suspend fun ensureSmartParams(uri: Uri, style: SmartDevelopStyle, enabled: Boolean): EditorParams? {
+        if(!enabled)return null
+        return try {
+            smartAnalysisMutex.withLock {
+                withContext(Dispatchers.IO) { EditStore.load(app,uri) }?.let { return@withLock it }
+                val catalog=withContext(Dispatchers.Main.immediate) { films.toList() to papers.toList() }
+                if(catalog.first.isEmpty() || catalog.second.isEmpty())return@withLock null
+                val bitmap=withContext(Dispatchers.IO) { decodeSmartPreview(uri) }
+                val suggestion=try {
+                    withContext(Dispatchers.Default) {
+                        SmartDevelop.analyze(bitmap)?.let { SmartDevelop.recommend(EditorParams(),it,style,catalog.first,catalog.second) }
+                    }
+                } finally { bitmap.recycle() }
+                if(suggestion==null)return@withLock null
+                if(!currentCoroutineContext().isActive)return@withLock null
+                val committed=withContext(Dispatchers.IO) {
+                    // A manual/imported sidecar wins even if it appeared during analysis.
+                    EditStore.load(app,uri) ?: suggestion.also { EditStore.save(app,uri,it) }
+                }
+                if(committed===suggestion)withContext(Dispatchers.Main.immediate) { freshlySmartDeveloped.add(uri) }
+                committed
+            }
+        } catch(cancelled:CancellationException){ throw cancelled }
+        catch(error:Exception){
+            android.util.Log.w("SmartDevelop","Image analysis skipped; original editing remains available",error)
+            null
+        }
+        catch(error:OutOfMemoryError){
+            android.util.Log.w("SmartDevelop","Analysis memory budget unavailable; using manual settings")
+            null
+        }
+    }
+
+    private fun queueSmartDevelop(uris: List<Uri>) {
+        if(!smartAutoEnabled || uris.isEmpty())return
+        smartQueueJob?.cancel()
+        val generation=++smartQueueGeneration
+        val style=smartStyle
+        smartImportTotal=uris.size;smartImportCompleted=0;smartImportRunning=true
+        smartQueueJob=viewModelScope.launch {
+            try {
+                for(uri in uris){
+                    if(uri !in photos)continue
+                    ensureSmartParams(uri,style,true)
+                    if(generation==smartQueueGeneration)smartImportCompleted++
+                }
+            } finally { if(generation==smartQueueGeneration)smartImportRunning=false }
+        }
+    }
+
+    internal fun applySmartDevelop() {
+        if(busy || isExporting || isBatchExporting || !hasPhoto)return
+        val bitmap=sourceBitmap ?: return
+        val photo=photoGeneration
+        val style=smartStyle
+        val base=params.copy()
+        val catalog=films.toList() to papers.toList()
+        busy=true;smartMessage="正在分析当前照片…"
+        smartApplyJob?.cancel()
+        smartApplyJob=viewModelScope.launch {
+            try {
+                val result=withContext(Dispatchers.Default) {
+                    SmartDevelop.analyze(bitmap)?.let { SmartDevelop.recommend(base,it,style,catalog.first,catalog.second) }
+                }
+                if(photo!=photoGeneration)return@launch
+                if(result==null){smartMessage="这张照片暂时无法分析，可继续手动调整";return@launch}
+                params=result
+                smartMessage="已应用${style.title} · ${result.smartDevelopSummary}"
+                scheduleRender()
+            } catch(cancelled:CancellationException){throw cancelled}
+            catch(error:Exception){if(photo==photoGeneration)smartMessage="暂时无法完成分析，可继续手动调整"}
+            finally { if(photo==photoGeneration)busy=false }
+        }
+    }
+
     // 打开多张照片（图库），第一张为当前。
     fun openPhotos(uris: List<Uri>) {
         if (uris.isEmpty() || isBatchExporting || isExporting) return
@@ -1239,6 +1360,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         developedPreviews = developedPreviews.filterKeys { it in retained }
         galleryPreviews = galleryPreviews.filterKeys { it in retained }
         currentIndex = 0
+        queueSmartDevelop(photos)
         openPhoto(photos[0])
     }
 
@@ -1250,6 +1372,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val added = merged.filterNot { it in photos }
         val selected = currentUri
         photos = merged
+        queueSmartDevelop(added)
         batchExportSelection = batchExportSelection.intersect(merged.toSet()) + added
         currentIndex = selected?.let { merged.indexOf(it) }?.takeIf { it >= 0 } ?: 0
         if (openSelected) {
@@ -1361,6 +1484,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val batchFormat = exportFormat
         val batchResolution = exportRes
         val batchColorSpace = exportColorSpace
+        val batchSmartStyle = smartStyle
+        val batchAutoDevelop = smartAutoEnabled
         isBatchExporting = true
         exportCancelRequested = false
         isExportCommitCompleted = false
@@ -1381,7 +1506,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         withContext(Dispatchers.Main.immediate) {
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
-                        val photoParams = if (uri == activeUri) activeParams.copy() else EditStore.load(app, uri) ?: EditorParams()
+                        val photoParams = if (uri == activeUri) activeParams.copy() else EditStore.load(app, uri)
+                            ?: ensureSmartParams(uri, batchSmartStyle, batchAutoDevelop) ?: EditorParams()
                         sourceExif = readExif(uri)
                         openExportSource(e, uri, photoParams, batchResolution, outputCs)
                         checkExportCancellation()
@@ -1584,6 +1710,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openTestImage() {
         if (isExporting || isBatchExporting) return
+        smartQueueGeneration++;smartQueueJob?.cancel();smartImportRunning=false
         invalidatePhotoWork()
         clearPhotoState()
         currentUri = null
@@ -1886,6 +2013,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        smartQueueJob?.cancel();smartApplyJob?.cancel()
         cleared = true
         invalidatePhotoWork()
         galleryPreviewJobs.values.forEach(Job::cancel)

@@ -50,6 +50,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var batchSelectionOnly = false
     private var stockLibraryOnly = false
     private var editingFeedbackOnly = false
+    private var smartDevelopOnly = false
+    private var canvasJoiningOnly = false
+    private var homeViewingStandOnly = false
+    private var exportLayoutOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -58,6 +62,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     }
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
+        smartDevelopOnly = audit == "smart-develop"
+        canvasJoiningOnly = audit == "canvas-joining"
+        homeViewingStandOnly = audit == "home-viewing-stand"
+        exportLayoutOnly = audit == "export-layout"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -97,6 +105,34 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if(exportLayoutOnly){
+            case("export.advanced_layout"){ExportLayoutAudit(this,output).run()}
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
+        if(homeViewingStandOnly){
+            case("home.viewing_stand_entry"){HomeViewingStandAudit(this,output).run()}
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
+        if(canvasJoiningOnly){
+            case("gallery.snap_and_translucent_overlap"){CanvasJoiningAudit(this,output).run()}
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
+        if(smartDevelopOnly){
+            case("smart.per_photo_import_and_styles"){SmartDevelopAudit(this,output).run()}
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
         if (editingFeedbackOnly) {
             case("editing.crop_metadata_vignette") { EditingFeedbackAudit(this, output).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
@@ -1121,10 +1157,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                 image.recycle(); return hash
             }
             val firstBeforeMove = regionHash(originalFirst)
-            val secondBeforeMove = regionHash(secondUnmoved)
             gesture(originalFirst.exactCenterX(), originalFirst.exactCenterY(), originalFirst.exactCenterX(), originalFirst.exactCenterY() + 70)
             check(regionHash(originalFirst) != firstBeforeMove) { "Dragging a photo did not move its pixels" }
-            check(regionHash(secondUnmoved) == secondBeforeMove) { "Dragging one photo moved another" }
+            // A new upper overlap may change composited pixels; the neighbor's geometry stays independent.
+            check(bounds("查看第 2 张 gallery-2.jpg") == secondUnmoved) { "Dragging one photo moved another" }
             capture("photo_moved")
             click("查看第 7 张 gallery-7.jpg")
             await { tree().contains("07 / 12") && tree().contains("沉浸照片 gallery-7.jpg") }

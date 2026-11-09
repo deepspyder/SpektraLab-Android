@@ -86,10 +86,13 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     locationPermission.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
                 } else vm.exportKeepLocation = keep
             }
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .clip(SpektraShapes.control)
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .clickable(enabled = !processing, role = Role.Button, onClick = { advanced = !advanced })
-                .semantics { stateDescription = if (advanced) "已展开" else "已收起" },
-                verticalAlignment = Alignment.CenterVertically) {
+                .semantics { contentDescription = "高级设置"; stateDescription = if (advanced) "已展开" else "已收起" }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("高级设置", fontSize = 12.sp)
                     Text("位深 · 元数据 · 文件命名 · 保存位置", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -153,6 +156,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                 Text("同步胶片与调色参数；保留每张照片的独立裁剪。", fontSize = 10.sp, lineHeight = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
+            Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExportQuickAction(
                     title = "DI TIFF", subtitle = "16 位中间文件", description = "导出 DI (16-bit TIFF)",

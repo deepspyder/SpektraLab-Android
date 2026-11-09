@@ -15,6 +15,9 @@ class EditorParams {
     // 胶片 & 相纸
     var filmId by mutableStateOf("kodak_portra_400")
     var paperId by mutableStateOf("kodak_portra_endura")
+    var smartDevelopStyle by mutableStateOf("")
+    var smartDevelopSummary by mutableStateOf("")
+    var smartDevelopVersion by mutableStateOf(0)
 
     // 相机曝光（SHOOT，重建负片）
     var exposureEv by mutableFloatStateOf(0f)
@@ -138,6 +141,9 @@ class EditorParams {
     fun toJson(): JSONObject = JSONObject()
         .put("film_stock", filmId)
         .put("print_stock", paperId)
+        .put("smart_develop_style", smartDevelopStyle)
+        .put("smart_develop_summary", smartDevelopSummary)
+        .put("smart_develop_version", smartDevelopVersion)
         .put("exposure_compensation_ev", exposureEv.toDouble())
         .put("auto_exposure_method", autoExposureMethod)
         .put("auto_exposure", autoExposure)
@@ -235,6 +241,7 @@ class EditorParams {
 
     private fun copyAllFrom(p: EditorParams) {
         filmId = p.filmId; paperId = p.paperId; exposureEv = p.exposureEv
+        smartDevelopStyle=p.smartDevelopStyle;smartDevelopSummary=p.smartDevelopSummary;smartDevelopVersion=p.smartDevelopVersion
         autoExposureMethod = p.autoExposureMethod; autoExposure = p.autoExposure; filmFormatMm = p.filmFormatMm
         cameraWbKelvin = p.cameraWbKelvin; cameraWbTint = p.cameraWbTint; cameraWbCustom = p.cameraWbCustom
         sceneLatitudeActive = p.sceneLatitudeActive; sceneLatitudeNorm = p.sceneLatitudeNorm
@@ -282,6 +289,9 @@ class EditorParams {
             val p = EditorParams()
             p.filmId = json.optString("film_stock", p.filmId)
             p.paperId = json.optString("print_stock", p.paperId)
+            p.smartDevelopStyle=json.optString("smart_develop_style", "")
+            p.smartDevelopSummary=json.optString("smart_develop_summary", "")
+            p.smartDevelopVersion=json.optInt("smart_develop_version", 0)
             p.exposureEv = json.optDouble("exposure_compensation_ev", 0.0).toFloat()
             p.autoExposureMethod = json.optString("auto_exposure_method", "balanced")
             p.autoExposure = json.optBoolean("auto_exposure", true)

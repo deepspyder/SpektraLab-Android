@@ -86,12 +86,13 @@ internal fun ViewingStand(
     onLoadWallDetails: suspend (List<String>) -> Unit,
     onImport: () -> Unit, onRemove: (String) -> Unit, onEdit: (String) -> Unit,
     onBack: () -> Unit, modifier: Modifier = Modifier,
+    sharedCanvasState: FilmCanvasState? = null, backDescription: String = "返回暗房",
 ) {
     var lightOn by rememberSaveable { mutableStateOf(true) }
     var magnifierOn by rememberSaveable { mutableStateOf(false) }
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val canvasState = rememberFilmCanvasState()
+    val canvasState = sharedCanvasState ?: rememberFilmCanvasState()
     val wallBackground by animateColorAsState(if (lightOn) StandColors.paper else StandColors.night,
         tween(360, easing = FastOutSlowInEasing), label = "light-table")
     val lamp by androidx.compose.animation.core.animateFloatAsState(if (lightOn) 1f else 0f, tween(360), label = "light-output")
@@ -143,7 +144,7 @@ internal fun ViewingStand(
                 ContactSheet(photos, selectedKey, canvasState, importing, importCompleted, importTotal,
                     actionsEnabled, lightOn, wallBackground, lamp, magnifierOn,
                     { lightOn = !lightOn }, { magnifierOn = !magnifierOn }, onLoadThumbnail,
-                    { selectedKey = it; viewerKey = it }, onImport, onBack, onLoadWallDetails)
+                    { selectedKey = it; viewerKey = it }, onImport, onBack, onLoadWallDetails, backDescription)
             }
         }
     }
@@ -157,12 +158,13 @@ private fun ContactSheet(
     onLightChange: () -> Unit, onMagnifierChange: () -> Unit, onLoadThumbnail: (String) -> Unit,
     onOpen: (String) -> Unit, onImport: () -> Unit, onBack: () -> Unit,
     onLoadWallDetails: suspend (List<String>) -> Unit,
+    backDescription: String,
 ) {
     val ink = if (lightOn) StandColors.ink else StandColors.white
     val muted = if (lightOn) StandColors.muted else StandColors.soft
     Column(Modifier.fillMaxSize().background(background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).heightIn(min = 60.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回暗房", tint = ink) }
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, backDescription, tint = ink) }
             Text("观景台", Modifier.weight(1f).padding(start = 4.dp), color = ink, style = MaterialTheme.typography.titleLarge)
             IconButton(onClick = onMagnifierChange, enabled = photos.isNotEmpty()) {
                 Icon(Icons.Rounded.Search, if (magnifierOn) "关闭放大镜" else "打开放大镜",
@@ -347,6 +349,7 @@ private fun StandViewer(
 private fun ViewerImage(photo: ViewingPhoto, brightness: Float, magnifierOn: Boolean, zoom: Float, pan: Offset,
     onZoom: (Float) -> Unit, onPan: (Offset) -> Unit, onTap: () -> Unit, onRetry: () -> Unit, modifier: Modifier) {
     var viewport by remember { mutableStateOf(Rect.Zero) }
+    var loupeBounds by remember { mutableStateOf(Rect.Zero) }
     val bitmap = photo.detail?.takeUnless { it.isRecycled }
     val currentZoom by rememberUpdatedState(zoom)
     val currentPan by rememberUpdatedState(pan)
@@ -358,14 +361,20 @@ private fun ViewerImage(photo: ViewingPhoto, brightness: Float, magnifierOn: Boo
         Offset(value.x.coerceIn(-x, x), value.y.coerceIn(-y, y))
     })
     Box(modifier.onGloballyPositioned { viewport = it.boundsInRoot() }.clipToBounds()
-        .pointerInput(photo.key) { detectTapGestures(onTap = { onTap() }, onDoubleTap = {
-            onZoom(if (currentZoom > 1.01f) 1f else 2.2f); onPan(Offset.Zero)
+        .pointerInput(photo.key) { detectTapGestures(onTap = { position ->
+            if(!loupeBounds.contains(position+viewport.topLeft))onTap()
+        }, onDoubleTap = { position ->
+            if(!loupeBounds.contains(position+viewport.topLeft)){
+                onZoom(if (currentZoom > 1.01f) 1f else 2.2f); onPan(Offset.Zero)
+            }
         }) }
         .pointerInput(photo.key) {
             awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
+                val down=awaitFirstDown(requireUnconsumed = false)
+                if(loupeBounds.contains(down.position+viewport.topLeft))return@awaitEachGesture
                 do {
                     val event = awaitPointerEvent()
+                    if(event.changes.any{it.isConsumed})return@awaitEachGesture
                     if (event.changes.count { it.pressed } > 1 || currentZoom > 1.01f) {
                         val next = (currentZoom * event.calculateZoom()).coerceIn(1f, 4f)
                         onZoom(next); onPan(clamp(currentPan + event.calculatePan(), next))
@@ -382,7 +391,11 @@ private fun ViewerImage(photo: ViewingPhoto, brightness: Float, magnifierOn: Boo
                 val center = viewport.center + pan
                 val scaled = Rect(center.x - baseRect.width * animatedZoom / 2, center.y - baseRect.height * animatedZoom / 2,
                     center.x + baseRect.width * animatedZoom / 2, center.y + baseRect.height * animatedZoom / 2)
-                PhotoLoupe(viewport, listOf(LensTarget(bitmap, scaled, viewport)), brightness, StandColors.night)
+                // Loupe offsets are relative to the viewport, not to its centred child alignment.
+                Box(Modifier.matchParentSize()) {
+                    PhotoLoupe(viewport, listOf(LensTarget(bitmap, scaled, viewport)), brightness, StandColors.night,
+                        onBoundsChange={loupeBounds=it})
+                }
             }
         } else if (photo.error != null) {
             Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
@@ -402,7 +415,10 @@ private fun ViewerImage(photo: ViewingPhoto, brightness: Float, magnifierOn: Boo
 
 /** Spatial loupe: the pixel under its centre remains fixed at 2.5×. */
 @Composable
-internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: Float, background: Color) {
+internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: Float, background: Color,
+    onBoundsChange: (Rect)->Unit = {}) {
+    val latestBoundsChange by rememberUpdatedState(onBoundsChange)
+    DisposableEffect(Unit){onDispose{latestBoundsChange(Rect.Zero)}}
     val diameter = with(LocalDensity.current) { 128.dp.toPx() }
     val radius = diameter / 2
     var centre by remember { mutableStateOf<Offset?>(null) }
@@ -414,6 +430,7 @@ internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: F
     val rootPoint = point + viewport.topLeft
     val target = targets.lastOrNull { it.clipBounds.contains(rootPoint) && it.imageBounds.contains(rootPoint) }
     Box(Modifier.offset { IntOffset((point.x - radius).roundToInt(), (point.y - radius).roundToInt()) }
+        .onGloballyPositioned { latestBoundsChange(it.boundsInRoot()) }
         .size(128.dp).shadow(12.dp, CircleShape).clip(CircleShape).background(background).border(3.dp, StandColors.amber, CircleShape)
         .semantics { contentDescription = "拖动放大镜"; stateDescription = "2.5 倍放大" }
         .pointerInput(viewport.size) {

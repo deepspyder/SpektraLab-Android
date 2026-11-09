@@ -311,6 +311,18 @@ Java_com_spektralab_android_engine_NativeRawImage_nativeRelease(JNIEnv*, jobject
     delete reinterpret_cast<NativeRawPixels*>(handle);
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_spektralab_android_engine_NativeRawImage_nativeCopySmallLinearRgb(JNIEnv* env, jobject, jlong handle) {
+    const auto* raw = reinterpret_cast<NativeRawPixels*>(handle);
+    if (!raw || raw->rgb.size() > 512u * 512u * 3u) {
+        throw_engine_error(env, "Analysis preview exceeds its size budget");
+        return nullptr;
+    }
+    auto result = env->NewFloatArray(static_cast<jsize>(raw->rgb.size()));
+    if (result) env->SetFloatArrayRegion(result, 0, static_cast<jsize>(raw->rgb.size()), raw->rgb.data());
+    return result;
+}
+
 JNIEXPORT jintArray JNICALL
 Java_com_spektralab_android_engine_NativeRawImage_nativeResize(JNIEnv* env, jobject, jlong handle, jint maxLongEdge) {
     auto* raw = reinterpret_cast<NativeRawPixels*>(handle);
