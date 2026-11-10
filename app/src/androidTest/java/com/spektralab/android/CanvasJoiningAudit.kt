@@ -107,7 +107,7 @@ internal class CanvasJoiningAudit(private val test: Instrumentation, private val
         val owned=mutableListOf(red,blue)
         val aLabel="查看第 1 张 a.jpg";val bLabel="查看第 2 张 b.jpg"
         try {
-            main { activity.setContent { SpektraTheme {
+            main { activity.setContent { TheiaTheme {
                 ViewingStand(photos.value,importing=false,importCompleted=0,importTotal=0,actionsEnabled=true,
                     onLoadThumbnail={},onLoadDetail={},onLoadWallDetails={},
                     onImport={},onRemove={},onEdit={},onBack={})

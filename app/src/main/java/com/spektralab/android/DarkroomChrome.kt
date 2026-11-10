@@ -124,14 +124,14 @@ internal fun DarkroomBottomBar(
 
 @Composable
 internal fun DarkroomChoiceStrip(options: List<String>, selected: String, enabled: Boolean = true, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(DarkroomChrome.navigation, SpektraShapes.control).selectableGroup()) {
+    Row(Modifier.fillMaxWidth().background(DarkroomChrome.navigation, TheiaShapes.control).selectableGroup()) {
         options.forEach { option ->
             val active = option == selected
             TextButton(onClick = { onSelect(option) }, enabled = enabled,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = active },
-                shape = SpektraShapes.compact, contentPadding = PaddingValues(4.dp)) {
+                shape = TheiaShapes.compact, contentPadding = PaddingValues(4.dp)) {
               Box(Modifier.fillMaxWidth().heightIn(min = 40.dp)
-                .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent, SpektraShapes.compact)
+                .background(if (active) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent, TheiaShapes.compact)
                 .padding(horizontal = 6.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 Text(option, color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,

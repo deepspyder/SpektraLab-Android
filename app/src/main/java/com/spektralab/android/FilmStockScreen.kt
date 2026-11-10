@@ -82,7 +82,7 @@ internal fun FilmStockScreen(vm: EditorViewModel, onBack: () -> Unit, startWithP
             if (sidePanel) {
                 Row(Modifier.fillMaxSize()) {
                     StockPhotoPreview(vm, comparing, { comparing = it }, Modifier.weight(1f).fillMaxHeight())
-                    Column(Modifier.width(340.dp).fillMaxHeight().clip(SpektraShapes.panel)
+                    Column(Modifier.width(340.dp).fillMaxHeight().clip(TheiaShapes.panel)
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .verticalScroll(rememberScrollState())) {
                         StockFilterPanel(vm, paperTab, { paperTab = it }, filter, { filter = it }, films, papers, enabled)
@@ -108,13 +108,13 @@ private fun StockPhotoPreview(vm: EditorViewModel, comparing: Boolean, onCompare
                 Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             IconToggleButton(checked = comparing, onCheckedChange = onCompare,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), SpektraShapes.control)) {
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), TheiaShapes.control)) {
                 Icon(Icons.Rounded.Compare, if (comparing) "查看胶片效果" else "对比原片",
                     tint = if (comparing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(21.dp))
             }
             if (comparing) Text("原片", Modifier.align(Alignment.BottomStart).padding(12.dp)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), SpektraShapes.badge)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), TheiaShapes.badge)
                 .padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
         } else {
             Text("导入照片后可实时试片", Modifier.align(Alignment.Center),
@@ -137,12 +137,12 @@ private fun StockFilterPanel(vm: EditorViewModel, paperTab: Boolean, onPaperTab:
         val index = stocks.indexOfFirst { it.id == selectedId }
         if (stocks.isNotEmpty()) state.animateScrollToItem(index.coerceAtLeast(0))
     }
-    Column(Modifier.fillMaxWidth().clip(SpektraShapes.sheet).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(bottom = 8.dp)) {
+    Column(Modifier.fillMaxWidth().clip(TheiaShapes.sheet).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(bottom = 8.dp)) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f), thickness = .5.dp)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).selectableGroup(),
             verticalAlignment = Alignment.CenterVertically) {
             listOf(false to "胶片库", true to "相纸").forEach { (paper, label) ->
-                Column(Modifier.heightIn(min = 48.dp).clip(SpektraShapes.control).selectable(selected = paperTab == paper, role = Role.Tab,
+                Column(Modifier.heightIn(min = 48.dp).clip(TheiaShapes.control).selectable(selected = paperTab == paper, role = Role.Tab,
                     onClick = { onPaperTab(paper) }).padding(horizontal = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Text(label, fontSize = 13.sp, fontWeight = if (paperTab == paper) FontWeight.SemiBold else FontWeight.Normal,
@@ -156,7 +156,7 @@ private fun StockFilterPanel(vm: EditorViewModel, paperTab: Boolean, onPaperTab:
         if (!paperTab) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp).selectableGroup().semantics { contentDescription = "胶片分类" }) {
             FilmFilter.entries.forEach { option ->
-                Box(Modifier.heightIn(min = 48.dp).clip(SpektraShapes.control).selectable(selected = filter == option, role = Role.Tab,
+                Box(Modifier.heightIn(min = 48.dp).clip(TheiaShapes.control).selectable(selected = filter == option, role = Role.Tab,
                     onClick = { onFilter(option) }).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                     Text(option.label, fontSize = 11.sp,
                         color = if (filter == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -186,7 +186,7 @@ private fun StockFilterPanel(vm: EditorViewModel, paperTab: Boolean, onPaperTab:
 @Composable
 private fun StockFilterItem(stock: Stock, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val width = 76.dp * LocalDensity.current.fontScale.coerceIn(1f, 1.25f)
-    val shape = SpektraShapes.thumbnail
+    val shape = TheiaShapes.thumbnail
     Column(Modifier.width(width).selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
         .semantics(mergeDescendants = true) { contentDescription = stock.name },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {

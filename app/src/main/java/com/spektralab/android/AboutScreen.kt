@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 internal const val PROJECT_REPOSITORY_URL = "https://github.com/deepspyder/SpektraLab-Android"
+internal const val UPSTREAM_PROJECT_URL = "https://github.com/andreavolpato/spektrafilm"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,7 +88,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 Modifier.widthIn(max = 560.dp).fillMaxWidth().verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp, vertical = 28.dp),
             ) {
-                Text("SpektraLab", style = MaterialTheme.typography.headlineMedium,
+                Text("Theia", style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(6.dp))
                 Text("胶片与暗房模拟" + if (version.isNotBlank()) " · $version" else "",
@@ -99,7 +100,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                         painter = painterResource(R.drawable.author_avatar),
                         contentDescription = "米瑞斯的猫的头像",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.size(80.dp).clip(SpektraShapes.panel),
+                        modifier = Modifier.size(80.dp).clip(TheiaShapes.panel),
                     )
                     Spacer(Modifier.width(16.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -115,11 +116,18 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 Text("免费使用，开放源码", style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { heading() })
                 Spacer(Modifier.height(12.dp))
-                Text("SpektraLab 是一个免费开源的胶片与暗房模拟项目。官方不收取下载、安装或使用费用。",
+                Text("Theia 是一个免费开源的胶片与暗房模拟项目。官方不收取下载、安装或使用费用。",
                     style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(12.dp))
+                Text("基于 spektrafilm 开发，感谢原项目作者与开源贡献者。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SelectionContainer {
+                    Text(UPSTREAM_PROJECT_URL, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
 
                 Spacer(Modifier.height(20.dp))
-                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = SpektraShapes.panel) {
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = TheiaShapes.panel) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("遇到收费？请申请退款", style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -146,7 +154,7 @@ fun AboutScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                             scope.launch { snackbar.showSnackbar("暂时无法打开链接，请复制仓库地址") }
                         }
                     },
-                    shape = SpektraShapes.control,
+                    shape = TheiaShapes.control,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Rounded.OpenInNew, null, modifier = Modifier.size(18.dp))

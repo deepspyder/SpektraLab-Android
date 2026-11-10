@@ -53,7 +53,7 @@ object DisplayP3Icc {
 
         // 构建 tag 数据
         val desc = descTag("Display P3")
-        val cprt = textTag("SpektraLab Display P3")
+        val cprt = textTag("Theia Display P3")
         val wtpt = xyzTag(d50)
         val rxyz = xyzTag(mr)
         val gxyz = xyzTag(mg)

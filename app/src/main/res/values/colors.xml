@@ -1,6 +1,6 @@
 <resources>
-    <color name="spektra_brand">#151515</color>
-    <color name="spektra_primary">#D2B783</color>
-    <color name="spektra_surface">#1C1C1C</color>
-    <color name="spektra_background">#151515</color>
+    <color name="theia_brand">#151515</color>
+    <color name="theia_primary">#D2B783</color>
+    <color name="theia_surface">#1C1C1C</color>
+    <color name="theia_background">#151515</color>
 </resources>

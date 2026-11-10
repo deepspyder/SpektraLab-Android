@@ -30,11 +30,11 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun SmartDevelopEntry(vm: EditorViewModel, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val colors=MaterialTheme.colorScheme
-    Row(modifier.fillMaxWidth().clip(SpektraShapes.control).background(colors.surfaceContainerLow)
+    Row(modifier.fillMaxWidth().clip(TheiaShapes.control).background(colors.surfaceContainerLow)
         .clickable(role=Role.Button,onClick=onOpen).padding(horizontal=12.dp,vertical=10.dp)
         .semantics(mergeDescendants=true){contentDescription="选择智能显影风格"},
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(36.dp).background(colors.primaryContainer,SpektraShapes.control),contentAlignment=Alignment.Center){
+        Box(Modifier.size(36.dp).background(colors.primaryContainer,TheiaShapes.control),contentAlignment=Alignment.Center){
             Icon(Icons.Rounded.AutoAwesome,null,Modifier.size(21.dp),tint=colors.primary)
         }
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
@@ -52,13 +52,13 @@ internal fun SmartDevelopEntry(vm: EditorViewModel, onOpen: () -> Unit, modifier
 internal fun SmartDevelopSheet(vm: EditorViewModel, onDismiss: () -> Unit) {
     val colors=MaterialTheme.colorScheme
     val processing=vm.busy || vm.isExporting || vm.isBatchExporting
-    ModalBottomSheet(onDismissRequest=onDismiss,shape=SpektraShapes.sheet,
+    ModalBottomSheet(onDismissRequest=onDismiss,shape=TheiaShapes.sheet,
         sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
         containerColor=colors.surfaceContainerLow) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
             .padding(start=20.dp,end=20.dp,bottom=20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment=Alignment.CenterVertically) {
-                Box(Modifier.size(40.dp).background(colors.primaryContainer,SpektraShapes.control),contentAlignment=Alignment.Center){
+                Box(Modifier.size(40.dp).background(colors.primaryContainer,TheiaShapes.control),contentAlignment=Alignment.Center){
                     Icon(Icons.Rounded.AutoAwesome,null,Modifier.size(23.dp),tint=colors.primary)
                 }
                 Column(Modifier.weight(1f).padding(start=12.dp)) {
@@ -70,7 +70,7 @@ internal fun SmartDevelopSheet(vm: EditorViewModel, onDismiss: () -> Unit) {
             Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                 SmartDevelopStyle.entries.forEach { style ->
                     val selected=vm.smartStyle==style
-                    Row(Modifier.fillMaxWidth().clip(SpektraShapes.control)
+                    Row(Modifier.fillMaxWidth().clip(TheiaShapes.control)
                         .background(if(selected)colors.surfaceContainerHigh else colors.surfaceContainerLow)
                         .selectable(selected=selected,enabled=!processing,role=Role.RadioButton,onClick={vm.smartStyle=style})
                         .semantics(mergeDescendants=true){contentDescription="显影风格：${style.title}"}
@@ -112,7 +112,7 @@ internal fun SmartDevelopSheet(vm: EditorViewModel, onDismiss: () -> Unit) {
             Text("根据亮暗、反差与色彩给出本地建议。选好风格后可继续微调，使用撤销即可恢复。",
                 style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
             if(vm.hasPhoto)Button(onClick={vm.applySmartDevelop();onDismiss()},enabled=!processing,
-                modifier=Modifier.fillMaxWidth().heightIn(min=48.dp),shape=SpektraShapes.control) {
+                modifier=Modifier.fillMaxWidth().heightIn(min=48.dp),shape=TheiaShapes.control) {
                 Icon(Icons.Rounded.AutoAwesome,null,Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp));Text("应用到当前照片")
             }

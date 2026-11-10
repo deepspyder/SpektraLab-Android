@@ -87,13 +87,13 @@ fun EditorSection(
 
 @Composable
 fun ChoiceStrip(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, SpektraShapes.control)) {
+    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow, TheiaShapes.control)) {
         options.forEach { option ->
             val isSelected = selected == option
             androidx.compose.material3.TextButton(
                 onClick = { onSelect(option) },
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { this.selected = isSelected },
-                shape = SpektraShapes.control,
+                shape = TheiaShapes.control,
                 colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
                     containerColor = if (selected == option) MaterialTheme.colorScheme.surfaceContainerHigh else androidx.compose.ui.graphics.Color.Transparent,
                     contentColor = if (selected == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -233,11 +233,11 @@ fun ActionButton(
     onClick: () -> Unit,
 ) {
     if (primary) {
-        Button(onClick = onClick, enabled = enabled, shape = SpektraShapes.control, modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
+        Button(onClick = onClick, enabled = enabled, shape = TheiaShapes.control, modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
             Text(label)
         }
     } else {
-        OutlinedButton(onClick = onClick, enabled = enabled, shape = SpektraShapes.control,
+        OutlinedButton(onClick = onClick, enabled = enabled, shape = TheiaShapes.control,
             modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).heightIn(min = 48.dp)) {
             Text(label)
         }

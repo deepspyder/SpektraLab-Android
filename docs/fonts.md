@@ -13,7 +13,7 @@ for Chinese, Latin text, punctuation and numbers without a network request.
   renamed on disk to comply with Android resource naming rules.
 
 `SpektraFontFamily` in `Theme.kt` applies the family to all 15 Material 3
-typography roles. `res/font/spektra_rounded.xml` applies the same weights to
+typography roles. `res/font/theia_rounded.xml` applies the same weights to
 the Android window theme. Screens inherit the family rather than overriding it
 with system monospace or serif fonts. System font scaling remains enabled.
 

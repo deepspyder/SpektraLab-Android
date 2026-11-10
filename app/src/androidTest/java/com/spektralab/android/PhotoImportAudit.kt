@@ -131,7 +131,7 @@ internal class PhotoImportAudit(private val test: Instrumentation, private val o
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         main { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
         waitUntil { vm.engine != null && !vm.busy && vm.films.isNotEmpty() }
-        waitUntil { find(nodes(), "SpektraLab") != null }
+        waitUntil { find(nodes(), "Theia") != null }
         val red = fixture("import-red.png", 384, 256, 0, .75f)
         val blue = fixture("import-blue.png", 256, 384, 2, 1.25f)
         val green = fixture("import-green.png", 320, 240, 1, -.5f)

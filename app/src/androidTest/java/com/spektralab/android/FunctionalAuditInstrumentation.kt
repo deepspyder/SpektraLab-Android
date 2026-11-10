@@ -54,6 +54,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var canvasJoiningOnly = false
     private var homeViewingStandOnly = false
     private var exportLayoutOnly = false
+    private var theiaBrandOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -66,6 +67,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         canvasJoiningOnly = audit == "canvas-joining"
         homeViewingStandOnly = audit == "home-viewing-stand"
         exportLayoutOnly = audit == "export-layout"
+        theiaBrandOnly = audit == "theia-brand"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -105,6 +107,13 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if(theiaBrandOnly){
+            case("brand.theia_and_upgrade_compatibility"){TheiaBrandAudit(this,output).run()}
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
         if(exportLayoutOnly){
             case("export.advanced_layout"){ExportLayoutAudit(this,output).run()}
             val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
@@ -534,7 +543,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         check(diInfo.bits == listOf(16, 16, 16) && diInfo.samples == 3 && diInfo.compression == 1 && !diInfo.hasIcc) {
             "DI TIFF format is wrong: $diInfo"
         }
-        assertPublished(diUri, "SpektraLab_DI_")
+        assertPublished(diUri, "Theia_DI_")
         restoredInteractiveSession("DI TIFF")
 
         runOnMainSync { vm.export() }
@@ -545,7 +554,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         check(tiffInfo.bits == listOf(16, 16, 16) && tiffInfo.samples == 3 && tiffInfo.compression == 1 && tiffInfo.hasIcc) {
             "16-bit P3 TIFF format/profile is wrong: $tiffInfo"
         }
-        assertPublished(tiffUri, "SpektraLab_")
+        assertPublished(tiffUri, "Theia_")
         restoredInteractiveSession("TIFF export")
 
         return "Soft proof followed the selected resolution; HD preview reopened the 3600px source; editor session recovered after all actions; DI and P3 TIFF headers, bit depth, dimensions, ICC and MediaStore publication verified."
@@ -1434,7 +1443,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             uiAutomation.takeScreenshot()?.let {bmp->File(output,"ui_$name.png").outputStream().use{bmp.compress(Bitmap.CompressFormat.PNG,100,it)};bmp.recycle()}
             File(output,"ui_$name.txt").writeText(tree())
         }
-        case("ui.launch"){capture("launch");check(tree().contains("SpektraLab"));"main activity visible, no debugger dialog"}
+        case("ui.launch"){capture("launch");check(tree().contains("Theia"));"main activity visible, no debugger dialog"}
         case("ui.test_image_import"){click("更多操作");click("测试图");await{vm.lastResult!=null};capture("import");check(vm.rendered!=null);"test image rendered via real menu"}
         case("ui.gallery_entry") {
             val standFile = File(output, "stand-a.jpg")
@@ -1731,7 +1740,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
                     back?.isEnabled == true && !vm.busy
                 }
                 click("返回首页")
-                await { find(nodes(), "SpektraLab") != null && find(nodes(), "返回首页") == null }
+                await { find(nodes(), "Theia") != null && find(nodes(), "返回首页") == null }
                 scrollToTop()
             }
             reveal("当前会话")
@@ -1783,7 +1792,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             }
             uiAutomation.waitForIdle(250, 5000)
             sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-            await { find(nodes(), "SpektraLab") != null }
+            await { find(nodes(), "Theia") != null }
             check(vm.photos.size == 3 && vm.currentIndex == 0)
             val extras = (4..14).map { index -> File(output, "home-$index.jpg").also { files[0].copyTo(it, overwrite = true) } }
             runOnMainSync { vm.addPhotos(extras.map(Uri::fromFile)); vm.selectPhoto(13) }

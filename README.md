@@ -1,177 +1,134 @@
-# SpektraLab Android
+<div align="center">
 
-SpektraLab Android is a film and darkroom simulator for Android. It combines a Kotlin + Jetpack Compose editor with the SpektraLab C++20/Vulkan rendering engine through JNI.
+# Theia
 
-Current release: **v0.1.3**. See the [release notes](docs/releases/v0.1.3.md).
+**让光，慢慢显影。**
 
-![SpektraLab editor](docs/images/editor-portrait.png)
+一间装进口袋的数字暗房。用胶片与相纸的色彩，重新看见照片里的光。
 
-## Features
+**简体中文** · [English](README.en.md)
 
-- Film and photographic-paper simulation with film profiles and print LUTs.
-- JPEG, PNG, WebP and RAW import, including LibRaw-based RAW decoding.
-- Camera white balance, lens correction, crop, rotation and flip controls.
-- Film grain, halation, glare, exposure, filters, latitude and color grading.
-- Multi-photo stage with per-photo edits, thumbnails, EXIF information and removal.
-- Light-table view with a white light-box surface, ruler marks, drag/zoom/pan, overlapping photos and magnifier inspection.
-- Light-table export to PNG with Android save-to-gallery and system sharing.
+[下载应用](https://github.com/deepspyder/SpektraLab-Android/releases) · [功能](#功能) · [从源码构建](#从源码构建) · [开源协议](#开源协议)
 
-![Light table](docs/images/lighttable.png)
+![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-E5AC55)](LICENSE)
 
-![Color grading](docs/images/editor-grade.png)
+</div>
 
-![Export panel](docs/images/editor-export.png)
+## 关于 Theia
 
-## Architecture
+Theia 是一款免费开源的 Android 胶片与暗房模拟应用，基于 **Andrea Volpato 的 [spektrafilm](https://github.com/andreavolpato/spektrafilm)** 开发。将照片导入工作台，搭配胶片与相纸、调整显影参数，再把喜欢的色彩带回相册。
 
-```text
-Jetpack Compose UI
-        |
-EditorViewModel
-        |
-EngineClient (Kotlin/JNI)
-        |
-libspektralab.so (C++20 + Vulkan + LibRaw)
-```
+支持 RAW 编辑、逐张智能显影、多照片工作台、自由观景台和批量导出。你可以从一种自动风格开始，也可以亲手调整每一个细节。
 
-The Android app reuses the engine and C ABI from the sibling `SpektraLab-Windows` checkout. The JNI bridge is in `app/src/main/cpp/jni_bridge.cpp`; the Kotlin engine wrapper is in `app/src/main/java/com/spektralab/android/engine/EngineClient.kt`.
+## 界面预览
 
-## Build Requirements
+<table>
+  <tr><th>照片工作台</th><th>胶片显影</th><th>前后对比</th><th>观景台</th><th>导出照片</th></tr>
+  <tr>
+    <td><img src="docs/images/home.jpg" width="160" alt="照片工作台：预览、智能显影与当前会话"></td>
+    <td><img src="docs/images/darkroom.jpg" width="160" alt="胶片显影：RAW 照片、胶片相纸搭配与曝光调整"></td>
+    <td><img src="docs/images/compare.jpg" width="160" alt="暗房调整：拖动分割线对比原图与冲印效果"></td>
+    <td><img src="docs/images/viewstand.jpg" width="160" alt="观景台：胶片照片展示、灯光和可移动放大镜"></td>
+    <td><img src="docs/images/export.jpg" width="160" alt="导出照片：格式、分辨率和元数据选项"></td>
+  </tr>
+</table>
 
-- Android Studio with SDK Platform 36
-- Gradle 8.13
-- Android Gradle Plugin 8.11.2
-- Kotlin 2.1.0
-- NDK 27.0.12077973
-- CMake 3.22.1
-- Python 3 for resource scripts
-- `arm64-v8a` or `x86_64` device/emulator
-
-Open this directory in Android Studio. The project uses the real engine by default. The engine checkout is expected at `../SpektraLab-Windows/engine`. Override it with `-DSPEKTRA_ENGINE_DIR=/path/to/engine` when necessary.
-
-## Resources and Shaders
-
-```powershell
-python tools/sync_resources.py
-python tools/compile_shaders.py
-```
-
-The second command requires `glslangValidator`. Generated engine resources are intentionally ignored by Git. A clean checkout needs the sibling engine checkout and generated Android assets before a full real-render build.
-
-## Project Layout
-
-```text
-app/src/main/java/com/spektralab/android/
-  MainActivity.kt       Compose navigation and editor surface
-  EditorViewModel.kt    editor state, photo workflow and exports
-  ViewingStand.kt       Android light-table view
-  engine/               JNI-facing engine and color pipeline wrappers
-
-app/src/main/cpp/
-  CMakeLists.txt        native build and engine source selection
-  jni_bridge.cpp        JNI to SpektraLab C ABI bridge
-  raw_decode.cpp        LibRaw Android bridge
-
-docs/images/            README product screenshots
-tools/                  resource and shader synchronization scripts
-```
-
-## Development Notes
-
-The local CodeGraph index is used to navigate the Kotlin, C++ and JNI call graph during development. It is machine-local and should not be committed. The functional Android audit lives in `app/src/androidTest/java/com/spektralab/android/FunctionalAuditInstrumentation.kt`; QA captures are stored under `qa/`.
-
-## License
-
-Application code: GPL-3.0-or-later.
-
-Film and paper product profiles: see the notices and license files shipped under `app/src/main/assets/engine/resources/`.
-
----
-
-# SpektraLab Android（中文）
-
-SpektraLab Android 是一款面向 Android 的胶片与暗房物理模拟器。应用使用 Kotlin + Jetpack Compose 构建编辑界面，通过 JNI 调用 C++20/Vulkan 渲染引擎。
-
-当前版本：**v0.1.3**。查看[版本说明](docs/releases/v0.1.3.md)。
-
-![SpektraLab 编辑器](docs/images/editor-portrait.png)
+<sub>使用本次提供的实机截图。部分截图仍显示项目原名 SpektraLab，应用现已更名为 Theia。</sub>
 
 ## 功能
 
-- 胶片与放大相纸物理模拟，支持胶片配置和打印 LUT。
-- JPEG、PNG、WebP 和 RAW 导入，RAW 使用 LibRaw 解码。
-- 相机白平衡、镜头校正、裁剪、旋转和翻转。
-- 颗粒、光晕、曝光、滤镜、宽容度和调色控制。
-- 多照片展示台：逐张编辑、缩略图、EXIF 信息、照片移除。
-- Android 观景台：白色灯箱背景、顶部/左侧刻度、拖动、缩放、平移、照片叠放和放大镜查看。
-- 观景台导出 PNG，支持保存到系统相册和调用系统分享面板。
+| 从导入到成片 | 你可以做什么 |
+| --- | --- |
+| **胶片 × 相纸** | 选择彩色负片、反转片或黑白胶片，搭配相纸与冲印参数，探索不同的色彩与反差。 |
+| **逐张智能显影** | 自然耐看、电影浓郁、轻柔复古三种风格，根据每张照片的情况推荐胶片、相纸与参数，支持继续手动微调。 |
+| **RAW 与多图工作台** | 导入 JPEG、PNG、WebP 和 RAW；在顶部缩略图之间切换，独立保存每张照片的编辑参数。 |
+| **暗房调整** | 调整曝光、白平衡、颗粒、光晕、暗角与色彩，通过前后对比查看变化，支持撤销和重做。 |
+| **构图与裁剪** | 移动裁剪选区，调整旋转、翻转与比例；包含 **2.39:1**、**1.85:1** 电影画幅。 |
+| **自由观景台** | 自由拖放照片、平移和缩放画布；靠边吸附、重叠透光，配合灯光与可移动放大镜观察细节。 |
+| **按需导出** | JPEG、PNG、16 位 TIFF 与 DI TIFF；可勾选照片批量导出，独立选择是否保留拍摄信息与位置信息。 |
 
-![Android 观景台](docs/images/lighttable.png)
+## 开始使用
 
-![调色界面](docs/images/editor-grade.png)
+1. 从 [GitHub Releases](https://github.com/deepspyder/SpektraLab-Android/releases) 下载 APK，安装到支持 Vulkan 的 64 位 Android 设备上。
+2. 导入照片，选择智能显影风格，或手动搭配胶片与相纸。
+3. 在暗房调整画面，通过观景台查看多张照片，再按需要导出。
 
-![导出界面](docs/images/editor-export.png)
+> **大图导出提示**：照片尺寸较大时，建议优先选择较小的导出分辨率。全尺寸导出会占用更多内存，处理时间也更长。
 
-## 架构
+应用要求 Android 8.0（API 26）及以上，构建目标为 `arm64-v8a` 和 `x86_64`。项目原名为 SpektraLab Android；为兼容覆盖安装与已有编辑数据，应用 ID 仍为 `com.spektralab.android`。详见 [Theia 改名说明](docs/theia-branding.md)。
+
+## 从源码构建
+
+### 构建环境
+
+| 工具 | 版本 / 要求 |
+| --- | --- |
+| Android Studio | 安装 Android SDK Platform 36 |
+| JDK | 21，本地构建已验证 |
+| Gradle / Android Gradle Plugin | 8.13 / 8.11.2 |
+| Kotlin | 2.1.0 |
+| Android NDK / CMake | 27.0.12077973 / 3.22.1 |
+| Python / glslang | Python 3.10+；`glslangValidator` 或 `glslang` 在 PATH 中 |
+
+### 准备共享引擎
+
+Android 端通过 JNI 复用共享 C++20 / Vulkan 引擎。完整构建还需要共享引擎、资源与 LibRaw 源码；仅下载本仓库并不足以运行真实渲染。
+
+默认目录布局：
 
 ```text
-Jetpack Compose 界面
-        |
-EditorViewModel
-        |
-EngineClient（Kotlin/JNI）
-        |
-libspektralab.so（C++20 + Vulkan + LibRaw）
+workspace/
+├── SpektraLab-Android/          # 本仓库，应用名为 Theia
+├── SpektraLab-Windows/
+│   └── engine/                 # 共享引擎、配置与着色器
+└── deps/
+    └── LibRaw-0.22.2/          # RAW 解码依赖
 ```
 
-Android 端复用同级目录 `SpektraLab-Windows` 中的引擎和 C ABI。JNI 桥接位于 `app/src/main/cpp/jni_bridge.cpp`，Kotlin 引擎封装位于 `app/src/main/java/com/spektralab/android/engine/EngineClient.kt`。
+保留上述实际目录名。若更换引擎位置，需要同步调整 CMake 的 `SPEKTRA_ENGINE_DIR`、资源同步参数和着色器脚本的输入目录；LibRaw 路径由 `SPEKTRALAB_LIBRAW_SOURCE` 控制。准备 LibRaw 可使用共享引擎中的 `setup-libraw.ps1`。
 
-## 构建环境
+### 同步资源并构建
 
-- Android Studio，SDK Platform 36
-- Gradle 8.13
-- Android Gradle Plugin 8.11.2
-- Kotlin 2.1.0
-- NDK 27.0.12077973
-- CMake 3.22.1
-- Python 3
-- `arm64-v8a` 或 `x86_64` 设备/模拟器
-
-使用 Android Studio 打开本目录。默认使用真实引擎，引擎目录为 `../SpektraLab-Windows/engine`。如需指定其他目录，使用 `-DSPEKTRA_ENGINE_DIR=/path/to/engine`。
-
-## 资源与着色器
+在本仓库根目录执行：
 
 ```powershell
 python tools/sync_resources.py
 python tools/compile_shaders.py
+gradle :app:assembleDebug
 ```
 
-第二条命令需要本机安装 `glslangValidator`。生成的引擎资源默认被 Git 忽略；全新 checkout 需要准备同级引擎目录并生成 Android assets。
+也可以使用 Android Studio 打开项目，完成 SDK 配置后构建。若已生成 Gradle Wrapper，可用 `./gradlew`（Windows 为 `.\gradlew.bat`）代替 `gradle`。
 
-## 目录结构
+生成的引擎资源和 SPIR-V 文件位于 `app/src/main/assets/engine/resources/`，默认不提交 Git。Release 构建还需在本地准备签名与 `keystore.properties`，请勿提交私钥或密码。
+
+### 代码结构
 
 ```text
-app/src/main/java/com/spektralab/android/
-  MainActivity.kt       Compose 导航与编辑器界面
-  EditorViewModel.kt    编辑状态、照片流程与导出
-  ViewingStand.kt       Android 观景台
-  engine/               JNI 引擎和色彩管线封装
+app/src/main/
+├── java/com/spektralab/android/  # Compose 界面、编辑状态与导出流程
+│   └── engine/                  # Kotlin 引擎与色彩处理封装
+├── cpp/                         # JNI 桥接、Vulkan 引擎接入和 RAW 解码
+└── res/                         # 应用主题、字体与界面资源
 
-app/src/main/cpp/
-  CMakeLists.txt        native 构建和引擎源选择
-  jni_bridge.cpp        JNI 到 SpektraLab C ABI 的桥接
-  raw_decode.cpp        LibRaw Android 桥接
-
-docs/images/            README 产品截图
-tools/                  资源和着色器同步脚本
+docs/images/                     # 本 README 使用的实机截图
+tools/                           # 引擎资源同步与着色器编译脚本
 ```
 
-## 开发说明
+## 来源与致谢
 
-开发过程中使用本地 CodeGraph 分析 Kotlin、C++ 和 JNI 调用图。CodeGraph 索引只属于本机，不应提交到仓库。Android 功能审计位于 `app/src/androidTest/java/com/spektralab/android/FunctionalAuditInstrumentation.kt`，QA 截图位于 `qa/`。
+- **[spektrafilm](https://github.com/andreavolpato/spektrafilm)** — Andrea Volpato 的开源胶片模拟项目，是 Theia 的重要基础。
+- **[LibRaw](https://www.libraw.org/)** — RAW 照片解码。
+- **[Resource Han Rounded](https://github.com/CyanoHao/Resource-Han-Rounded)** — 源柔黑，为界面提供圆润的中英文字体。
+- **[Lucide](https://lucide.dev/)**、**[volk](https://github.com/zeux/volk)**、**[stb](https://github.com/nothings/stb)** — 图标与底层开源组件。
 
-## 许可
+感谢上游作者、贡献者，以及提供测试与反馈的使用者。
 
-应用代码：GPL-3.0-or-later。
+## 开源协议
 
-胶片与相纸配置：以 `app/src/main/assets/engine/resources/` 中随附的授权和声明文件为准。
+Theia 应用代码沿用 **GPL-3.0-or-later**，完整协议见 [LICENSE](LICENSE)。
+
+spektrafilm 的原始胶片配置、LUT 及其直接衍生数据遵循 **CC BY-SA 4.0**，原作者为 **Andrea Volpato**，来源为 [spektrafilm](https://github.com/andreavolpato/spektrafilm)。完整原始声明见 [SPEKTRAFILM_LICENSE.txt](licenses/SPEKTRAFILM_LICENSE.txt)。
+
+第三方库、字体、图标与其他素材保留各自的版权及许可。来源、协议文件和资源说明汇总在 [NOTICE.md](NOTICE.md)。

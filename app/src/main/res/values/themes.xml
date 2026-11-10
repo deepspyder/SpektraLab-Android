@@ -1,24 +1,24 @@
 <resources>
-    <style name="Base.Theme.SpektraLab" parent="android:Theme.Material.NoActionBar">
-        <item name="android:fontFamily">@font/spektra_rounded</item>
+    <style name="Base.Theme.Theia" parent="android:Theme.Material.NoActionBar">
+        <item name="android:fontFamily">@font/theia_rounded</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">@color/spektra_background</item>
-        <item name="android:navigationBarColor">@color/spektra_background</item>
+        <item name="android:statusBarColor">@color/theia_background</item>
+        <item name="android:navigationBarColor">@color/theia_background</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">@color/spektra_background</item>
-        <item name="android:colorAccent">@color/spektra_primary</item>
+        <item name="android:windowBackground">@color/theia_background</item>
+        <item name="android:colorAccent">@color/theia_primary</item>
     </style>
 
-    <style name="Theme.SpektraLab" parent="Base.Theme.SpektraLab" />
+    <style name="Theme.Theia" parent="Base.Theme.Theia" />
 
-    <style name="Base.Theme.SpektraLab.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/spektra_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_spektra_mark</item>
+    <style name="Base.Theme.Theia.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/theia_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_theia_mark</item>
         <item name="windowSplashScreenAnimationDuration">520</item>
-        <item name="postSplashScreenTheme">@style/Theme.SpektraLab</item>
-        <item name="android:statusBarColor">@color/spektra_background</item>
-        <item name="android:navigationBarColor">@color/spektra_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Theia</item>
+        <item name="android:statusBarColor">@color/theia_background</item>
+        <item name="android:navigationBarColor">@color/theia_background</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
-    <style name="Theme.SpektraLab.Starting" parent="Base.Theme.SpektraLab.Starting" />
+    <style name="Theme.Theia.Starting" parent="Base.Theme.Theia.Starting" />
 </resources>

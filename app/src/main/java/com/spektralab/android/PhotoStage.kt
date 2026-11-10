@@ -79,9 +79,9 @@ internal fun EditorPhotoStrip(
                 val current = index == vm.currentIndex
                 val thumbnail = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
                 LaunchedEffect(uri, thumbnail == null) { if (thumbnail == null) vm.loadThumbnail(uri) }
-                Box(Modifier.size(if (shortWindow) 56.dp else 64.dp, if (shortWindow) 48.dp else 60.dp).clip(SpektraShapes.compact)
+                Box(Modifier.size(if (shortWindow) 56.dp else 64.dp, if (shortWindow) 48.dp else 60.dp).clip(TheiaShapes.compact)
                     .background(if (current) colors.surfaceContainerHigh else colors.surface)
-                    .then(if (current) Modifier.border(2.dp, colors.primary, SpektraShapes.compact) else Modifier)
+                    .then(if (current) Modifier.border(2.dp, colors.primary, TheiaShapes.compact) else Modifier)
                     .selectable(selected = current, enabled = enabled, role = Role.RadioButton,
                         onClick = { if (!current) vm.selectPhoto(index) })
                     .semantics(mergeDescendants = true) {
@@ -93,7 +93,7 @@ internal fun EditorPhotoStrip(
                         Modifier.fillMaxSize().padding(if (current) 3.dp else 1.dp), contentScale = ContentScale.Fit)
                     else Icon(Icons.Rounded.Image, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
                     Text("${index + 1}", Modifier.align(Alignment.BottomStart).padding(3.dp)
-                        .background(colors.surface.copy(alpha = .9f), SpektraShapes.badge).padding(horizontal = 4.dp),
+                        .background(colors.surface.copy(alpha = .9f), TheiaShapes.badge).padding(horizontal = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (current) colors.primary else colors.onSurface)
                 }
@@ -181,18 +181,18 @@ fun PhotoStage(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Box(
-                            Modifier.fillMaxWidth().height(104.dp).clip(SpektraShapes.thumbnail)
+                            Modifier.fillMaxWidth().height(104.dp).clip(TheiaShapes.thumbnail)
                                 .background(colors.surfaceContainerHigh)
-                                .then(if (selected) Modifier.border(2.dp, colors.primary, SpektraShapes.thumbnail) else Modifier),
+                                .then(if (selected) Modifier.border(2.dp, colors.primary, TheiaShapes.thumbnail) else Modifier),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (thumb != null) Image(thumb.asImageBitmap(), null,
-                                Modifier.fillMaxSize().padding(if (selected) 3.dp else 0.dp).clip(SpektraShapes.thumbnailInset),
+                                Modifier.fillMaxSize().padding(if (selected) 3.dp else 0.dp).clip(TheiaShapes.thumbnailInset),
                                 contentScale = ContentScale.Crop)
                             else Icon(Icons.Rounded.Image, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
                             if (selected) Box(
                                 Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp)
-                                    .background(colors.primary, SpektraShapes.badge), contentAlignment = Alignment.Center,
+                                    .background(colors.primary, TheiaShapes.badge), contentAlignment = Alignment.Center,
                             ) {
                                 Icon(Icons.Rounded.Check, null, Modifier.size(14.dp), tint = colors.onPrimary)
                             }

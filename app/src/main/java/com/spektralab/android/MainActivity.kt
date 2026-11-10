@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity() {
         insetsController.isAppearanceLightNavigationBars = false
         vm.restoreUri(savedInstanceState?.getString("currentUri"))
         setContent {
-            SpektraTheme {
+            TheiaTheme {
                 var minimumSplashElapsed by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     delay(1200L)
@@ -175,7 +175,7 @@ class MainActivity : ComponentActivity() {
                     (!minimumSplashElapsed || (vm.engine == null && vm.busy))) {
                     LaunchSplash()
                 } else {
-                    SpektraLabRoot(vm)
+                    TheiaRoot(vm)
                 }
             }
         }
@@ -193,7 +193,7 @@ class MainActivity : ComponentActivity() {
  * lives here where its width, hierarchy, and line breaks are under our control.
  */
 @Composable
-private fun LaunchSplash() {
+internal fun LaunchSplash() {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -212,7 +212,7 @@ private fun LaunchSplash() {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_spektra_mark),
+                    painter = painterResource(R.drawable.ic_theia_mark),
                     contentDescription = null,
                     tint = Color.Unspecified,
                     modifier = Modifier.size(78.dp),
@@ -222,7 +222,7 @@ private fun LaunchSplash() {
             Spacer(Modifier.height(24.dp))
 
             Text(
-                text = "SpektraLab",
+                text = "Theia",
                 color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 26.sp,
                 lineHeight = 32.sp,
@@ -276,7 +276,7 @@ private enum class EditorTab(val label: String, val icon: ImageVector) {
 private enum class AppRoute { Home, Editor, FilmStocks, About, ViewingStand }
 
 @Composable
-private fun SpektraLabRoot(vm: EditorViewModel) {
+private fun TheiaRoot(vm: EditorViewModel) {
     var route by rememberSaveable { mutableStateOf(AppRoute.Home) }
     var addToHomeSession by rememberSaveable { mutableStateOf(false) }
     var libraryStartsWithPaper by rememberSaveable { mutableStateOf(false) }
@@ -470,7 +470,7 @@ private fun EditorScreen(
                 if (!vm.isCropping && selectedTab != EditorTab.Gallery) Column {
                     DarkroomTopBar(
                         title = when { selectedTab == EditorTab.Export -> "导出照片"; fullParameters -> "暗房调整"
-                            else -> vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "SpektraLab" },
+                            else -> vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: "Theia" },
                         parameterView = fullParameters, exportView = selectedTab == EditorTab.Export,
                         enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
                         canUndo = vm.canUndo, canRedo = vm.canRedo,
@@ -627,7 +627,7 @@ private fun EditorScreen(
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = SpektraShapes.sheet,
+                shape = TheiaShapes.sheet,
                 dragHandle = {
                     Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.Center) {
                         Box(Modifier.size(32.dp, 4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
@@ -656,7 +656,7 @@ private fun EditorScreen(
                     .zIndex(2f),
                 contentAlignment = Alignment.Center
             ) {
-                        Surface(shape = SpektraShapes.panel, color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                        Surface(shape = TheiaShapes.panel, color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     Column(Modifier.widthIn(min = 280.dp, max = 360.dp).padding(horizontal = 22.dp, vertical = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         val pct = vm.renderProgress
@@ -942,7 +942,7 @@ private fun PhotoCanvas(
                         .padding(end = (maxWidth - photoWidth) / 2 + 12.dp,
                             bottom = (maxHeight - photoHeight) / 2 + 12.dp)
                         .size(112.dp, 46.dp)
-                        .background(Color.Black.copy(alpha = .5f), SpektraShapes.badge)
+                        .background(Color.Black.copy(alpha = .5f), TheiaShapes.badge)
                         .padding(4.dp))
                 }
             }
@@ -960,7 +960,7 @@ private fun EditorPanel(
     showHeader: Boolean = true,
     onSaveRecipe: () -> Unit,
 ) {
-    Surface(modifier = modifier.fillMaxWidth().clip(SpektraShapes.panel), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
+    Surface(modifier = modifier.fillMaxWidth().clip(TheiaShapes.panel), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
         Column {
             if (showHeader) Row(
                 Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 16.dp),

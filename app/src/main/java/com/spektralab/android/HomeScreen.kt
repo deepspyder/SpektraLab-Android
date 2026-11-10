@@ -92,7 +92,7 @@ internal fun HomeScreen(
                 Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp).padding(start = 20.dp, end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(3.dp).height(22.dp).background(MaterialTheme.colorScheme.primary))
-                    Text("SpektraLab", Modifier.weight(1f).padding(start = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Theia", Modifier.weight(1f).padding(start = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Box {
                         IconButton(onClick = { moreExpanded = true }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Rounded.Tune, "更多操作", modifier = Modifier.size(20.dp))
@@ -204,7 +204,7 @@ private fun HomeLead(
                 bitmap = preview.asImageBitmap(),
                 contentDescription = "继续显影",
                 modifier = Modifier.fillMaxWidth().aspectRatio(1.4f)
-                    .clip(SpektraShapes.panel).clickable(role = Role.Button, onClick = onOpenEditor),
+                    .clip(TheiaShapes.panel).clickable(role = Role.Button, onClick = onOpenEditor),
                 contentScale = ContentScale.Crop,
             )
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -237,7 +237,7 @@ private fun HomeLead(
             Surface(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 224.dp, max = 300.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = SpektraShapes.control,
+                shape = TheiaShapes.control,
             ) {
                 Column(
                     Modifier.fillMaxSize().padding(24.dp),
@@ -268,7 +268,7 @@ private fun HomeLead(
             onClick = onImportPhotos,
             enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
             modifier = Modifier.weight(1.15f).heightIn(min = 52.dp),
-            shape = SpektraShapes.control,
+            shape = TheiaShapes.control,
         ) {
             Icon(
                 Icons.Rounded.AddPhotoAlternate,
@@ -282,7 +282,7 @@ private fun HomeLead(
             onClick=onOpenViewingStand,
             enabled=!vm.busy && !vm.isExporting && !vm.isBatchExporting,
             modifier=Modifier.weight(1f).heightIn(min=52.dp).semantics { contentDescription="打开观景台" },
-            shape=SpektraShapes.control,
+            shape=TheiaShapes.control,
             colors=ButtonDefaults.filledTonalButtonColors(containerColor=MaterialTheme.colorScheme.surfaceContainerHigh,
                 contentColor=MaterialTheme.colorScheme.onSurface),
             contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=12.dp),
@@ -323,9 +323,9 @@ private fun HomeSession(vm: EditorViewModel, onAddPhotos: () -> Unit, onOpenEdit
                 val thumbnail = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
                 if (thumbnail == null) LaunchedEffect(uri) { vm.loadThumbnail(uri) }
                 val identity = rememberSourcePhotoInfo(uri)
-                Box(Modifier.width(112.dp).height(84.dp).clip(SpektraShapes.thumbnail)
+                Box(Modifier.width(112.dp).height(84.dp).clip(TheiaShapes.thumbnail)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .then(if (current) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, SpektraShapes.thumbnail) else Modifier)
+                    .then(if (current) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, TheiaShapes.thumbnail) else Modifier)
                     .clickable(enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting, role = Role.Button) {
                         if (index != vm.currentIndex) vm.selectPhoto(index)
                         onOpenEditor()
@@ -338,13 +338,13 @@ private fun HomeSession(vm: EditorViewModel, onAddPhotos: () -> Unit, onOpenEdit
                     val number = (index + 1).toString().padStart(2, '0')
                     Text(if (current) "$number · 编辑中" else "$number · ${identity.format}",
                         Modifier.align(Alignment.BottomStart).padding(6.dp)
-                            .background(Color.Black.copy(alpha = .75f), SpektraShapes.badge)
+                            .background(Color.Black.copy(alpha = .75f), TheiaShapes.badge)
                             .padding(horizontal = 5.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall, maxLines = 1,
                         color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                     if (current) Text(identity.format,
                         Modifier.align(Alignment.TopEnd).padding(6.dp)
-                            .background(Color.Black.copy(alpha = .75f), SpektraShapes.badge)
+                            .background(Color.Black.copy(alpha = .75f), TheiaShapes.badge)
                             .padding(horizontal = 5.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
                 }

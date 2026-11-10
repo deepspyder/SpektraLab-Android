@@ -75,7 +75,7 @@ internal class SmartDevelopAudit(private val test: Instrumentation, private val 
     private fun snapshots(uris:List<Uri>)=uris.map{checkNotNull(EditStore.load(test.targetContext,it))}
     private fun outputs():Set<Uri> = buildSet {
         test.targetContext.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Images.Media._ID),"${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?",arrayOf("SpektraLab_%"),null)?.use {
+            arrayOf(MediaStore.Images.Media._ID),"${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?",arrayOf("Theia_%"),null)?.use {
             while(it.moveToNext())add(android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,it.getLong(0)))
         }
     }

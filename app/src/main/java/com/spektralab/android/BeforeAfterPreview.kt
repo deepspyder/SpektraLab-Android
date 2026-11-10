@@ -72,10 +72,10 @@ fun BeforeAfterPreview(before: Bitmap, after: Bitmap, modifier: Modifier = Modif
                 handle + Offset(dx.dp.toPx(), 6.dp.toPx()), 2.dp.toPx())
         }
         Text("Before · 原图", Modifier.align(Alignment.BottomStart).padding(10.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), SpektraShapes.badge).padding(horizontal = 8.dp, vertical = 4.dp),
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), TheiaShapes.badge).padding(horizontal = 8.dp, vertical = 4.dp),
             color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelMedium)
         Text("After · 冲印", Modifier.align(Alignment.BottomEnd).padding(10.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), SpektraShapes.badge).padding(horizontal = 8.dp, vertical = 4.dp),
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), TheiaShapes.badge).padding(horizontal = 8.dp, vertical = 4.dp),
             color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelMedium)
     }
 }

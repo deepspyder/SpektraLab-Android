@@ -70,7 +70,7 @@ private fun BatchExportPhoto(vm: EditorViewModel, uri: Uri, index: Int, enabled:
     LaunchedEffect(uri) { vm.loadThumbnail(uri) }
     // Reuse small previews; selecting an export never switches the editor's active photo.
     val preview = vm.developedPreviews[uri] ?: vm.thumbnails[uri]
-    val shape = SpektraShapes.thumbnail
+    val shape = TheiaShapes.thumbnail
     Column(Modifier.width(104.dp).clip(shape)
         .toggleable(value = selected, enabled = enabled, role = Role.Checkbox,
             onValueChange = { vm.setBatchExportPhotoSelected(uri, it) })
@@ -87,7 +87,7 @@ private fun BatchExportPhoto(vm: EditorViewModel, uri: Uri, index: Int, enabled:
             }
             Checkbox(checked = selected, onCheckedChange = null, enabled = enabled,
                 modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(24.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), SpektraShapes.badge))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), TheiaShapes.badge))
         }
         Text(name, Modifier.fillMaxWidth().padding(top = 5.dp, bottom = 4.dp),
             fontSize = 11.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,

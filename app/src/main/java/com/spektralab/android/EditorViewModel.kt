@@ -1753,7 +1753,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveBitmap(bitmap: Bitmap, suffix: String): String {
         val ext = if (exportFormat == "PNG") "png" else "jpg"
         val mime = if (exportFormat == "PNG") "image/png" else "image/jpeg"
-        val name = "SpektraLab_$suffix.$ext"
+        val name = "Theia_$suffix.$ext"
         val fmt = if (exportFormat == "PNG") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
 
         // 先压缩到临时文件（JPEG 需先落盘才能附加 EXIF）。
@@ -1779,7 +1779,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation,
                         ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
                 }
-                return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
+                return publishExport(tmp, "Theia_$suffix.tiff", "image/tiff")
             } finally { tmp.delete() }
         }
         // A full RGBA16 ShortArray plus full ARGB IntArray exceeded ART limits even for 12 MP.
@@ -1816,7 +1816,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 put(MediaStore.Images.Media.MIME_TYPE, mime)
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpektraLab")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Theia")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -1889,7 +1889,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation,
                     ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
             }
-            return publishExport(tmp, "SpektraLab_$suffix.tiff", "image/tiff")
+            return publishExport(tmp, "Theia_$suffix.tiff", "image/tiff")
         } finally {
             tmp.delete()
         }
@@ -1897,7 +1897,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // DI TIFF：无调色、无 ICC（设备 RGB 密度）。
     private fun saveDiTiff(result: NativeRenderResult, suffix: String): String {
-        val name = "SpektraLab_DI_$suffix.tiff"
+        val name = "Theia_DI_$suffix.tiff"
         val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
         try {
             tmp.outputStream().use { out ->

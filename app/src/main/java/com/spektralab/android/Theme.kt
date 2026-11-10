@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-object SpektraTokens {
+object TheiaTokens {
     // Keep the darkroom neutral so the UI never adds a green cast around a photo.
     val background = Color(0xFF151515)
     val surface = Color(0xFF1C1C1C)
@@ -28,19 +28,19 @@ object SpektraTokens {
     val line = Color(0xFF424242)
 }
 
-private val SpektraColors = darkColorScheme(
-    primary = SpektraTokens.amber, onPrimary = Color(0xFF261A0C),
-    primaryContainer = SpektraTokens.amberDeep, onPrimaryContainer = Color(0xFFFFE1B6),
+private val TheiaColors = darkColorScheme(
+    primary = TheiaTokens.amber, onPrimary = Color(0xFF261A0C),
+    primaryContainer = TheiaTokens.amberDeep, onPrimaryContainer = Color(0xFFFFE1B6),
     secondary = Color(0xFFC8BCA5), onSecondary = Color(0xFF28231C),
     secondaryContainer = Color(0xFF38352E), onSecondaryContainer = Color(0xFFE7DECF),
-    background = SpektraTokens.background, onBackground = SpektraTokens.paper,
-    surface = SpektraTokens.surface, onSurface = SpektraTokens.paper,
-    surfaceVariant = SpektraTokens.surfaceMid, onSurfaceVariant = SpektraTokens.paperMuted,
-    outline = Color(0xFF888888), outlineVariant = SpektraTokens.line,
-    surfaceTint = SpektraTokens.surface,
-    surfaceDim = SpektraTokens.background, surfaceBright = Color(0xFF3A3A3A),
-    surfaceContainer = SpektraTokens.surfaceMid, surfaceContainerHigh = SpektraTokens.surfaceHigh,
-    surfaceContainerLow = SpektraTokens.surfaceLow, surfaceContainerLowest = Color(0xFF101010),
+    background = TheiaTokens.background, onBackground = TheiaTokens.paper,
+    surface = TheiaTokens.surface, onSurface = TheiaTokens.paper,
+    surfaceVariant = TheiaTokens.surfaceMid, onSurfaceVariant = TheiaTokens.paperMuted,
+    outline = Color(0xFF888888), outlineVariant = TheiaTokens.line,
+    surfaceTint = TheiaTokens.surface,
+    surfaceDim = TheiaTokens.background, surfaceBright = Color(0xFF3A3A3A),
+    surfaceContainer = TheiaTokens.surfaceMid, surfaceContainerHigh = TheiaTokens.surfaceHigh,
+    surfaceContainerLow = TheiaTokens.surfaceLow, surfaceContainerLowest = Color(0xFF101010),
     surfaceContainerHighest = Color(0xFF363636),
     error = Color(0xFFFFB4AB), onError = Color(0xFF32110C),
 )
@@ -52,7 +52,7 @@ internal val SpektraFontFamily = FontFamily(
     Font(R.font.resource_han_rounded_bold, FontWeight.Bold),
 )
 
-private val SpektraTypography = Typography(
+private val TheiaTypography = Typography(
     titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
     titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
     bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.sp),
@@ -79,7 +79,7 @@ private val SpektraTypography = Typography(
 }
 
 /** Shared contours keep controls, photo frames and floating surfaces in one family. */
-internal object SpektraShapes {
+internal object TheiaShapes {
     val badge = RoundedCornerShape(6.dp)
     val compact = RoundedCornerShape(8.dp)
     val control = RoundedCornerShape(12.dp)
@@ -92,8 +92,8 @@ internal object SpektraShapes {
 }
 
 @Composable
-fun SpektraTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = SpektraColors,
-        shapes = SpektraShapes.material,
-        typography = SpektraTypography, content = content)
+fun TheiaTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = TheiaColors,
+        shapes = TheiaShapes.material,
+        typography = TheiaTypography, content = content)
 }

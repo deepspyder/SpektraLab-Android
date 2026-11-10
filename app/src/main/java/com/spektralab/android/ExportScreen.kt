@@ -87,7 +87,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                 } else vm.exportKeepLocation = keep
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                .clip(SpektraShapes.control)
+                .clip(TheiaShapes.control)
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .clickable(enabled = !processing, role = Role.Button, onClick = { advanced = !advanced })
                 .semantics { contentDescription = "高级设置"; stateDescription = if (advanced) "已展开" else "已收起" }
@@ -106,9 +106,9 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     else -> "jpg"
                 }
                 ExportInfoRow("位深", if (vm.exportFormat == "TIFF") "RGB · 16 bit" else "RGB · 8 bit")
-                ExportInfoRow("文件命名", "SpektraLab_时间戳.$extension")
+                ExportInfoRow("文件命名", "Theia_时间戳.$extension")
                 ExportInfoRow("保存位置", if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    "相册 / Pictures/SpektraLab"
+                    "相册 / Pictures/Theia"
                 } else {
                     "应用专属图片目录"
                 })
@@ -126,7 +126,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                         onClick = onSaveRecipe,
                         enabled = !processing,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                        shape = SpektraShapes.control,
+                        shape = TheiaShapes.control,
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.primary,
@@ -141,7 +141,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                         onClick = vm::syncSettingsToOtherPhotos,
                         enabled = vm.photos.size > 1 && vm.currentUri != null && !processing,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                        shape = SpektraShapes.control,
+                        shape = TheiaShapes.control,
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.primary,
@@ -183,7 +183,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
             if (exporting) ExportInlineProgress(vm)
             Button(onClick = { if (batch) vm.batchExport() else vm.export() },
                 enabled = !processing && (if (batch) selectedCount > 0 else vm.hasPhoto),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = SpektraShapes.control) {
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = TheiaShapes.control) {
                 Icon(Icons.Rounded.SaveAlt, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(if (batch) "导出所选照片 ($selectedCount 张)" else "导出当前照片", fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold)
@@ -214,7 +214,7 @@ private fun ExportPhotoIdentity(vm: EditorViewModel) {
     val fileName = vm.photoInfo.firstOrNull { it.first == "文件名" }?.second ?: vm.currentUri?.lastPathSegment ?: "当前照片"
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         (vm.rendered ?: vm.sourceBitmap)?.let {
-            Image(it.asImageBitmap(), "导出照片预览", Modifier.size(56.dp, 64.dp).clip(SpektraShapes.thumbnail), contentScale = ContentScale.Crop)
+            Image(it.asImageBitmap(), "导出照片预览", Modifier.size(56.dp, 64.dp).clip(TheiaShapes.thumbnail), contentScale = ContentScale.Crop)
         }
         Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(fileName.substringBeforeLast('.'), fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -260,7 +260,7 @@ private fun ExportQuickAction(
 ) {
     Column(
         modifier.heightIn(min = 80.dp)
-            .clip(SpektraShapes.control)
+            .clip(TheiaShapes.control)
             .clickable(enabled = enabled, role = Role.Button, onClick = action)
             .semantics(mergeDescendants = true) {
                 contentDescription = "$description · $subtitle"
@@ -304,7 +304,7 @@ private fun ExportInlineProgress(vm: EditorViewModel) {
         vm.renderStage.contains("高清预览") -> "高清预览中"
         else -> "导出中"
     }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = SpektraShapes.control) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = TheiaShapes.control) {
         Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

@@ -1,8 +1,8 @@
 <resources>
-    <style name="Theme.SpektraLab" parent="Base.Theme.SpektraLab">
+    <style name="Theme.Theia" parent="Base.Theme.Theia">
         <item name="android:windowLightNavigationBar">false</item>
     </style>
-    <style name="Theme.SpektraLab.Starting" parent="Base.Theme.SpektraLab.Starting">
+    <style name="Theme.Theia.Starting" parent="Base.Theme.Theia.Starting">
         <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

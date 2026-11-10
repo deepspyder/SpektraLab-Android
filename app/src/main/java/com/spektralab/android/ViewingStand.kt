@@ -279,7 +279,7 @@ private fun StandViewer(
                             try {
                                 val file = withContext(Dispatchers.IO) {
                                     val directory = File(context.cacheDir, "lighttable").apply { mkdirs() }
-                                    File(directory, "SpektraLab-viewing-" + System.currentTimeMillis() + ".png").also { output ->
+                                    File(directory, "Theia-viewing-" + System.currentTimeMillis() + ".png").also { output ->
                                         output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
                                     }
                                 }
@@ -332,7 +332,7 @@ private fun StandViewer(
                 }) {
                     val image = item.thumbnail
                     Box(Modifier.fillMaxWidth().height(44.dp).background(StandColors.film)
-                        .then(if (index == currentPage) Modifier.border(1.5.dp, StandColors.amber, SpektraShapes.compact) else Modifier)) {
+                        .then(if (index == currentPage) Modifier.border(1.5.dp, StandColors.amber, TheiaShapes.compact) else Modifier)) {
                         if (image != null && !image.isRecycled) Image(image.asImageBitmap(), null,
                             Modifier.fillMaxSize().graphicsLayer { alpha = if (index == currentPage) 1f else .55f }, contentScale = ContentScale.Crop)
                     }
@@ -450,7 +450,7 @@ internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: F
             }
         }
         Text("2.5×", color = StandColors.white, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomCenter)
-            .padding(bottom = 10.dp).background(StandColors.night.copy(alpha = .8f), SpektraShapes.badge).padding(horizontal = 6.dp, vertical = 2.dp))
+            .padding(bottom = 10.dp).background(StandColors.night.copy(alpha = .8f), TheiaShapes.badge).padding(horizontal = 6.dp, vertical = 2.dp))
     }
 }
 

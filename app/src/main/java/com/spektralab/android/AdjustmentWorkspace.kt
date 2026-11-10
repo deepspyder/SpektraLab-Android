@@ -65,14 +65,14 @@ internal fun AdjustmentWorkspace(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 preview(Modifier.fillMaxSize())
                 Row(Modifier.align(Alignment.TopEnd).padding(8.dp)
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = .85f), SpektraShapes.control)) {
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = .85f), TheiaShapes.control)) {
                     PreviewComparisonButton(comparing, canCompare, onCompare)
                     IconButton(onClick = onFullScreen, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Rounded.OpenInFull, "全屏预览", modifier = Modifier.size(20.dp))
                     }
                 }
             }
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp, shape = SpektraShapes.sheet,
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp, shape = TheiaShapes.sheet,
                 modifier = Modifier.fillMaxWidth()) {
                 Column {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f), thickness = .5.dp)

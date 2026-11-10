@@ -124,7 +124,7 @@ internal class EditingFeedbackAudit(private val test: Instrumentation, private v
     }
     private fun outputs(): List<Uri> = buildList {
         test.targetContext.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Images.Media._ID), "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?", arrayOf("SpektraLab_%"), null)?.use {
+            arrayOf(MediaStore.Images.Media._ID), "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?", arrayOf("Theia_%"), null)?.use {
             while(it.moveToNext()) add(android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,it.getLong(0)))
         }
     }
