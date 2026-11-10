@@ -14,7 +14,8 @@
 .externalNativeBuild
 .cxx
 local.properties
-.impeccable
+# Local design tooling and review artifacts; keep out of Git.
+/.impeccable/
 
 
 # Gradle wrapper jar（二进制，由 `gradle wrapper` 或 Android Studio 生成）
