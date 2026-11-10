@@ -11,6 +11,12 @@ import android.provider.MediaStore
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.app.LaunchSplash
+import com.spektralab.android.core.model.EditorParams
+import com.spektralab.android.data.local.EditStore
+import com.spektralab.android.feature.about.UPSTREAM_PROJECT_URL
+import com.spektralab.android.feature.editor.EditorViewModel
+import com.spektralab.android.ui.theme.TheiaTheme
 import java.io.File
 
 /** Checks the new display identity while exercising the unchanged install/data identity. */

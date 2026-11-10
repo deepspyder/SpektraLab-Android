@@ -109,14 +109,21 @@ gradle :app:assembleDebug
 
 ```text
 app/src/main/
-├── java/com/spektralab/android/  # Compose 界面、编辑状态与导出流程
-│   └── engine/                  # Kotlin 引擎与色彩处理封装
+├── java/com/spektralab/android/
+│   ├── app/                    # 启动界面与应用路由
+│   ├── feature/                # 首页、编辑、胶片库、观景台、导出等功能
+│   ├── core/                   # 编辑模型、裁剪几何、色彩与智能显影算法
+│   ├── data/                   # 本地编辑/配方存储与导出文件写入
+│   ├── ui/                     # 共享组件与主题
+│   └── engine/                 # Kotlin/JNI 引擎与色彩处理封装
 ├── cpp/                         # JNI 桥接、Vulkan 引擎接入和 RAW 解码
 └── res/                         # 应用主题、字体与界面资源
 
 docs/images/                     # 本 README 使用的实机截图
 tools/                           # 引擎资源同步与着色器编译脚本
 ```
+
+分包职责、兼容约束和代码检查方式见 [架构说明](docs/architecture.md)。运行 `python tools/check_package_boundaries.py` 可检查包路径与依赖方向。
 
 ## 来源与致谢
 

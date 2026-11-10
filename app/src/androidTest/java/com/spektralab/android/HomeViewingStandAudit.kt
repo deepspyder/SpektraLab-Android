@@ -12,6 +12,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.feature.editor.EditorViewModel
 import java.io.File
 import kotlin.math.abs
 

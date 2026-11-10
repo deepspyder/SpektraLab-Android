@@ -8,6 +8,10 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.core.model.EditorParams
+import com.spektralab.android.data.local.EditStore
+import com.spektralab.android.feature.editor.EditorViewModel
+import com.spektralab.android.feature.library.stockArtworkResource
 import java.io.File
 
 internal class StockLibraryAudit(private val test: Instrumentation, private val output: File) {

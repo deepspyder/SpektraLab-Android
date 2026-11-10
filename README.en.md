@@ -109,14 +109,21 @@ Generated engine resources and SPIR-V files live in `app/src/main/assets/engine/
 
 ```text
 app/src/main/
-├── java/com/spektralab/android/  # Compose UI, editing state and exports
-│   └── engine/                  # Kotlin engine and color wrappers
+├── java/com/spektralab/android/
+│   ├── app/                    # Startup content and application routes
+│   ├── feature/                # Home, editor, library, light table and export
+│   ├── core/                   # Models, crop geometry, color and development
+│   ├── data/                   # Local edit/recipe storage and export writers
+│   ├── ui/                     # Shared components and theme
+│   └── engine/                 # Kotlin/JNI engine and color wrappers
 ├── cpp/                         # JNI bridge, Vulkan engine and RAW decoding
 └── res/                         # Theme, fonts and UI resources
 
 docs/images/                     # Device screenshots used in this README
 tools/                           # Engine resource sync and shader compilation
 ```
+
+See [architecture notes](docs/architecture.md) for package responsibilities, compatibility contracts and code checks. Run `python tools/check_package_boundaries.py` to check package paths and dependency direction.
 
 ## Credits
 

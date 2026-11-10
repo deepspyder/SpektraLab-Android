@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.feature.editor.EditorViewModel
 import java.io.File
 
 /** Layout regression for the advanced-settings header beside the export quick actions. */

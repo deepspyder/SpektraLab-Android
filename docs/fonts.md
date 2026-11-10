@@ -12,7 +12,7 @@ for Chinese, Latin text, punctuation and numbers without a network request.
 - Bundled weights: Regular 400, Medium 500 and Bold 700, unmodified font files
   renamed on disk to comply with Android resource naming rules.
 
-`SpektraFontFamily` in `Theme.kt` applies the family to all 15 Material 3
+`SpektraFontFamily` in `ui/theme/Theme.kt` applies the family to all 15 Material 3
 typography roles. `res/font/theia_rounded.xml` applies the same weights to
 the Android window theme. Screens inherit the family rather than overriding it
 with system monospace or serif fonts. System font scaling remains enabled.

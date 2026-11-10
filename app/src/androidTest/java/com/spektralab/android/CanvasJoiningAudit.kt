@@ -15,6 +15,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.SaverScope
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import com.spektralab.android.feature.lighttable.FilmCanvasState
+import com.spektralab.android.feature.lighttable.ViewingPhoto
+import com.spektralab.android.feature.lighttable.ViewingStand
+import com.spektralab.android.feature.lighttable.WallFrame
+import com.spektralab.android.feature.lighttable.findWallJoin
+import com.spektralab.android.feature.lighttable.wallOverlaps
+import com.spektralab.android.ui.theme.TheiaTheme
 import java.io.File
 import kotlin.math.abs
 

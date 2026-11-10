@@ -3,25 +3,37 @@ package com.spektralab.android
 import android.app.Activity
 import android.app.Application
 import android.app.Instrumentation
-import android.view.accessibility.AccessibilityNodeInfo
-import android.view.MotionEvent
-import android.graphics.Rect
-import android.view.FrameMetrics
-import android.os.Handler
-import android.os.Looper
-import androidx.lifecycle.ViewModelProvider
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
+import android.view.FrameMetrics
+import android.view.MotionEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.core.color.DisplayP3Icc
+import com.spektralab.android.core.geometry.computeCenteredCrop
+import com.spektralab.android.core.geometry.computeCenteredCropByAspect
+import com.spektralab.android.core.geometry.overscanGateAspect
+import com.spektralab.android.core.model.EditorParams
+import com.spektralab.android.core.model.ExportRecipe
+import com.spektralab.android.data.export.TiffWriter
+import com.spektralab.android.data.local.EditStore
+import com.spektralab.android.data.local.RecipeStore
 import com.spektralab.android.engine.*
-import org.json.JSONArray
-import org.json.JSONObject
+import com.spektralab.android.feature.editor.EditorViewModel
+import com.spektralab.android.feature.editor.ui.editorOptionLabel
+import com.spektralab.android.ui.components.captureClock
+import com.spektralab.android.ui.components.captureReadouts
+import com.spektralab.android.ui.components.sourcePhotoInfo
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -29,6 +41,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** Explicit opt-in device audit. Uses the packaged engine and real Android decoders/writers. */
 class FunctionalAuditInstrumentation : Instrumentation() {
@@ -1564,6 +1578,19 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         fun click(label: String) {
             sendStatus(0, Bundle().apply { putString("stream", "UI: $label\n") })
+            // Stock choices are virtualized; scroll the library before asserting a missing item.
+            if (find(nodes(), label) == null && (vm.films + vm.papers).any { it.name == label }) {
+                val listLabel = if (find(nodes(), "相纸列表") != null) "相纸列表" else "胶片列表"
+                for (direction in listOf(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    for (step in 0 until 12) {
+                        if (find(nodes(), label) != null) break
+                        val list = find(nodes(), listLabel) ?: break
+                        if (!list.performAction(direction)) break
+                        waitForIdleSync(); Thread.sleep(200)
+                    }
+                    if (find(nodes(), label) != null) break
+                }
+            }
             try {
                 await(10000) { find(nodes(), label) != null }
             } catch (error: Throwable) {

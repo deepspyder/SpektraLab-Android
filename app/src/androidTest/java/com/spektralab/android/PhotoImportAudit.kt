@@ -12,16 +12,19 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
+import com.spektralab.android.core.model.EditorParams
+import com.spektralab.android.data.local.EditStore
+import com.spektralab.android.feature.editor.EditorViewModel
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import kotlin.math.abs
 
 /** Regression audit using contrasting real files and the application's registered picker callbacks. */
 internal class PhotoImportAudit(private val test: Instrumentation, private val output: File) {
@@ -144,7 +147,7 @@ internal class PhotoImportAudit(private val test: Instrumentation, private val o
             capture("home_added_blue")
         }
         step("editor_add_opens_selection_and_closes_tray") {
-            click("2 / 2"); click("添加照片"); deliverPickerSelection(listOf(green, red))
+            click("管理照片工作台"); click("添加照片"); deliverPickerSelection(listOf(green, red))
             assertSource(green, 320, 240, 1)
             check(vm.photos == listOf(red, blue, green) && vm.currentIndex == 2)
             check(find(nodes(), "关闭展示台") == null)
