@@ -2,7 +2,7 @@
 
 SpektraLab Android is a film and darkroom simulator for Android. It combines a Kotlin + Jetpack Compose editor with the SpektraLab C++20/Vulkan rendering engine through JNI.
 
-Current release: **v0.1.3**. See [release notes](docs/releases/v0.1.3.md) and the [changelog](CHANGELOG.md).
+Current release: **v0.1.3**. See the [release notes](docs/releases/v0.1.3.md).
 
 ![SpektraLab editor](docs/images/editor-portrait.png)
 
@@ -92,7 +92,7 @@ Film and paper product profiles: see the notices and license files shipped under
 
 SpektraLab Android 是一款面向 Android 的胶片与暗房物理模拟器。应用使用 Kotlin + Jetpack Compose 构建编辑界面，通过 JNI 调用 C++20/Vulkan 渲染引擎。
 
-当前版本：**v0.1.3**。查看[版本说明](docs/releases/v0.1.3.md)和[更新日志](CHANGELOG.md)。
+当前版本：**v0.1.3**。查看[版本说明](docs/releases/v0.1.3.md)。
 
 ![SpektraLab 编辑器](docs/images/editor-portrait.png)
 

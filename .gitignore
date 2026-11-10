@@ -23,9 +23,11 @@ gradle/wrapper/gradle-wrapper.jar
 gradlew
 gradlew.bat
 
+DESIGN.md
 BUILDING.md
 UI布局规范.md
 功能分析-Android移植.md
+CHANGELOG.md
 
 # 引擎资源/SPIR-V 由 tools/sync_resources.py / compile_shaders.py 生成，不提交
 app/src/main/assets/engine/resources/
