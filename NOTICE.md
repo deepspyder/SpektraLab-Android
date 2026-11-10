@@ -6,7 +6,7 @@ Theia, formerly SpektraLab Android, is distributed under **GPL-3.0-or-later**.
 See [LICENSE](LICENSE) for the GNU General Public License version 3 text.
 Existing upstream copyright and license notices remain in effect.
 
-Repository: https://github.com/deepspyder/SpektraLab-Android
+Repository: https://github.com/deepspyder/theia
 
 ## spektrafilm
 

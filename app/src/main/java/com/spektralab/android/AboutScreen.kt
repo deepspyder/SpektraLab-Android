@@ -52,7 +52,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
-internal const val PROJECT_REPOSITORY_URL = "https://github.com/deepspyder/SpektraLab-Android"
+internal const val PROJECT_REPOSITORY_URL = "https://github.com/deepspyder/theia"
 internal const val UPSTREAM_PROJECT_URL = "https://github.com/andreavolpato/spektrafilm"
 
 @OptIn(ExperimentalMaterial3Api::class)

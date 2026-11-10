@@ -8,7 +8,7 @@
 
 **简体中文** · [English](README.en.md)
 
-[下载应用](https://github.com/deepspyder/SpektraLab-Android/releases) · [功能](#功能) · [从源码构建](#从源码构建) · [开源协议](#开源协议)
+[下载应用](https://github.com/deepspyder/theia/releases) · [功能](#功能) · [从源码构建](#从源码构建) · [开源协议](#开源协议)
 
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
@@ -51,7 +51,7 @@ Theia 是一款免费开源的 Android 胶片与暗房模拟应用，基于 **An
 
 ## 开始使用
 
-1. 从 [GitHub Releases](https://github.com/deepspyder/SpektraLab-Android/releases) 下载 APK，安装到支持 Vulkan 的 64 位 Android 设备上。
+1. 从 [GitHub Releases](https://github.com/deepspyder/theia/releases) 下载 APK，安装到支持 Vulkan 的 64 位 Android 设备上。
 2. 导入照片，选择智能显影风格，或手动搭配胶片与相纸。
 3. 在暗房调整画面，通过观景台查看多张照片，再按需要导出。
 
@@ -88,6 +88,8 @@ workspace/
 ```
 
 保留上述实际目录名。若更换引擎位置，需要同步调整 CMake 的 `SPEKTRA_ENGINE_DIR`、资源同步参数和着色器脚本的输入目录；LibRaw 路径由 `SPEKTRALAB_LIBRAW_SOURCE` 控制。准备 LibRaw 可使用共享引擎中的 `setup-libraw.ps1`。
+
+GitHub 仓库现名为 `theia`。按上述本地布局克隆时，可执行 `git clone https://github.com/deepspyder/theia.git SpektraLab-Android`。
 
 ### 同步资源并构建
 

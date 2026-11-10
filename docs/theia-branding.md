@@ -19,7 +19,7 @@ Theia 基于 [spektrafilm](https://github.com/andreavolpato/spektrafilm) 开发�
 
 既有 `Pictures/SpektraLab/` 文件不移动或改名，仍可通过照片选择器导入。改名前的发布标签、安装包名称、校验记录及截图属于历史资料，保留其真实名称；当前界面以 Theia 为准。
 
-现有 GitHub 仓库地址与本地 `SpektraLab-Android`、共享引擎目录 `SpektraLab-Windows/engine` 仍为有效技术路径，不凭空替换成尚不存在的目录或链接。原生库 `libspektralab.so` 及共享引擎的 LUT、配置、第三方许可名称保留，以维持加载兼容性和作者署名。
+GitHub 仓库已更名为 [deepspyder/theia](https://github.com/deepspyder/theia)，README 下载链接与应用关于页面使用新地址。本地 `SpektraLab-Android`、共享引擎目录 `SpektraLab-Windows/engine` 保留现有布局。原生库 `libspektralab.so` 及共享引擎的 LUT、配置、第三方许可名称保留，以维持加载兼容性和作者署名。
 
 ## 验证
 
@@ -31,4 +31,4 @@ Theia 基于 [spektrafilm](https://github.com/andreavolpato/spektrafilm) 开发�
 
 The application is now **Theia**, formerly SpektraLab Android. Launcher, splash, Home, About, project display identity and newly exported files use the new name. Theia is built on **spektrafilm**, with upstream attribution retained.
 
-The existing application ID, signing identity, private edit/preferences storage and JNI ABI remain stable for in-place upgrades. Previously exported files and historical releases keep their original names. The existing repository address and shared engine checkout paths remain valid technical identifiers.
+The existing application ID, signing identity, private edit/preferences storage and JNI ABI remain stable for in-place upgrades. Previously exported files and historical releases keep their original names. The GitHub repository is now [deepspyder/theia](https://github.com/deepspyder/theia); README download links and the in-app About page use the new address. Local checkout and shared engine paths retain their existing layout.

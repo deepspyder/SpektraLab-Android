@@ -8,7 +8,7 @@ A digital darkroom in your pocket. Rediscover the light in your photographs thro
 
 [简体中文](README.md) · **English**
 
-[Download](https://github.com/deepspyder/SpektraLab-Android/releases) · [Features](#features) · [Build from source](#build-from-source) · [License](#license)
+[Download](https://github.com/deepspyder/theia/releases) · [Features](#features) · [Build from source](#build-from-source) · [License](#license)
 
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)
@@ -51,7 +51,7 @@ It brings together RAW editing, per-photo Smart Develop, a multi-photo workspace
 
 ## Getting started
 
-1. Download an APK from [GitHub Releases](https://github.com/deepspyder/SpektraLab-Android/releases) and install it on a 64-bit Android device with Vulkan support.
+1. Download an APK from [GitHub Releases](https://github.com/deepspyder/theia/releases) and install it on a 64-bit Android device with Vulkan support.
 2. Import photographs and choose a Smart Develop style, or select film and paper manually.
 3. Refine the image in the darkroom, explore your photos on the light table, and export the results.
 
@@ -88,6 +88,8 @@ workspace/
 ```
 
 Keep these actual directory names. To relocate the engine, update CMake's `SPEKTRA_ENGINE_DIR`, the resource-sync argument and the shader script's input directory together. `SPEKTRALAB_LIBRAW_SOURCE` controls the LibRaw path. The shared engine includes `setup-libraw.ps1` to prepare LibRaw.
+
+The GitHub repository is now named `theia`. To match the local layout above, clone it with `git clone https://github.com/deepspyder/theia.git SpektraLab-Android`.
 
 ### Sync resources and build
 
