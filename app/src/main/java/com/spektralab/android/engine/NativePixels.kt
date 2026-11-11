@@ -43,10 +43,10 @@ class NativeRawImage internal constructor(
 /** Owns one native RGBA16 result. Only a small strip is copied into the managed heap. */
 class NativeRenderResult internal constructor(
     private var handle: Long,
-    val width: Int,
-    val height: Int,
-) : Closeable {
-    fun readRows(y: Int, rows: Int, destination: ShortArray) {
+    override val width: Int,
+    override val height: Int,
+) : Closeable, Rgba16Source {
+    override fun readRows(y: Int, rows: Int, destination: ShortArray) {
         check(handle != 0L)
         require(y >= 0 && rows > 0 && y.toLong() + rows <= height && destination.size.toLong() >= width.toLong() * rows * 4)
         nativeReadRows(handle, y, rows, destination)

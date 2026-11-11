@@ -19,6 +19,8 @@ import androidx.lifecycle.viewModelScope
 import com.spektralab.android.core.color.DisplayP3Icc
 import com.spektralab.android.core.develop.SmartDevelop
 import com.spektralab.android.core.develop.SmartDevelopStyle
+import com.spektralab.android.core.model.EditSnapshot
+import com.spektralab.android.core.model.ExportOptions
 import com.spektralab.android.core.model.EditorParams
 import com.spektralab.android.core.model.ExportRecipe
 import com.spektralab.android.data.export.ExportMetadata
@@ -29,6 +31,7 @@ import com.spektralab.android.data.local.EditStore
 import com.spektralab.android.data.local.RecipeStore
 import com.spektralab.android.engine.CameraWhiteBalance
 import com.spektralab.android.engine.ColorPipeline
+import com.spektralab.android.engine.EngineTaskQueue
 import com.spektralab.android.engine.EngineClient
 import com.spektralab.android.engine.Grade
 import com.spektralab.android.engine.Histogram
@@ -81,7 +84,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val inputColorSpace: String,
         val photo: Long,
         val revision: Long,
-        val editParams: EditorParams,
+        val edit: EditSnapshot,
     )
 
     private val app get() = getApplication<Application>()
@@ -238,8 +241,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var pendingFrame: PendingFrame? = null
     private var cropEditStart: FloatArray? = null
     // One engine/session owns mutable native state. Decode/open/render/export transactions must not overlap.
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val engineDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val engineTasks = EngineTaskQueue()
+    private val engineDispatcher = engineTasks.dispatcher
 
     init {
         viewModelScope.launch {
@@ -604,12 +607,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
     fun scheduleGrade() {
-        if (!hasPhoto) return
+        if (!hasPhoto || isExporting || isBatchExporting) return
         recordHistory()
         dirty = true
         currentUri?.let { EditStore.save(app, it, params) }
         val result = lastResult ?: return
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
         val colorSpace = resultColorSpace
         val generation = ++gradeGeneration
         val photo = photoGeneration
@@ -634,12 +637,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         currentUri?.let { EditStore.save(app, it, params) }
         val uri = currentUri ?: return
         val photo = photoGeneration
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
         cameraWbJob?.cancel()
         cameraWbJob = viewModelScope.launch {
             delay(300)
-            withContext(engineDispatcher) {
-                if (photo != photoGeneration) return@withContext
+            engineTasks.onEngine {
+                if (photo != photoGeneration) return@onEngine
                 try {
                     decodeRawAndOpen(uri, photo, editParams)
                     append("RAW 白平衡: ${if (params.cameraWbCustom) "${params.cameraWbKelvin.toInt()}K / tint ${params.cameraWbTint.toInt()}" else "as-shot"}")
@@ -670,11 +673,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val uri = currentUri ?: return
         if (!currentIsRaw || !hasPhoto) return
         val photo = photoGeneration
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
         cameraWbJob?.cancel()
         cameraWbJob = viewModelScope.launch {
-            withContext(engineDispatcher) {
-                if (photo != photoGeneration) return@withContext
+            engineTasks.onEngine {
+                if (photo != photoGeneration) return@onEngine
                 try {
                     decodeRawAndOpen(uri, photo, editParams)
                 } catch (ex: CancellationException) {
@@ -724,8 +727,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Native export input avoids full-frame Java arrays without reducing the requested resolution.
-    private fun openExportSource(e: EngineClient, uri: Uri, editParams: EditorParams, size: Int, colorSpace: String) {
-        sourceExif = readExif(uri)
+    private fun openExportSource(e: EngineClient, uri: Uri, editParams: EditorParams, size: Int,
+                                 colorSpace: String, options: ExportOptions) {
+        sourceExif = readExif(uri, options.keepLocation)
         // The interactive preview remains on screen, but its GPU session need not overlap source decoding.
         e.closeSession()
         if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
@@ -752,7 +756,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 LensProfileStore.load(app)
                 val profile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
-                if (lensCorrectionActive && profile != null) measureExport("raw_lens_correction") { raw.correctLens(profile) }
+                if (options.correctLens && profile != null) measureExport("raw_lens_correction") { raw.correctLens(profile) }
                 raw.resize(size)
                 checkExportCancellation()
                 measureExport("engine_input") {
@@ -785,6 +789,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 在当前会话上 set_params + reprint，带 120ms 去抖（最新状态生效）。
     fun scheduleRender() {
+        if (isExporting || isBatchExporting) return
         recordHistory()
         val e = engine ?: return
         if (!hasPhoto) return
@@ -792,19 +797,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val generation = ++renderGeneration
         val photo = photoGeneration
         val uri = currentUri
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
         val delta = editParams.deltaJson(previewW, previewH)
         renderJob?.cancel()
         e.cancel()
         renderJob = viewModelScope.launch {
             delay(120)
-            withContext(engineDispatcher) {
-                if (photo != photoGeneration || generation != renderGeneration) return@withContext
+            engineTasks.onEngine {
+                if (photo != photoGeneration || generation != renderGeneration) return@onEngine
                 try {
                     e.setParams(delta)
                     uri?.let { EditStore.save(app, it, editParams) }
                     val r = e.render("live")
-                    if (photo != photoGeneration || generation != renderGeneration) return@withContext
+                    if (photo != photoGeneration || generation != renderGeneration) return@onEngine
                     withContext(Dispatchers.Main.immediate) { stockPreviewJob?.cancel() }
                     updateResult(r, photo = photo, revision = generation, editParams = editParams)
                     append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
@@ -840,11 +845,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         scheduleRender()
         val photo = photoGeneration
         val revision = renderGeneration
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
         stockPreviewJob?.cancel()
         stockPreviewJob = viewModelScope.launch {
-            withContext(engineDispatcher) {
-                if (photo != photoGeneration || revision != renderGeneration) return@withContext
+            engineTasks.onEngine {
+                if (photo != photoGeneration || revision != renderGeneration) return@onEngine
                 try {
                     val r = e.previewStockLut(stockId, "live")
                     updateResult(r, photo = photo, revision = revision, editParams = editParams)
@@ -865,7 +870,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         busy = true
         viewModelScope.launch {
             val reply: String = try {
-                withContext(engineDispatcher) { e.solve("both") }
+                engineTasks.onEngine { e.solve("both") }
             } catch (ex: SpkException) {
                 fail("SpkException: ${ex.message}")
                 busy = false
@@ -896,7 +901,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         busy = true
         viewModelScope.launch {
             val reply: String = try {
-                withContext(engineDispatcher) { e.sceneLatitude(null) }
+                engineTasks.onEngine { e.sceneLatitude(null) }
             } catch (ex: SpkException) {
                 fail("SpkException: ${ex.message}")
                 busy = false
@@ -952,7 +957,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         previewInputColorSpace = inputColorSpace
         isCropping = false
         dirty = false
-        val frame = PendingFrame(linear, w, h, inputColorSpace, photoGeneration, ++renderGeneration, params.copy())
+        val frame = PendingFrame(linear, w, h, inputColorSpace, photoGeneration, ++renderGeneration, EditSnapshot.capture(params))
         val currentEngine = engine
         if (currentEngine == null) {
             pendingFrame = frame
@@ -964,22 +969,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun renderFrame(targetEngine: EngineClient, frame: PendingFrame) {
         if (frame.photo != photoGeneration || frame.revision != renderGeneration) return
+        val editParams = frame.edit.toParams()
         busy = true
         frameRenderJob?.cancel()
         frameRenderJob = viewModelScope.launch {
             try {
-                withContext(engineDispatcher) {
-                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@withContext
+                engineTasks.onEngine {
+                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@onEngine
                     targetEngine.open(
                         frame.pixels,
                         frame.width,
                         frame.height,
                         3,
-                        frame.editParams.openJson(frame.width, frame.height, inputColorSpace = frame.inputColorSpace),
+                        editParams.openJson(frame.width, frame.height, inputColorSpace = frame.inputColorSpace),
                     )
-                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@withContext
+                    if (frame.photo != photoGeneration || frame.revision != renderGeneration) return@onEngine
                     val r = targetEngine.render("live")
-                    updateResult(r, photo = frame.photo, revision = frame.revision, editParams = frame.editParams)
+                    updateResult(r, photo = frame.photo, revision = frame.revision, editParams = editParams)
                     withContext(Dispatchers.Main.immediate) {
                         if (frame.photo == photoGeneration && frame.revision == renderGeneration) {
                             hasPhoto = true
@@ -1037,90 +1043,93 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         exportCancelRequested = false
         isExportCommitCompleted = false
         val uri = currentUri
-        val exportParams = params.copy()
-        val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
-        val outputSize = exportRes
+        val exportParams = EditSnapshot.capture(params).toParams()
+        val options = captureExportOptions()
+        val outputCs = options.outputColorSpace
+        val outputSize = options.resolution
         renderProgress = 0f
         renderStage = "准备导出"
         viewModelScope.launch {
-            var poller: Job? = null
-            try {
-                renderStage = "解码原图"
-                withContext(engineDispatcher) {
-                    if (uri != null) {
-                        openExportSource(e, uri, exportParams, outputSize, outputCs)
-                    }
-                }
-                checkExportCancellation()
-                renderProgress = 8f
-                renderStage = "胶片冲印与相纸扫描"
-                val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
-                poller = launch(Dispatchers.IO) {
-                    while (isActive) {
-                        val progress = runCatching { e.progressSnapshot() }.getOrNull()
-                        if (exportCancelRequested) e.cancel()
-                        if (progress != null && progress.progressId != previousProgressId) withContext(Dispatchers.Main.immediate) {
-                            renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
-                            if (progress.done && !exportCancelRequested) renderStage = "准备保存"
+            engineTasks.run("export") {
+                var poller: Job? = null
+                try {
+                    renderStage = "解码原图"
+                    withContext(engineDispatcher) {
+                        if (uri != null) {
+                            openExportSource(e, uri, exportParams, outputSize, outputCs, options)
                         }
-                        delay(120)
                     }
-                }
-                var dimensions = ""
-                val path = withContext(engineDispatcher) {
-                    measureExport("render") { e.renderForExport() }.use { result ->
-                        poller?.cancelAndJoin()
-                        poller = null
-                        checkExportCancellation()
-                        android.util.Log.i("SpkExport", "render complete ${result.width}x${result.height}; ${e.memoryReport()}")
-                        e.closeSession()
-                        dimensions = "${result.width}×${result.height}"
-                        withContext(Dispatchers.Main.immediate) {
-                            renderProgress = 96f
-                            renderStage = "编码并保存文件"
+                    checkExportCancellation()
+                    renderProgress = 8f
+                    renderStage = "胶片冲印与相纸扫描"
+                    val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
+                    poller = launch(Dispatchers.IO) {
+                        while (isActive) {
+                            val progress = runCatching { e.progressSnapshot() }.getOrNull()
+                            if (exportCancelRequested) e.cancel()
+                            if (progress != null && progress.progressId != previousProgressId) withContext(Dispatchers.Main.immediate) {
+                                renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
+                                if (progress.done && !exportCancelRequested) renderStage = "准备保存"
+                            }
+                            delay(120)
                         }
-                        withContext(Dispatchers.IO) { saveNativeResult(result, System.currentTimeMillis().toString(), exportParams) }
                     }
-                }
-                checkExportCancellation()
-                append("导出成功: $dimensions → $path")
-                toast("已导出到相册")
-                renderProgress = 100f
-                renderStage = "导出完成"
-                delay(250)
-            } catch (_: ExportCancelled) {
-                append("导出已取消")
-            } catch (_: OutOfMemoryError) {
-                fail("导出内存不足，请关闭其他应用或选择较小导出尺寸")
-            } catch (ex: SpkException) {
-                if (ex.message?.contains("cancel", ignoreCase = true) == true) append("导出已取消")
-                else {
-                    android.util.Log.e("SpkExport", "render/export failed; ${runCatching { e.memoryReport() }.getOrDefault("memory unavailable")}", ex)
-                    fail("SpkException: ${ex.message}")
-                }
-            } catch (ex: Exception) {
-                fail("${ex::class.simpleName}: ${ex.message}")
-            } finally {
-                poller?.cancelAndJoin()
-                val pl = previewLinear
-                if (pl != null) {
-                    try {
-                        withContext(engineDispatcher) {
-                            sourceExif = uri?.let(::readExif)
-                            e.open(pl, previewW, previewH, 3, params.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
-                            // Keep the approved frame; rebuild the negative lazily on the next edit.
+                    var dimensions = ""
+                    val path = withContext(engineDispatcher) {
+                        measureExport("render") { e.renderForExport() }.use { result ->
+                            poller?.cancelAndJoin()
+                            poller = null
+                            checkExportCancellation()
+                            android.util.Log.i("SpkExport", "render complete ${result.width}x${result.height}; ${e.memoryReport()}")
+                            e.closeSession()
+                            dimensions = "${result.width}×${result.height}"
+                            withContext(Dispatchers.Main.immediate) {
+                                renderProgress = 96f
+                                renderStage = "编码并保存文件"
+                            }
+                            withContext(Dispatchers.IO) { saveNativeResult(result, System.currentTimeMillis().toString(), exportParams, options) }
                         }
-                    } catch (_: OutOfMemoryError) {
-                        append("恢复编辑会话时内存不足，请重新打开当前照片")
-                    } catch (ex: Exception) {
-                        append("恢复预览失败: ${ex.message}")
                     }
+                    checkExportCancellation()
+                    append("导出成功: $dimensions → $path")
+                    toast("已导出到相册")
+                    renderProgress = 100f
+                    renderStage = "导出完成"
+                    delay(250)
+                } catch (_: ExportCancelled) {
+                    append("导出已取消")
+                } catch (_: OutOfMemoryError) {
+                    fail("导出内存不足，请关闭其他应用或选择较小导出尺寸")
+                } catch (ex: SpkException) {
+                    if (ex.message?.contains("cancel", ignoreCase = true) == true) append("导出已取消")
+                    else {
+                        android.util.Log.e("SpkExport", "render/export failed; ${runCatching { e.memoryReport() }.getOrDefault("memory unavailable")}", ex)
+                        fail("SpkException: ${ex.message}")
+                    }
+                } catch (ex: Exception) {
+                    fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    poller?.cancelAndJoin()
+                    val pl = previewLinear
+                    if (pl != null) {
+                        try {
+                            withContext(engineDispatcher) {
+                                sourceExif = uri?.let(::readExif)
+                                e.open(pl, previewW, previewH, 3, params.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
+                                // Keep the approved frame; rebuild the negative lazily on the next edit.
+                            }
+                        } catch (_: OutOfMemoryError) {
+                            append("恢复编辑会话时内存不足，请重新打开当前照片")
+                        } catch (ex: Exception) {
+                            append("恢复预览失败: ${ex.message}")
+                        }
+                    }
+                    renderProgress = null
+                    renderStage = ""
+                    exportCancelRequested = false
+                    isExportCommitCompleted = false
+                    isExporting = false
                 }
-                renderProgress = null
-                renderStage = ""
-                exportCancelRequested = false
-                isExportCommitCompleted = false
-                isExporting = false
             }
         }
     }
@@ -1130,10 +1139,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (engineCreateJob?.isActive == true) return
         busy = true
         engineCreateJob = viewModelScope.launch {
-            withContext(engineDispatcher) {
+            engineTasks.onEngine {
                 try {
                     val created = EngineClient.create(app)
-                    if (cleared) { created.close(); return@withContext }
+                    if (cleared) { created.close(); return@onEngine }
                     withContext(Dispatchers.Main.immediate) {
                         engine = created
                         append("引擎创建成功 · ${EngineClient.buildInfo()}")
@@ -1215,8 +1224,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val autoDevelop=smartAutoEnabled
         photoLoadJob = viewModelScope.launch {
             try {
-                withContext(engineDispatcher) {
-                    if (photo != photoGeneration) return@withContext
+                engineTasks.onEngine {
+                    if (photo != photoGeneration) return@onEngine
                     val saved = if(autoDevelop) ensureSmartParams(uri, importStyle, true) else EditStore.load(app, uri)
                     val name = queryDisplayName(uri)
                     val exif = readExif(uri)
@@ -1250,14 +1259,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         sourceExif = exif
                         currentIsRaw = isRaw
                     }
-                    if (photo != photoGeneration) return@withContext
+                    if (photo != photoGeneration) return@onEngine
                     if (isRaw) {
                         decodeRawAndOpen(uri, photo)
                     } else {
                         val bmp = decodeSampled(uri)
-                        if (photo != photoGeneration) { bmp.recycle(); return@withContext }
+                        if (photo != photoGeneration) { bmp.recycle(); return@onEngine }
                         val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
-                        if (photo != photoGeneration) { bmp.recycle(); return@withContext }
+                        if (photo != photoGeneration) { bmp.recycle(); return@onEngine }
                         withContext(Dispatchers.Main.immediate) publish@{
                             if (photo != photoGeneration) { bmp.recycle(); return@publish }
                             sourceBitmap = bmp
@@ -1443,7 +1452,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             currentIndex = 0
             clearPhotoState()
             busy = false
-            viewModelScope.launch { withContext(engineDispatcher) { engine?.closeSession() } }
+            viewModelScope.launch { engineTasks.onEngine { engine?.closeSession() } }
         }
     }
 
@@ -1507,9 +1516,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (busy || isBatchExporting || isExporting) return
         val batchPhotos = selectedBatchExportPhotos
         if (batchPhotos.isEmpty()) return
-        val batchFormat = exportFormat
-        val batchResolution = exportRes
-        val batchColorSpace = exportColorSpace
+        val options = captureExportOptions()
         val batchSmartStyle = smartStyle
         val batchAutoDevelop = smartAutoEnabled
         isBatchExporting = true
@@ -1519,30 +1526,37 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         renderStage = "准备批量导出"
         saveCurrentSidecar()
         val activeUri = currentUri
-        val activeParams = params.copy()
+        val activeParams = EditSnapshot.capture(params).toParams()
+        val batchEdits = batchPhotos.associateWith { uri ->
+            (if (uri == activeUri) activeParams else EditStore.load(app, uri))?.let(EditSnapshot::capture)
+        }
         viewModelScope.launch {
-            withContext(engineDispatcher) {
+            engineTasks.onEngine("batch-export") {
                 val batchTs = System.currentTimeMillis()
                 var done = 0
                 try {
-                    val outputCs = if (batchFormat == "TIFF") batchColorSpace else "sRGB"
+                    val outputCs = options.outputColorSpace
+                    // Resolve missing smart edits before any output; later sidecar writes cannot change this batch.
+                    val edits = batchPhotos.associateWith { uri ->
+                        batchEdits[uri] ?: EditSnapshot.capture(
+                            ensureSmartParams(uri, batchSmartStyle, batchAutoDevelop) ?: EditorParams()
+                        )
+                    }
                     for ((i, uri) in batchPhotos.withIndex()) {
                         checkExportCancellation()
                         isExportCommitCompleted = false
                         withContext(Dispatchers.Main.immediate) {
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
-                        val photoParams = if (uri == activeUri) activeParams.copy() else EditStore.load(app, uri)
-                            ?: ensureSmartParams(uri, batchSmartStyle, batchAutoDevelop) ?: EditorParams()
-                        sourceExif = readExif(uri)
-                        openExportSource(e, uri, photoParams, batchResolution, outputCs)
+                        val photoParams = edits.getValue(uri).toParams()
+                        openExportSource(e, uri, photoParams, options.resolution, outputCs, options)
                         checkExportCancellation()
                         var dimensions = ""
                         val path = measureExport("render") { e.renderForExport() }.use { r ->
                             checkExportCancellation()
                             e.closeSession()
                             dimensions = "${r.width}×${r.height}"
-                            saveNativeResult(r, "$batchTs-$i", photoParams)
+                            saveNativeResult(r, "$batchTs-$i", photoParams, options)
                         }
                         done++
                         withContext(Dispatchers.Main.immediate) {
@@ -1594,13 +1608,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         label: String,
         maxLongEdge: Int,
         outputColorSpace: String,
-        action: suspend (EngineClient, EditorParams, Long, Long) -> Unit,
+        action: suspend (EngineClient, EditorParams, Long, Long, ExportOptions) -> Unit,
     ) {
         val e = engine ?: return
         if (!hasPhoto || busy || isExporting || isBatchExporting) return
 
         val uri = currentUri
-        val editParams = params.copy()
+        val editParams = EditSnapshot.capture(params).toParams()
+        val options = captureExportOptions()
         val photo = photoGeneration
         val revision = renderGeneration
         val previewPixels = previewLinear
@@ -1614,80 +1629,82 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         renderStage = "准备$label"
 
         viewModelScope.launch {
-            var progressJob: Job? = null
-            try {
-                renderStage = "读取原片"
-                withContext(engineDispatcher) {
-                    if (uri != null) {
-                        openExportSource(e, uri, editParams, maxLongEdge, outputColorSpace)
-                    } else {
-                        e.setParams(JSONObject().put("output_color_space", outputColorSpace).toString())
-                    }
-                }
-                checkExportCancellation()
-                renderProgress = 8f
-                renderStage = "正在$label"
-                val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
-                progressJob = launch(Dispatchers.IO) {
-                    while (isActive) {
-                        val progress = runCatching { e.progressSnapshot() }.getOrNull()
-                        if (exportCancelRequested) e.cancel(progress?.progressId)
-                        if (progress != null && progress.progressId != previousProgressId) {
-                            withContext(Dispatchers.Main.immediate) {
-                                renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
-                                if (progress.done && !exportCancelRequested) renderStage = "完成渲染"
-                            }
+            engineTasks.run("export-action") {
+                var progressJob: Job? = null
+                try {
+                    renderStage = "读取原片"
+                    withContext(engineDispatcher) {
+                        if (uri != null) {
+                            openExportSource(e, uri, editParams, maxLongEdge, outputColorSpace, options)
+                        } else {
+                            e.setParams(JSONObject().put("output_color_space", outputColorSpace).toString())
                         }
-                        delay(120)
                     }
-                }
+                    checkExportCancellation()
+                    renderProgress = 8f
+                    renderStage = "正在$label"
+                    val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
+                    progressJob = launch(Dispatchers.IO) {
+                        while (isActive) {
+                            val progress = runCatching { e.progressSnapshot() }.getOrNull()
+                            if (exportCancelRequested) e.cancel(progress?.progressId)
+                            if (progress != null && progress.progressId != previousProgressId) {
+                                withContext(Dispatchers.Main.immediate) {
+                                    renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
+                                    if (progress.done && !exportCancelRequested) renderStage = "完成渲染"
+                                }
+                            }
+                            delay(120)
+                        }
+                    }
 
-                action(e, editParams, photo, revision)
-                checkExportCancellation()
-                renderProgress = 100f
-                renderStage = "$label 完成"
-                delay(250)
-            } catch (_: ExportCancelled) {
-                append("$label 已取消")
-            } catch (ex: CancellationException) {
-                throw ex
-            } catch (_: OutOfMemoryError) {
-                fail("$label 内存不足，请选择较小尺寸后重试")
-            } catch (ex: SpkException) {
-                if (exportCancelRequested || ex.message?.contains("cancel", ignoreCase = true) == true) {
+                    action(e, editParams, photo, revision, options)
+                    checkExportCancellation()
+                    renderProgress = 100f
+                    renderStage = "$label 完成"
+                    delay(250)
+                } catch (_: ExportCancelled) {
                     append("$label 已取消")
-                } else {
-                    fail("SpkException: ${ex.message}")
-                }
-            } catch (ex: Exception) {
-                if (exportCancelRequested) append("$label 已取消")
-                else fail("${ex::class.simpleName}: ${ex.message}")
-            } finally {
-                withContext(NonCancellable) {
-                    try {
-                        progressJob?.cancelAndJoin()
-                        if (previewPixels != null && photo == photoGeneration) {
-                            renderStage = "恢复编辑预览"
-                            withContext(engineDispatcher) {
-                                e.open(
-                                    previewPixels,
-                                    previewWidth,
-                                    previewHeight,
-                                    3,
-                                    editParams.openJson(previewWidth, previewHeight, inputColorSpace = previewInputSpace),
-                                )
+                } catch (ex: CancellationException) {
+                    throw ex
+                } catch (_: OutOfMemoryError) {
+                    fail("$label 内存不足，请选择较小尺寸后重试")
+                } catch (ex: SpkException) {
+                    if (exportCancelRequested || ex.message?.contains("cancel", ignoreCase = true) == true) {
+                        append("$label 已取消")
+                    } else {
+                        fail("SpkException: ${ex.message}")
+                    }
+                } catch (ex: Exception) {
+                    if (exportCancelRequested) append("$label 已取消")
+                    else fail("${ex::class.simpleName}: ${ex.message}")
+                } finally {
+                    withContext(NonCancellable) {
+                        try {
+                            progressJob?.cancelAndJoin()
+                            if (previewPixels != null && photo == photoGeneration) {
+                                renderStage = "恢复编辑预览"
+                                withContext(engineDispatcher) {
+                                    e.open(
+                                        previewPixels,
+                                        previewWidth,
+                                        previewHeight,
+                                        3,
+                                        editParams.openJson(previewWidth, previewHeight, inputColorSpace = previewInputSpace),
+                                    )
+                                }
                             }
+                        } catch (_: OutOfMemoryError) {
+                            fail("恢复编辑会话时内存不足，请重新打开当前照片")
+                        } catch (ex: Exception) {
+                            fail("恢复编辑预览失败: ${ex.message}")
+                        } finally {
+                            renderProgress = null
+                            renderStage = ""
+                            exportCancelRequested = false
+                            isExportCommitCompleted = false
+                            isExporting = false
                         }
-                    } catch (_: OutOfMemoryError) {
-                        fail("恢复编辑会话时内存不足，请重新打开当前照片")
-                    } catch (ex: Exception) {
-                        fail("恢复编辑预览失败: ${ex.message}")
-                    } finally {
-                        renderProgress = null
-                        renderStage = ""
-                        exportCancelRequested = false
-                        isExportCommitCompleted = false
-                        isExporting = false
                     }
                 }
             }
@@ -1696,14 +1713,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // DI TIFF：按导出分辨率读取原片，输出 Cineon log 16-bit，不套 Layer 2、不嵌 ICC。
     fun exportDi() {
-        runExportAction("DI TIFF", exportRes, "sRGB") { e, _, _, _ ->
+        runExportAction("DI TIFF", exportRes, "sRGB") { e, _, _, _, options ->
             val result = withContext(engineDispatcher) { e.renderDigitalIntermediate() }
             try {
                 checkExportCancellation()
                 renderProgress = 96f
                 renderStage = "写入 DI TIFF"
                 val path = withContext(Dispatchers.IO) {
-                    saveDiTiff(result, System.currentTimeMillis().toString())
+                    saveDiTiff(result, System.currentTimeMillis().toString(), options)
                 }
                 append("DI 导出: ${result.width}×${result.height} → $path")
                 toast("DI 已导出")
@@ -1717,7 +1734,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun softProof() {
         val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
         val previewLongEdge = if (exportRes <= 0) 3400 else exportRes.coerceAtMost(3400)
-        runExportAction("软打样", previewLongEdge, outputCs) { e, editParams, photo, revision ->
+        runExportAction("软打样", previewLongEdge, outputCs) { e, editParams, photo, revision, _ ->
             val result = withContext(engineDispatcher) { e.render("full") }
             checkExportCancellation()
             updateResult(result, outputCs, photo, revision, editParams)
@@ -1728,7 +1745,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // 高清预览：通过原片解码器直接限制到 3400px，避免 RAW 全尺寸 managed float buffer。
     fun previewTier() {
         val outputCs = if (exportFormat == "TIFF") exportColorSpace else "sRGB"
-        runExportAction("高清预览", 3400, outputCs) { e, editParams, photo, revision ->
+        runExportAction("高清预览", 3400, outputCs) { e, editParams, photo, revision, _ ->
             val result = withContext(engineDispatcher) { e.render("preview") }
             checkExportCancellation()
             updateResult(result, outputCs, photo, revision, editParams)
@@ -1766,7 +1783,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun release() {
         viewModelScope.launch {
-            withContext(engineDispatcher) {
+            engineTasks.onEngine {
                 engine?.close()
                 engine = null
                 rendered = null
@@ -1778,19 +1795,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun saveBitmap(bitmap: Bitmap, suffix: String): String {
-        val ext = if (exportFormat == "PNG") "png" else "jpg"
-        val mime = if (exportFormat == "PNG") "image/png" else "image/jpeg"
+    private fun captureExportOptions() = ExportOptions(
+        exportFormat, exportRes, exportColorSpace, jpegQuality,
+        exportKeepCapture, exportKeepLocation, lensCorrectionActive,
+    )
+
+    private fun saveBitmap(bitmap: Bitmap, suffix: String, options: ExportOptions): String {
+        val ext = if (options.format == "PNG") "png" else "jpg"
+        val mime = if (options.format == "PNG") "image/png" else "image/jpeg"
         val name = "Theia_$suffix.$ext"
-        val fmt = if (exportFormat == "PNG") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+        val fmt = if (options.format == "PNG") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
 
         // 先压缩到临时文件（JPEG 需先落盘才能附加 EXIF）。
         val tmp = File(app.cacheDir, "export_${System.nanoTime()}.$ext")
         try {
             FileOutputStream(tmp).use { fos ->
-                check(bitmap.compress(fmt, jpegQuality.coerceIn(1, 100), fos)) { "图片编码失败" }
+                check(bitmap.compress(fmt, options.jpegQuality.coerceIn(1, 100), fos)) { "图片编码失败" }
             }
-            ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation).attach(tmp, bitmap.width, bitmap.height)
+            ExportMetadata.from(sourceExif, options.keepCapture, options.keepLocation).attach(tmp, bitmap.width, bitmap.height)
             return publishExport(tmp, name, mime)
         } finally {
             tmp.delete()
@@ -1798,16 +1820,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 按当前格式导出渲染结果（TIFF 走 16-bit，其余走 8-bit JPEG/PNG）。
-    private fun saveNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams): String {
-        return measureExport("encode_publish_$exportFormat") { encodeNativeResult(result, suffix, editParams) }
+    private fun saveNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams, options: ExportOptions): String {
+        return measureExport("encode_publish_${options.format}") { encodeNativeResult(result, suffix, editParams, options) }
     }
 
-    private fun encodeNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams): String {
-        if (exportFormat == "TIFF") {
-            val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
+    private fun encodeNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams, options: ExportOptions): String {
+        if (options.format == "TIFF") {
+            val icc = if (options.colorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
             return exportPublisher().write("Theia_$suffix.tiff", "image/tiff") {
                 TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation,
-                    ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
+                    ExportMetadata.from(sourceExif, options.keepCapture, options.keepLocation))
             }
         }
         // A full RGBA16 ShortArray plus full ARGB IntArray exceeded ART limits even for 12 MP.
@@ -1843,7 +1865,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 bitmap.setPixels(argb, 0, result.width, 0, y, result.width, count)
                 y += count
             }
-            return saveBitmap(bitmap, suffix)
+            return saveBitmap(bitmap, suffix, options)
         } finally { bitmap.recycle() }
     }
 
@@ -1865,25 +1887,26 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-    private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
-        return if (exportFormat == "TIFF") {
-            saveTiff(result, suffix, editParams)
+    private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params,
+                           options: ExportOptions = captureExportOptions()): String {
+        return if (options.format == "TIFF") {
+            saveTiff(result, suffix, editParams, options)
         } else {
-            saveBitmap(convertToBitmap(result, editParams), suffix)
+            saveBitmap(convertToBitmap(result, editParams), suffix, options)
         }
     }
 
-    private fun saveTiff(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
+    private fun saveTiff(result: SpkResult, suffix: String, editParams: EditorParams, options: ExportOptions): String {
         val g = grade(editParams)
-        val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
+        val icc = if (options.colorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
         return exportPublisher().write("Theia_$suffix.tiff", "image/tiff") { out ->
             TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation,
-                ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
+                ExportMetadata.from(sourceExif, options.keepCapture, options.keepLocation))
         }
     }
 
     // DI TIFF：无调色、无 ICC（设备 RGB 密度）。
-    private fun saveDiTiff(result: NativeRenderResult, suffix: String): String {
+    private fun saveDiTiff(result: NativeRenderResult, suffix: String, options: ExportOptions): String {
         val name = "Theia_DI_$suffix.tiff"
         return exportPublisher().write(name, "image/tiff") { out ->
             TiffWriter.writeNative(
@@ -1892,7 +1915,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 icc = null,
                 out = out,
                 checkCancelled = ::checkExportCancellation,
-                metadata = ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation),
+                metadata = ExportMetadata.from(sourceExif, options.keepCapture, options.keepLocation),
             )
         }
     }
@@ -1912,8 +1935,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 读取源 EXIF（仅 JPEG/TIFF/DNG；RAW 抛异常时返回 null）。
-    private fun readExif(uri: Uri): ExifInterface? {
-        if (Build.VERSION.SDK_INT >= 29 && exportKeepLocation && uri.authority == "media" &&
+    private fun readExif(uri: Uri, keepLocation: Boolean = exportKeepLocation): ExifInterface? {
+        if (Build.VERSION.SDK_INT >= 29 && keepLocation && uri.authority == "media" &&
             androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             runCatching { app.contentResolver.openInputStream(MediaStore.setRequireOriginal(uri))?.use(::ExifInterface) }
                 .getOrNull()?.let { return it }
@@ -2008,7 +2031,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val client = engine
         engine = null
         if (client != null) {
-            CoroutineScope(SupervisorJob() + engineDispatcher).launch { client.close() }
+            CoroutineScope(SupervisorJob() + engineDispatcher).launch { engineTasks.onEngine("close") { client.close() } }
         }
         super.onCleared()
     }

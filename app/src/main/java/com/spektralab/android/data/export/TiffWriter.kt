@@ -1,7 +1,7 @@
 package com.spektralab.android.data.export
 
 import com.spektralab.android.engine.Grade
-import com.spektralab.android.engine.NativeRenderResult
+import com.spektralab.android.engine.Rgba16Source
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,7 +28,7 @@ object TiffWriter {
     }
 
     fun writeNative(
-        result: NativeRenderResult,
+        result: Rgba16Source,
         grade: Grade?,
         icc: ByteArray?,
         out: OutputStream,

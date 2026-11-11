@@ -75,6 +75,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var rawInputAccessOnly = false
     private var rawCancellationOnly = false
     private var exportEncodingOnly = false
+    private var renderFoundationOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -94,6 +95,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         rawInputAccessOnly = audit == "raw-input-access"
         rawCancellationOnly = audit == "raw-cancellation"
         exportEncodingOnly = audit == "export-encoding"
+        renderFoundationOnly = audit == "render-foundation"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -133,6 +135,13 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (renderFoundationOnly) {
+            case("render.snapshots_transactions_and_exports") { RenderFoundationAudit(this).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (exportEncodingOnly) {
             case("export.encoding_and_atomic_publication") { ExportEncodingAudit(this).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
