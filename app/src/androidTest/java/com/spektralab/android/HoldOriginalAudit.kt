@@ -15,12 +15,15 @@ import com.spektralab.android.core.model.EditorParams
 import com.spektralab.android.data.local.EditStore
 import com.spektralab.android.feature.editor.EditorViewModel
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Real touch events on the production preview, including cancellation and sibling controls. */
 internal class HoldOriginalAudit(private val test: Instrumentation, private val output: File) {
     private lateinit var vm: EditorViewModel
+    private lateinit var activity: MainActivity
     private fun main(action: () -> Unit) = test.runOnMainSync(action)
     private fun await(label: String, predicate: () -> Boolean) {
         val start = SystemClock.elapsedRealtime()
@@ -58,6 +61,15 @@ internal class HoldOriginalAudit(private val test: Instrumentation, private val 
     }
     private fun screenshot(name: String): Bitmap {
         test.waitForIdleSync()
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val presented = CountDownLatch(1)
+            main {
+                val decor = activity.window.decorView
+                decor.viewTreeObserver.registerFrameCommitCallback { presented.countDown() }
+                decor.invalidate()
+            }
+            check(presented.await(5, TimeUnit.SECONDS)) { "Frame was not committed for $name" }
+        }
         val image = checkNotNull(test.uiAutomation.takeScreenshot())
         File(output, "hold_original_$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         return image
@@ -113,7 +125,7 @@ internal class HoldOriginalAudit(private val test: Instrumentation, private val 
     }
 
     fun run(): String {
-        val activity = test.startActivitySync(Intent(test.targetContext, MainActivity::class.java)
+        activity = test.startActivitySync(Intent(test.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         main { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
         val auto = vm.smartAutoEnabled

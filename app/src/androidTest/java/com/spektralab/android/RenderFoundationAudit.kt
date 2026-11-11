@@ -173,6 +173,19 @@ internal class RenderFoundationAudit(private val test: Instrumentation) {
             check(cache.put(keyB, source))
             check(cache.acquire(keyA) == null)
             check(directory.listFiles()!!.sumOf(File::length) <= budget)
+            var readChecks = 0
+            val cancelledRead =
+                runCatching {
+                        cache.acquire(keyB) {
+                            if (++readChecks > 1)
+                                throw kotlinx.coroutines.CancellationException("cancel cache read")
+                        }
+                    }
+                    .exceptionOrNull()
+            check(cancelledRead is kotlinx.coroutines.CancellationException)
+            check(File(directory, "$keyB.rgba16").isFile) {
+                "Cancellation deleted a complete cached output"
+            }
             val failed =
                 runCatching { cache.put(keyB, source) { error("cancel sentinel") } }
                     .exceptionOrNull()

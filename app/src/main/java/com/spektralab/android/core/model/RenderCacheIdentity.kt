@@ -19,11 +19,15 @@ internal data class RenderCacheIdentity(
     val correctLens: Boolean,
     val renderSeed: Long,
     val edit: EditSnapshot,
+    val requestedLongEdge: Int? = null,
 ) {
     init {
         require(sourceFingerprint.matches(Regex("[0-9a-f]{64}")))
         require(resourcesFingerprint.matches(Regex("[0-9a-f]{64}")))
-        require(width > 0 && height > 0)
+        require(
+            (width > 0 && height > 0) || (width == 0 && height == 0 && requestedLongEdge != null)
+        )
+        require(requestedLongEdge == null || requestedLongEdge >= 0)
         require(
             listOf(decoderVersion, engineVersion, inputColorSpace, outputColorSpace)
                 .all(String::isNotBlank)
@@ -41,6 +45,7 @@ internal data class RenderCacheIdentity(
                     .put("resources", resourcesFingerprint)
                     .put("width", width)
                     .put("height", height)
+                    .put("requestedLongEdge", requestedLongEdge ?: JSONObject.NULL)
                     .put("inputSpace", inputColorSpace)
                     .put("outputSpace", outputColorSpace)
                     .put("lens", correctLens)

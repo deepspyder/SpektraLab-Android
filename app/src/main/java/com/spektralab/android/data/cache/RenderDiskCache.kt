@@ -78,8 +78,9 @@ internal class RenderDiskCache(private val directory: File, private val maxBytes
 
     /** Validate both header and payload before handing any cached pixels to a caller. */
     @Synchronized
-    fun acquire(key: String): Lease? {
+    fun acquire(key: String, checkCancelled: () -> Unit = {}): Lease? {
         validateKey(key)
+        checkCancelled()
         val file = entry(key)
         if (!file.isFile) return null
         val input = runCatching { RandomAccessFile(file, "r") }.getOrNull() ?: return null
@@ -101,6 +102,12 @@ internal class RenderDiskCache(private val directory: File, private val maxBytes
             val crc = CRC32()
             val buffer = ByteArray(64 * 1024)
             while (true) {
+                try {
+                    checkCancelled()
+                } catch (cancelled: Throwable) {
+                    input.close()
+                    throw CacheReadCancelled(cancelled)
+                }
                 val count = input.read(buffer)
                 if (count < 0) break
                 crc.update(buffer, 0, count)
@@ -111,6 +118,7 @@ internal class RenderDiskCache(private val directory: File, private val maxBytes
             return Lease(key, width, height, input)
         } catch (error: Exception) {
             input.close()
+            if (error is CacheReadCancelled) throw error.cause!!
             if (leases.getOrDefault(key, 0) == 0) file.delete()
             return null
         }
@@ -213,4 +221,6 @@ internal class RenderDiskCache(private val directory: File, private val maxBytes
 
         fun stripRows(width: Int, height: Int) = minOf(32, height, MAX_STRIP_BYTES / (width * 8))
     }
+
+    private class CacheReadCancelled(cause: Throwable) : RuntimeException(cause)
 }

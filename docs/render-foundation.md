@@ -2,6 +2,8 @@
 
 日期：2026-11-11。对应实施方案的 T00/T01，以及 T02/T03 的首批基础；工作包完成情况以[开发进度](development-progress.md)为准。
 
+本文记录首批状态。后续[第二批优先调度与正式缓存](render-scheduling-and-export-cache.md)已接入部分正式导出请求；下文未接入描述不代表第二批之后仍未接入。
+
 ## 1. 已接入的行为
 
 `EditSnapshot` 将现有可变 `EditorParams` 捕获为不可变字符串。规范 JSON 对对象键排序、保留数组顺序、统一零与数字表示，SHA-256 用于值身份；它没有重写旧 sidecar 格式。每次 `toParams()` 都生成独立适配对象。

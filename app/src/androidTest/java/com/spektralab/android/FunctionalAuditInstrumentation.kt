@@ -76,6 +76,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var rawCancellationOnly = false
     private var exportEncodingOnly = false
     private var renderFoundationOnly = false
+    private var renderSchedulingOnly = false
+    private var exportCacheOnly = false
+    private var fullSizeCacheOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -96,6 +99,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         rawCancellationOnly = audit == "raw-cancellation"
         exportEncodingOnly = audit == "export-encoding"
         renderFoundationOnly = audit == "render-foundation"
+        renderSchedulingOnly = audit == "render-scheduling"
+        exportCacheOnly = audit == "export-cache"
+        fullSizeCacheOnly = audit == "export-cache-raw"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -135,6 +141,15 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (renderSchedulingOnly || exportCacheOnly || fullSizeCacheOnly) {
+            if (renderSchedulingOnly) case("render.priority_state_and_admission") { RenderSchedulingAudit.run() }
+            if (exportCacheOnly) case("export.production_cache") { ExportCacheAudit(this).run() }
+            if (fullSizeCacheOnly) case("export.full_size_raw_cache") { FullSizeCacheAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (renderFoundationOnly) {
             case("render.snapshots_transactions_and_exports") { RenderFoundationAudit(this).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }

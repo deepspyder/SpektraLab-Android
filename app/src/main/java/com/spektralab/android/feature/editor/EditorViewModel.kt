@@ -23,6 +23,7 @@ import com.spektralab.android.core.model.EditSnapshot
 import com.spektralab.android.core.model.ExportOptions
 import com.spektralab.android.core.model.EditorParams
 import com.spektralab.android.core.model.ExportRecipe
+import com.spektralab.android.data.cache.ExportRenderCache
 import com.spektralab.android.data.export.ExportMetadata
 import com.spektralab.android.data.export.ExportPublisher
 import com.spektralab.android.data.export.TiffWriter
@@ -37,6 +38,8 @@ import com.spektralab.android.engine.Grade
 import com.spektralab.android.engine.Histogram
 import com.spektralab.android.engine.LensProfile
 import com.spektralab.android.engine.LensProfileStore
+import com.spektralab.android.engine.RenderAdmission
+import com.spektralab.android.engine.Rgba16Source
 import com.spektralab.android.engine.NativeRenderResult
 import com.spektralab.android.engine.RawDecodeCancellation
 import com.spektralab.android.engine.RawDecodeResult
@@ -74,7 +77,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile private var exportCancelRequested = false
 
     private fun checkExportCancellation() {
-        if (exportCancelRequested) throw ExportCancelled()
+        if (exportCancelRequested || cleared) throw ExportCancelled()
     }
 
     private data class PendingFrame(
@@ -242,6 +245,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var cropEditStart: FloatArray? = null
     // One engine/session owns mutable native state. Decode/open/render/export transactions must not overlap.
     private val engineTasks = EngineTaskQueue()
+    private val renderCache by lazy { ExportRenderCache.get(app.applicationContext) }
+    internal val exportCacheStats get() = renderCache.stats
+    internal val renderTaskState get() = engineTasks.snapshot.value
     private val engineDispatcher = engineTasks.dispatcher
 
     init {
@@ -870,7 +876,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         busy = true
         viewModelScope.launch {
             val reply: String = try {
-                engineTasks.onEngine { e.solve("both") }
+                engineTasks.onEngine("metering") { e.solve("both") }
             } catch (ex: SpkException) {
                 fail("SpkException: ${ex.message}")
                 busy = false
@@ -901,7 +907,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         busy = true
         viewModelScope.launch {
             val reply: String = try {
-                engineTasks.onEngine { e.sceneLatitude(null) }
+                engineTasks.onEngine("latitude") { e.sceneLatitude(null) }
             } catch (ex: SpkException) {
                 fail("SpkException: ${ex.message}")
                 busy = false
@@ -1052,42 +1058,67 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             engineTasks.run("export") {
                 var poller: Job? = null
+                var needsRestore = false
+                var cacheLease: com.spektralab.android.data.cache.RenderDiskCache.Lease? = null
                 try {
                     renderStage = "解码原图"
-                    withContext(engineDispatcher) {
-                        if (uri != null) {
-                            openExportSource(e, uri, exportParams, outputSize, outputCs, options)
-                        }
+                    val cachedRequest = withContext(Dispatchers.IO) {
+                        uri?.let { renderCache.prepare(it, exportParams, options, ::checkExportCancellation) }
                     }
-                    checkExportCancellation()
-                    renderProgress = 8f
-                    renderStage = "胶片冲印与相纸扫描"
-                    val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
-                    poller = launch(Dispatchers.IO) {
-                        while (isActive) {
-                            val progress = runCatching { e.progressSnapshot() }.getOrNull()
-                            if (exportCancelRequested) e.cancel()
-                            if (progress != null && progress.progressId != previousProgressId) withContext(Dispatchers.Main.immediate) {
-                                renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
-                                if (progress.done && !exportCancelRequested) renderStage = "准备保存"
-                            }
-                            delay(120)
-                        }
+                    withContext(Dispatchers.IO) {
+                        // Assign before the dispatcher handoff so cancellation cannot lose a lease.
+                        cacheLease = cachedRequest?.let { renderCache.acquire(it, ::checkExportCancellation) }
                     }
+                    val cached = cacheLease
                     var dimensions = ""
-                    val path = withContext(engineDispatcher) {
-                        measureExport("render") { e.renderForExport() }.use { result ->
-                            poller?.cancelAndJoin()
-                            poller = null
-                            checkExportCancellation()
-                            android.util.Log.i("SpkExport", "render complete ${result.width}x${result.height}; ${e.memoryReport()}")
-                            e.closeSession()
+                    val path = if (cached != null) {
+                        cached.use { result ->
+                            RenderAdmission.check(app)
                             dimensions = "${result.width}×${result.height}"
-                            withContext(Dispatchers.Main.immediate) {
-                                renderProgress = 96f
-                                renderStage = "编码并保存文件"
-                            }
+                            sourceExif = withContext(Dispatchers.IO) { uri?.let { readExif(it, options.keepLocation) } }
+                            renderProgress = 96f
+                            renderStage = "编码并保存文件"
+                            android.util.Log.i("SpkCache", "export cache hit ${result.width}x${result.height}")
                             withContext(Dispatchers.IO) { saveNativeResult(result, System.currentTimeMillis().toString(), exportParams, options) }
+                        }
+                    } else {
+                        withContext(engineDispatcher) {
+                            RenderAdmission.check(app)
+                            needsRestore = true
+                            if (uri != null) openExportSource(e, uri, exportParams, outputSize, outputCs, options)
+                        }
+                        checkExportCancellation()
+                        renderProgress = 8f
+                        renderStage = "胶片冲印与相纸扫描"
+                        val previousProgressId = withContext(engineDispatcher) { e.progressSnapshot().progressId }
+                        poller = launch(Dispatchers.IO) {
+                            while (isActive) {
+                                val progress = runCatching { e.progressSnapshot() }.getOrNull()
+                                if (exportCancelRequested) e.cancel()
+                                if (progress != null && progress.progressId != previousProgressId) withContext(Dispatchers.Main.immediate) {
+                                    renderProgress = max(renderProgress ?: 8f, 8f + progress.percent * .86f).coerceAtMost(94f)
+                                    if (progress.done && !exportCancelRequested) renderStage = "准备保存"
+                                }
+                                delay(120)
+                            }
+                        }
+                        withContext(engineDispatcher) {
+                            measureExport("render") { e.renderForExport() }.use { result ->
+                                poller?.cancelAndJoin()
+                                poller = null
+                                checkExportCancellation()
+                                android.util.Log.i("SpkExport", "render complete ${result.width}x${result.height}; ${e.memoryReport()}")
+                                e.closeSession()
+                                dimensions = "${result.width}×${result.height}"
+                                if (cachedRequest != null && uri != null) {
+                                    withContext(Dispatchers.IO) { renderCache.store(cachedRequest, uri, result, ::checkExportCancellation) }
+                                }
+                                withContext(Dispatchers.Main.immediate) {
+                                    renderProgress = 96f
+                                    renderStage = "编码并保存文件"
+                                }
+                                withContext(Dispatchers.IO) { saveNativeResult(result, System.currentTimeMillis().toString(), exportParams, options) }
+                            }
                         }
                     }
                     checkExportCancellation()
@@ -1109,9 +1140,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (ex: Exception) {
                     fail("${ex::class.simpleName}: ${ex.message}")
                 } finally {
+                    cacheLease?.close()
                     poller?.cancelAndJoin()
                     val pl = previewLinear
-                    if (pl != null) {
+                    if (pl != null && needsRestore) {
                         try {
                             withContext(engineDispatcher) {
                                 sourceExif = uri?.let(::readExif)
@@ -1549,14 +1581,29 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
                         val photoParams = edits.getValue(uri).toParams()
-                        openExportSource(e, uri, photoParams, options.resolution, outputCs, options)
-                        checkExportCancellation()
+                        val request = renderCache.prepare(uri, photoParams, options, ::checkExportCancellation)
+                        val cached = request?.let { renderCache.acquire(it, ::checkExportCancellation) }
                         var dimensions = ""
-                        val path = measureExport("render") { e.renderForExport() }.use { r ->
+                        val path = if (cached != null) {
+                            cached.use { r ->
+                                RenderAdmission.check(app)
+                                checkExportCancellation()
+                                sourceExif = readExif(uri, options.keepLocation)
+                                dimensions = "${r.width}×${r.height}"
+                                android.util.Log.i("SpkCache", "batch cache hit ${r.width}x${r.height}")
+                                saveNativeResult(r, "$batchTs-$i", photoParams, options)
+                            }
+                        } else {
+                            RenderAdmission.check(app)
+                            openExportSource(e, uri, photoParams, options.resolution, outputCs, options)
                             checkExportCancellation()
-                            e.closeSession()
-                            dimensions = "${r.width}×${r.height}"
-                            saveNativeResult(r, "$batchTs-$i", photoParams, options)
+                            measureExport("render") { e.renderForExport() }.use { r ->
+                                checkExportCancellation()
+                                e.closeSession()
+                                dimensions = "${r.width}×${r.height}"
+                                if (request != null) renderCache.store(request, uri, r, ::checkExportCancellation)
+                                saveNativeResult(r, "$batchTs-$i", photoParams, options)
+                            }
                         }
                         done++
                         withContext(Dispatchers.Main.immediate) {
@@ -1635,6 +1682,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     renderStage = "读取原片"
                     withContext(engineDispatcher) {
                         if (uri != null) {
+                            RenderAdmission.check(app)
                             openExportSource(e, uri, editParams, maxLongEdge, outputColorSpace, options)
                         } else {
                             e.setParams(JSONObject().put("output_color_space", outputColorSpace).toString())
@@ -1820,11 +1868,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 按当前格式导出渲染结果（TIFF 走 16-bit，其余走 8-bit JPEG/PNG）。
-    private fun saveNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams, options: ExportOptions): String {
+    private fun saveNativeResult(result: Rgba16Source, suffix: String, editParams: EditorParams, options: ExportOptions): String {
         return measureExport("encode_publish_${options.format}") { encodeNativeResult(result, suffix, editParams, options) }
     }
 
-    private fun encodeNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams, options: ExportOptions): String {
+    private fun encodeNativeResult(result: Rgba16Source, suffix: String, editParams: EditorParams, options: ExportOptions): String {
         if (options.format == "TIFF") {
             val icc = if (options.colorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
             return exportPublisher().write("Theia_$suffix.tiff", "image/tiff") {
