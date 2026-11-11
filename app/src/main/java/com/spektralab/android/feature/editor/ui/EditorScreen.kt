@@ -289,7 +289,7 @@ internal fun EditorScreen(
                                 vm.params.exposureEv = it; vm.scheduleRender()
                             }
                             Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("点击顶部按钮对比原片", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("按住照片查看原图", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(if (vm.dirty) "修改已应用于当前照片" else "原片始终保留", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }

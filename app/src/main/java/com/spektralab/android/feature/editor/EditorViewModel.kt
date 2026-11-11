@@ -1,7 +1,6 @@
 package com.spektralab.android.feature.editor
 
 import android.app.Application
-import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
@@ -9,7 +8,6 @@ import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.runtime.getValue
@@ -24,7 +22,9 @@ import com.spektralab.android.core.develop.SmartDevelopStyle
 import com.spektralab.android.core.model.EditorParams
 import com.spektralab.android.core.model.ExportRecipe
 import com.spektralab.android.data.export.ExportMetadata
+import com.spektralab.android.data.export.ExportPublisher
 import com.spektralab.android.data.export.TiffWriter
+import com.spektralab.android.data.export.measureExport
 import com.spektralab.android.data.local.EditStore
 import com.spektralab.android.data.local.RecipeStore
 import com.spektralab.android.engine.CameraWhiteBalance
@@ -35,6 +35,7 @@ import com.spektralab.android.engine.Histogram
 import com.spektralab.android.engine.LensProfile
 import com.spektralab.android.engine.LensProfileStore
 import com.spektralab.android.engine.NativeRenderResult
+import com.spektralab.android.engine.RawDecodeCancellation
 import com.spektralab.android.engine.RawDecodeResult
 import com.spektralab.android.engine.RawDecoder
 import com.spektralab.android.engine.SpkException
@@ -456,13 +457,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 把渲染结果（rgba16）过一遍 Layer 2 调色，转成显示用 Bitmap。
     private fun convertToBitmap(result: SpkResult, editParams: EditorParams = params, colorSpace: String = "sRGB"): Bitmap {
-        val argb = ColorPipeline.applyGrade(result.rgba16, result.width, result.height, grade(editParams), colorSpace)
-        return Bitmap.createBitmap(argb, result.width, result.height, Bitmap.Config.ARGB_8888)
+        return ColorPipeline.applyGradeToBitmap(result.rgba16, result.width, result.height,
+            grade(editParams), colorSpace).first
     }
 
     private fun convertPreview(result: SpkResult, editParams: EditorParams, colorSpace: String): Pair<Bitmap, Histogram> {
-        val graded = ColorPipeline.applyGradeAndHistogram(result.rgba16, result.width, result.height, grade(editParams), colorSpace)
-        return Bitmap.createBitmap(graded.argb, result.width, result.height, Bitmap.Config.ARGB_8888) to graded.histogram!!
+        return ColorPipeline.applyGradeToBitmap(result.rgba16, result.width, result.height,
+            grade(editParams), colorSpace)
     }
 
     // 更新渲染结果 + 直方图 + 显示位图（一次渲染落地后调用）。
@@ -691,14 +692,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun decodeRaw(uri: Uri, editParams: EditorParams = params, halfSize: Boolean = true, photo: Long = photoGeneration): RawDecodeResult {
         val cachedXyz = if (uri == currentUri && photo == photoGeneration) rawCamXyz else null
         val correctLens = lensCorrectionActive
-        val initial = if (cachedXyz == null) RawDecoder.decode(app, uri, halfSize = halfSize) else null
-        val cameraXyz = cachedXyz ?: initial!!.camXyz
+        val task = currentCoroutineContext()
+        val cancellation = RawDecodeCancellation { cleared || photo != photoGeneration || !task.isActive }
+        val headerXyz = cachedXyz ?: if (editParams.cameraWbCustom) {
+            RawDecoder.readCameraMatrix(app, uri, cancellation)
+        } else null
+        val initial = if (headerXyz == null) {
+            RawDecoder.decode(app, uri, halfSize = halfSize, cancellation = cancellation)
+        } else null
+        val cameraXyz = headerXyz ?: initial!!.camXyz
         val userMul = if (editParams.cameraWbCustom) {
             val mul = FloatArray(4)
             if (CameraWhiteBalance.multipliersFor(cameraXyz, editParams.cameraWbKelvin.toDouble(), editParams.cameraWbTint.toDouble(), mul)) mul else null
         } else null
-        val raw = if (userMul != null) RawDecoder.decode(app, uri, halfSize = halfSize, userMul = userMul)
-            else initial ?: RawDecoder.decode(app, uri, halfSize = halfSize)
+        val raw = if (userMul != null) {
+            RawDecoder.decode(app, uri, halfSize = halfSize, userMul = userMul, cancellation = cancellation)
+        } else initial ?: RawDecoder.decode(app, uri, halfSize = halfSize, cancellation = cancellation)
         LensProfileStore.load(app)
         val lensProfile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
         withContext(Dispatchers.Main.immediate) {
@@ -720,31 +729,38 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // The interactive preview remains on screen, but its GPU session need not overlap source decoding.
         e.closeSession()
         if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
-            val cachedXyz = if (uri == currentUri) rawCamXyz else null
+            val cancellation = RawDecodeCancellation { cleared || exportCancelRequested }
+            val cachedXyz = (if (uri == currentUri) rawCamXyz else null) ?: if (editParams.cameraWbCustom) {
+                RawDecoder.readCameraMatrix(app, uri, cancellation)
+            } else null
             fun multipliers(xyz: FloatArray?): FloatArray? {
                 if (!editParams.cameraWbCustom || xyz == null) return null
                 val mul = FloatArray(4)
                 return if (CameraWhiteBalance.multipliersFor(xyz, editParams.cameraWbKelvin.toDouble(),
                     editParams.cameraWbTint.toDouble(), mul)) mul else null
             }
-            var raw = RawDecoder.decodeForExport(app, uri, size, multipliers(cachedXyz))
+            var raw = measureExport("raw_decode") {
+                RawDecoder.decodeForExport(app, uri, size, multipliers(cachedXyz), cancellation)
+            }
             try {
                 if (editParams.cameraWbCustom && cachedXyz == null) {
                     val mul = multipliers(raw.camXyz)
                     if (mul != null) {
                         raw.close()
-                        raw = RawDecoder.decodeForExport(app, uri, size, mul)
+                        raw = RawDecoder.decodeForExport(app, uri, size, mul, cancellation)
                     }
                 }
                 LensProfileStore.load(app)
                 val profile = LensProfileStore.match(raw.make, raw.lens, raw.focal)
-                if (lensCorrectionActive && profile != null) raw.correctLens(profile)
+                if (lensCorrectionActive && profile != null) measureExport("raw_lens_correction") { raw.correctLens(profile) }
                 raw.resize(size)
                 checkExportCancellation()
-                e.openRaw(raw, editParams.openJson(raw.width, raw.height, colorSpace, "ProPhoto RGB"))
+                measureExport("engine_input") {
+                    e.openRaw(raw, editParams.openJson(raw.width, raw.height, colorSpace, "ProPhoto RGB"))
+                }
             } finally { raw.close() }
         } else {
-            val bitmap = decodeBitmapForExport(uri, size)
+            val bitmap = measureExport("image_decode") { decodeBitmapForExport(uri, size) }
             try {
                 checkExportCancellation()
                 e.openBitmap(bitmap, editParams.openJson(bitmap.width, bitmap.height, colorSpace))
@@ -1052,7 +1068,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 var dimensions = ""
                 val path = withContext(engineDispatcher) {
-                    e.renderForExport().use { result ->
+                    measureExport("render") { e.renderForExport() }.use { result ->
                         poller?.cancelAndJoin()
                         poller = null
                         checkExportCancellation()
@@ -1092,9 +1108,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         withContext(engineDispatcher) {
                             sourceExif = uri?.let(::readExif)
                             e.open(pl, previewW, previewH, 3, params.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
-                            val pr = e.render("live")
-                            updateResult(pr)
+                            // Keep the approved frame; rebuild the negative lazily on the next edit.
                         }
+                    } catch (_: OutOfMemoryError) {
+                        append("恢复编辑会话时内存不足，请重新打开当前照片")
                     } catch (ex: Exception) {
                         append("恢复预览失败: ${ex.message}")
                     }
@@ -1521,7 +1538,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         openExportSource(e, uri, photoParams, batchResolution, outputCs)
                         checkExportCancellation()
                         var dimensions = ""
-                        val path = e.renderForExport().use { r ->
+                        val path = measureExport("render") { e.renderForExport() }.use { r ->
                             checkExportCancellation()
                             e.closeSession()
                             dimensions = "${r.width}×${r.height}"
@@ -1555,8 +1572,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             withContext(Dispatchers.Main.immediate) { params = activeParams }
                             sourceExif = activeUri?.let(::readExif)
                             e.open(pl, previewW, previewH, 3, activeParams.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace))
-                            val pr = e.render("live")
-                            withContext(Dispatchers.Main.immediate) { updateResult(pr) }
+                        } catch (_: OutOfMemoryError) {
+                            withContext(Dispatchers.Main.immediate) { append("恢复编辑会话时内存不足，请重新打开当前照片") }
                         } catch (ex: Exception) {
                             withContext(Dispatchers.Main.immediate) { append("恢复预览失败: ${ex.message}") }
                         }
@@ -1661,6 +1678,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                                 )
                             }
                         }
+                    } catch (_: OutOfMemoryError) {
+                        fail("恢复编辑会话时内存不足，请重新打开当前照片")
                     } catch (ex: Exception) {
                         fail("恢复编辑预览失败: ${ex.message}")
                     } finally {
@@ -1780,16 +1799,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 按当前格式导出渲染结果（TIFF 走 16-bit，其余走 8-bit JPEG/PNG）。
     private fun saveNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams): String {
+        return measureExport("encode_publish_$exportFormat") { encodeNativeResult(result, suffix, editParams) }
+    }
+
+    private fun encodeNativeResult(result: NativeRenderResult, suffix: String, editParams: EditorParams): String {
         if (exportFormat == "TIFF") {
-            val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
-            try {
-                val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
-                tmp.outputStream().use {
-                    TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation,
-                        ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
-                }
-                return publishExport(tmp, "Theia_$suffix.tiff", "image/tiff")
-            } finally { tmp.delete() }
+            val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
+            return exportPublisher().write("Theia_$suffix.tiff", "image/tiff") {
+                TiffWriter.writeNative(result, grade(editParams), icc, it, ::checkExportCancellation,
+                    ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
+            }
         }
         // A full RGBA16 ShortArray plus full ARGB IntArray exceeded ART limits even for 12 MP.
         val bitmap = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
@@ -1804,13 +1823,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 checkExportCancellation()
                 val count = minOf(rows, result.height - y)
                 result.readRows(y, count, strip)
-                for (i in 0 until result.width * count) {
-                    g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
-                        i % result.width, y + i / result.width, result.width, result.height)
-                    val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
-                    val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
-                    val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
-                    argb[i] = (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
+                if (g.isIdentity) {
+                    for (i in 0 until result.width * count) {
+                        val r = ((strip[i * 4].toInt() and 65535) * 255 + 32767) / 65535
+                        val green = ((strip[i * 4 + 1].toInt() and 65535) * 255 + 32767) / 65535
+                        val b = ((strip[i * 4 + 2].toInt() and 65535) * 255 + 32767) / 65535
+                        argb[i] = (0xFF shl 24) or (r shl 16) or (green shl 8) or b
+                    }
+                } else {
+                    for (i in 0 until result.width * count) {
+                        g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
+                            i % result.width, y + i / result.width, result.width, result.height)
+                        val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
+                        val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
+                        val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
+                        argb[i] = (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
+                    }
                 }
                 bitmap.setPixels(argb, 0, result.width, 0, y, result.width, count)
                 y += count
@@ -1819,67 +1847,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         } finally { bitmap.recycle() }
     }
 
-    private fun publishExport(tmp: File, name: String, mime: String): String {
-        checkExportCancellation()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, mime)
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Theia")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-            val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val uri = app.contentResolver.insert(collection, values)
-            if (uri != null) {
-                try {
-                    val stream = app.contentResolver.openOutputStream(uri) ?: error("无法写入相册文件")
-                    stream.use { out ->
-                        tmp.inputStream().use { input ->
-                            val buffer = ByteArray(64 * 1024)
-                            while (true) {
-                                checkExportCancellation()
-                                val count = input.read(buffer)
-                                if (count < 0) break
-                                out.write(buffer, 0, count)
-                            }
-                        }
-                    }
-                    checkExportCancellation()
-                    values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    check(app.contentResolver.update(uri, values, null, null) > 0) { "无法完成相册文件" }
-                    exportCancelRequested = false // The media commit succeeded; late cancel requests cannot undo it.
-                    isExportCommitCompleted = true
-                    return "相册: $uri"
-                } catch (ex: Throwable) {
-                    app.contentResolver.delete(uri, null, null)
-                    throw ex
-                }
-            }
-        }
-        val dir = app.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: app.filesDir
-        val destination = File(dir, name)
-        val pending = File(dir, "$name.pending")
-        try {
-            FileOutputStream(pending, false).use { out ->
-                tmp.inputStream().use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        checkExportCancellation()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        out.write(buffer, 0, count)
-                    }
-                }
-            }
-            checkExportCancellation()
-            check(pending.renameTo(destination)) { "无法完成相册文件" }
-            exportCancelRequested = false
-            isExportCommitCompleted = true
-            return destination.absolutePath
-        } finally {
-            pending.delete()
-        }
+    private fun exportPublisher() = ExportPublisher(app, ::checkExportCancellation) {
+        exportCancelRequested = false
+        isExportCommitCompleted = true
     }
+
+    private fun publishExport(tmp: File, name: String, mime: String): String =
+        exportPublisher().write(name, mime) { destination ->
+            tmp.inputStream().use { source ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    checkExportCancellation()
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    destination.write(buffer, 0, count)
+                }
+            }
+        }
 
     private fun saveResult(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
         return if (exportFormat == "TIFF") {
@@ -1892,36 +1876,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveTiff(result: SpkResult, suffix: String, editParams: EditorParams = params): String {
         val g = grade(editParams)
         val icc = if (exportColorSpace == "Display P3") DisplayP3Icc.generate() else readSrgbIcc()
-        val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
-        try {
-            tmp.outputStream().use { out ->
-                TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation,
-                    ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
-            }
-            return publishExport(tmp, "Theia_$suffix.tiff", "image/tiff")
-        } finally {
-            tmp.delete()
+        return exportPublisher().write("Theia_$suffix.tiff", "image/tiff") { out ->
+            TiffWriter.writeRgba16(result.rgba16, result.width, result.height, g, icc, out, ::checkExportCancellation,
+                ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation))
         }
     }
 
     // DI TIFF：无调色、无 ICC（设备 RGB 密度）。
     private fun saveDiTiff(result: NativeRenderResult, suffix: String): String {
         val name = "Theia_DI_$suffix.tiff"
-        val tmp = File(app.cacheDir, "export_${System.nanoTime()}.tiff")
-        try {
-            tmp.outputStream().use { out ->
-                TiffWriter.writeNative(
-                    result,
-                    grade = null,
-                    icc = null,
-                    out = out,
-                    checkCancelled = ::checkExportCancellation,
-                    metadata = ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation),
-                )
-            }
-            return publishExport(tmp, name, "image/tiff")
-        } finally {
-            tmp.delete()
+        return exportPublisher().write(name, "image/tiff") { out ->
+            TiffWriter.writeNative(
+                result,
+                grade = null,
+                icc = null,
+                out = out,
+                checkCancelled = ::checkExportCancellation,
+                metadata = ExportMetadata.from(sourceExif, exportKeepCapture, exportKeepLocation),
+            )
         }
     }
 

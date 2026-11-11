@@ -25,7 +25,7 @@ dispatchers, dependency injection or new build dependencies.
 | `core.color` | Display P3 profile generation. |
 | `core.develop` | Existing per-photo analysis and Smart Develop recommendations. |
 | `data.local` | Sidecar and recipe file persistence. |
-| `data.export` | EXIF/GPS metadata and TIFF writing. |
+| `data.export` | EXIF/GPS metadata, TIFF writing, atomic output publication and export diagnostics. |
 | `ui.components` | Reusable controls, chrome, comparison and source-photo labels. |
 | `ui.theme` | Existing colors, typography and shapes. |
 | `engine` | Existing Kotlin/JNI interfaces, native pixel ownership and color pipeline. |
@@ -36,9 +36,10 @@ import feature screens or application routing. The stateful photo tray belongs
 to the editor UI rather than the reusable component package.
 
 `EditorViewModel` remains the single lifecycle owner of its state machine and
-native handles. Its method bodies, coroutine scopes, dispatcher, cancellation,
-cache limits and render ordering remain intact. Splitting that ownership into
-delegates would be a separate behavioral change, beyond this package refactor.
+native handles. The package refactor preserved method behavior, coroutine scopes,
+dispatchers and render ordering. Subsequent import/export performance changes
+are documented in [full-resolution-performance.md](full-resolution-performance.md).
+Publication helpers do not own editor state or native sessions.
 
 ## Compatibility and behavior
 

@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,14 +28,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -129,8 +136,30 @@ internal fun PhotoCanvas(
     modifier: Modifier = Modifier,
 ) {
     val canCompare = vm.sourceBitmap != null && vm.rendered != null && !vm.isCropping
+    val canHoldOriginal = canCompare && !comparing
+    var holdingOriginal by remember(vm.currentUri, vm.sourceBitmap) { mutableStateOf(false) }
+    val showingOriginal = canHoldOriginal && holdingOriginal
     BoxWithConstraints(
-        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).semantics { contentDescription = "照片预览" },
+        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)
+            .semantics {
+                contentDescription = "照片预览"
+                if (canCompare) stateDescription = when {
+                    comparing -> "分割对比"
+                    showingOriginal -> "原图"
+                    else -> "效果图"
+                }
+            }
+            .pointerInput(vm.currentUri, vm.sourceBitmap, canHoldOriginal) {
+                if (canHoldOriginal) detectTapGestures(onPress = {
+                    holdingOriginal = true
+                    try {
+                        tryAwaitRelease()
+                    } finally {
+                        // Release, cancellation and leaving this preview must all restore the edit.
+                        holdingOriginal = false
+                    }
+                })
+            },
         contentAlignment = Alignment.Center
     ) {
         val source = vm.sourceBitmap
@@ -149,6 +178,8 @@ internal fun PhotoCanvas(
             )
         } else if (comparing && canCompare) {
             BeforeAfterPreview(source!!, rendered!!, Modifier.fillMaxSize())
+        } else if (showingOriginal) {
+            Image(source!!.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else if (rendered != null) {
             Image(rendered.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         } else if (source != null) {
@@ -161,7 +192,7 @@ internal fun PhotoCanvas(
             }
         }
         val displayed = rendered ?: source
-        if ((!comparing || !canCompare) && displayed != null) {
+        if (!showingOriginal && (!comparing || !canCompare) && displayed != null) {
             val aspect = displayed.width.toFloat() / displayed.height
             val photoWidth = minOf(maxWidth, maxHeight * aspect)
             val photoHeight = photoWidth / aspect
@@ -175,6 +206,19 @@ internal fun PhotoCanvas(
                         .padding(4.dp))
                 }
             }
+        }
+
+        if (canHoldOriginal) {
+            Text(
+                if (showingOriginal) "原图 · 松手恢复" else "按住查看原图",
+                Modifier.align(Alignment.BottomStart).padding(10.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), TheiaShapes.badge)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
     }

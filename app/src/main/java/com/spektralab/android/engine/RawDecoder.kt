@@ -2,15 +2,20 @@ package com.spektralab.android.engine
 
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
+import android.util.Log
 import java.io.File
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
  * RAW 解码（LibRaw，JNI）。
  *
- * LibRaw 的 open_file 只接受文件系统路径，而 Android 的照片以 content:// URI 提供，
- * 所以先把 URI 拷到 cacheDir 的临时文件，解码后立即删除。
+ * LibRaw 接受文件路径：本地文件和可寻址的内容描述符直接读取，管道等来源才暂存到 cacheDir。
  * 解码输出线性 ProPhoto float RGB（已应用相机白平衡），以 input_color_space="ProPhoto RGB" 交给引擎。
  */
 object RawDecoder {
@@ -19,8 +24,11 @@ object RawDecoder {
 
     init { System.loadLibrary("spektralab") }
 
-    private external fun nativeDecodeRaw(path: String, halfSize: Boolean, userMul: FloatArray?): RawDecodeResult
-    private external fun nativeDecodeForExport(path: String, maxLongEdge: Int, userMul: FloatArray?): NativeRawImage
+    private external fun nativeDecodeRaw(path: String, halfSize: Boolean, userMul: FloatArray?,
+                                         cancellation: RawDecodeCancellation?): RawDecodeResult
+    private external fun nativeDecodeForExport(path: String, maxLongEdge: Int, userMul: FloatArray?,
+                                               cancellation: RawDecodeCancellation?): NativeRawImage
+    private external fun nativeReadCameraMatrix(path: String): FloatArray?
 
     private external fun nativeApplyLensCorrection(
         rgb: FloatArray, width: Int, height: Int,
@@ -84,24 +92,78 @@ object RawDecoder {
 
     /** 解码一个 content URI 指向的 RAW。[halfSize] 用半分辨率（预览省内存）。
      *  [userMul] 非空时用它替代相机 as-shot 白平衡（R, G, B, G2）。失败抛 [SpkException]。 */
-    fun decode(context: Context, uri: Uri, halfSize: Boolean, userMul: FloatArray? = null): RawDecodeResult {
-        val tmp = File(context.cacheDir, "raw_input_${System.nanoTime()}.raw")
-        try {
-            val input = context.contentResolver.openInputStream(uri)
-                ?: throw SpkException("无法读取 RAW 文件")
-            input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
-            return nativeDecodeRaw(tmp.absolutePath, halfSize, userMul)
-        } finally {
-            tmp.delete()
+    fun decode(context: Context, uri: Uri, halfSize: Boolean, userMul: FloatArray? = null,
+               cancellation: RawDecodeCancellation? = null): RawDecodeResult {
+        return withRawInput(context, uri, "raw_input_", cancellation) { path ->
+            nativeDecodeRaw(path, halfSize, userMul, cancellation)
         }
     }
 
-    fun decodeForExport(context: Context, uri: Uri, maxLongEdge: Int, userMul: FloatArray? = null): NativeRawImage {
-        val tmp = File(context.cacheDir, "raw_export_${System.nanoTime()}.raw")
+    fun decodeForExport(context: Context, uri: Uri, maxLongEdge: Int, userMul: FloatArray? = null,
+                        cancellation: RawDecodeCancellation? = null): NativeRawImage {
+        return withRawInput(context, uri, "raw_export_", cancellation) { path ->
+            nativeDecodeForExport(path, maxLongEdge, userMul, cancellation)
+        }
+    }
+
+    /** Header metadata is enough to choose custom white balance before demosaicing. */
+    fun readCameraMatrix(context: Context, uri: Uri, cancellation: RawDecodeCancellation? = null): FloatArray? =
+        withRawInput(context, uri, "raw_input_", cancellation, ::nativeReadCameraMatrix)
+
+    /** Descriptor lifetime encloses LibRaw's synchronous read; no decoded pixels are cached here. */
+    private fun <T> withRawInput(context: Context, uri: Uri, prefix: String,
+                                 cancellation: RawDecodeCancellation?, decode: (String) -> T): T {
+        val started = SystemClock.elapsedRealtime()
+        checkCancellation(cancellation)
+        if (uri.scheme == "file") {
+            val path = uri.path ?: throw SpkException("无法读取 RAW 文件")
+            return decode(path).also { logDecode("file", started) }
+        }
+
+        val descriptor = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+        descriptor?.use { opened ->
+            val regular = runCatching { OsConstants.S_ISREG(Os.fstat(opened.fileDescriptor).st_mode) }.getOrDefault(false)
+            val seekable = regular && runCatching {
+                Os.lseek(opened.fileDescriptor, 0, OsConstants.SEEK_CUR) == 0L
+            }.getOrDefault(false)
+            if (seekable) {
+                return decode("/proc/self/fd/${opened.fd}").also { logDecode("descriptor", started) }
+            }
+            if (!regular) {
+                // Consume the descriptor already opened by a cloud provider; do not fetch it twice.
+                return stageInput(context, prefix, ParcelFileDescriptor.AutoCloseInputStream(opened),
+                    cancellation, decode).also { logDecode("staged", started) }
+            }
+        }
+
+        val input = context.contentResolver.openInputStream(uri) ?: throw SpkException("无法读取 RAW 文件")
+        return stageInput(context, prefix, input, cancellation, decode).also { logDecode("staged", started) }
+    }
+
+    private fun <T> stageInput(context: Context, prefix: String, input: InputStream,
+                               cancellation: RawDecodeCancellation?, decode: (String) -> T): T = input.use { source ->
+        val temporary = File.createTempFile(prefix, ".raw", context.cacheDir)
         try {
-            val input = context.contentResolver.openInputStream(uri) ?: throw SpkException("无法读取 RAW 文件")
-            input.use { source -> tmp.outputStream().use { target -> source.copyTo(target) } }
-            return nativeDecodeForExport(tmp.absolutePath, maxLongEdge, userMul)
-        } finally { tmp.delete() }
+            temporary.outputStream().use { target ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    checkCancellation(cancellation)
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    target.write(buffer, 0, count)
+                }
+            }
+            decode(temporary.absolutePath)
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun logDecode(input: String, started: Long) {
+        Log.i("SpkRaw", "input=$input decode_ms=${SystemClock.elapsedRealtime() - started}")
+    }
+
+    private fun checkCancellation(cancellation: RawDecodeCancellation?) {
+        if (cancellation?.isCancelled() == true) throw SpkException("RAW decode cancelled")
     }
 }

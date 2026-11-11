@@ -23,9 +23,11 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 
 #define LOG_TAG "SpektraLab-Raw"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 namespace {
 
@@ -130,10 +132,60 @@ bool apply_lens_correction(std::vector<float>& rgb, std::uint32_t w, std::uint32
     return true;
 }
 
+bool raw_stage_succeeded(int status, const char* stage, std::string& error) {
+    if (status == LIBRAW_SUCCESS) return true;
+    error = std::string("RAW ") + stage + ": " + LibRaw::strerror(status);
+    return false;
+}
+
+void log_raw_data_warnings(LibRaw& raw) {
+    const int count = raw.error_count();
+    if (count == 0) return;
+
+    // LibRaw documents error_count() as NON-FATAL unpack errors, including
+    // out-of-range samples recovered by nikon_load_raw(). It is cumulative,
+    // not the return status of unpack() or dcraw_process().
+    LOGW("LibRaw recovered %d data warnings: camera=%s %s, process_warnings=%u",
+         count, raw.imgdata.idata.make, raw.imgdata.idata.model,
+         raw.imgdata.process_warnings);
+}
+
+struct RawCancellation {
+    JNIEnv* env;
+    jobject callback;
+    jmethodID method = nullptr;
+
+    RawCancellation(JNIEnv* environment, jobject value) : env(environment), callback(value) {
+        if (!callback) return;
+        jclass type = env->GetObjectClass(callback);
+        if (type) {
+            method = env->GetMethodID(type, "isCancelled", "()Z");
+            env->DeleteLocalRef(type);
+        }
+    }
+
+    bool requested() const {
+        return env->ExceptionCheck() ||
+               (callback && method && env->CallBooleanMethod(callback, method) == JNI_TRUE);
+    }
+};
+
+int check_raw_progress(void* context, enum LibRaw_progress, int, int) {
+    return static_cast<const RawCancellation*>(context)->requested() ? 1 : 0;
+}
+
 bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
-                DecodedRaw& out, std::string& error, int max_long_edge = 0) {
+                DecodedRaw& out, std::string& error, int max_long_edge = 0,
+                const RawCancellation* cancellation = nullptr) {
     try {
+        if (cancellation && cancellation->requested()) {
+            error = "RAW decode cancelled";
+            return false;
+        }
         LibRaw raw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
+        if (cancellation && cancellation->callback) {
+            raw.set_progress_handler(check_raw_progress, const_cast<RawCancellation*>(cancellation));
+        }
         libraw_output_params_t& p = raw.imgdata.params;
         p.user_qual = 3;                // AHD
         p.half_size = half_size ? 1 : 0;
@@ -151,37 +203,24 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
         p.user_flip = -1;
         p.highlight = 0;
         if (user_mul) {
-            p.user_mul[0] = user_mul[0]; p.user_mul[1] = user_mul[1];
-            p.user_mul[2] = user_mul[2]; p.user_mul[3] = user_mul[3];
+            std::copy_n(user_mul, 4, p.user_mul);
         }
 
-        int status = raw.open_file(path.c_str());
-        if (status != LIBRAW_SUCCESS) {
-            error = std::string("RAW open: ") + LibRaw::strerror(status);
+        if (!raw_stage_succeeded(raw.open_file(path.c_str()), "open", error)) {
             return false;
         }
         // Use half demosaic only when it still contains every requested output pixel.
         if (max_long_edge > 0 &&
-            std::max(raw.imgdata.sizes.width, raw.imgdata.sizes.height) / 2 >= max_long_edge)
+            std::max(raw.imgdata.sizes.width, raw.imgdata.sizes.height) / 2 >= max_long_edge) {
             p.half_size = 1;
-        status = raw.unpack();
-        if (status != LIBRAW_SUCCESS) {
-            error = std::string("RAW unpack: ") + LibRaw::strerror(status);
+        }
+        if (!raw_stage_succeeded(raw.unpack(), "unpack", error)) {
             return false;
         }
-        if (raw.error_count() != 0) {
-            error = "RAW unpack: decoder reported corrupt data";
+        if (!raw_stage_succeeded(raw.dcraw_process(), "process", error)) {
             return false;
         }
-        status = raw.dcraw_process();
-        if (status != LIBRAW_SUCCESS) {
-            error = std::string("RAW process: ") + LibRaw::strerror(status);
-            return false;
-        }
-        if (raw.error_count() != 0) {
-            error = "RAW process: decoder reported corrupt data";
-            return false;
-        }
+        log_raw_data_warnings(raw);
 
         int image_status = LIBRAW_SUCCESS;
         std::unique_ptr<libraw_processed_image_t, decltype(&LibRaw::dcraw_clear_mem)> image(
@@ -228,6 +267,21 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
         const std::uint64_t samples = std::uint64_t(out.width) * out.height * 3;
         raw.recycle();
         out.rgb.resize(static_cast<std::size_t>(samples));
+        if (out.width == source_width && out.height == source_height) {
+            // At full size the bilinear coordinates are exactly integer pixels.
+            // Keep the same double division/float rounding, without fetching
+            // four identical neighbours for every output channel.
+            for (std::size_t i = 0; i < samples; ++i) {
+                if (cancellation && i % (1024 * 1024) == 0 && cancellation->requested()) {
+                    error = "RAW decode cancelled";
+                    return false;
+                }
+                std::uint16_t value;
+                std::memcpy(&value, image->data + i * sizeof(value), sizeof(value));
+                out.rgb[i] = float(double(value) / 65535.0);
+            }
+            return true;
+        }
         const auto sample = [&](std::uint32_t x, std::uint32_t y, std::uint32_t channel) {
             std::uint16_t value;
             const std::uint64_t index = (std::uint64_t(y) * source_width + x) * 3 + channel;
@@ -235,6 +289,10 @@ bool decode_raw(const std::string& path, bool half_size, const float* user_mul,
             return double(value);
         };
         for (std::uint32_t y = 0; y < out.height; ++y) {
+            if (cancellation && cancellation->requested()) {
+                error = "RAW decode cancelled";
+                return false;
+            }
             const double sy = std::clamp((y + 0.5) * source_height / out.height - 0.5, 0.0, double(source_height - 1));
             const std::uint32_t y0 = std::uint32_t(sy), y1 = std::min(y0 + 1, source_height - 1);
             const double fy = sy - y0;
@@ -269,10 +327,47 @@ void throw_engine_error(JNIEnv* env, const std::string& msg) {
 
 extern "C" {
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_spektralab_android_engine_RawDecoder_nativeReadCameraMatrix(
+    JNIEnv* env, jobject, jstring path) {
+    try {
+        const char* text = env->GetStringUTFChars(path, nullptr);
+        if (!text) return nullptr;
+        const std::string file(text);
+        env->ReleaseStringUTFChars(path, text);
+        LibRaw raw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
+        std::string error;
+        if (!raw_stage_succeeded(raw.open_file(file.c_str()), "metadata", error)) {
+            throw_engine_error(env, error);
+            return nullptr;
+        }
+        float matrix[9];
+        bool nonzero = false;
+        for (unsigned row = 0; row < 3; ++row) {
+            for (unsigned column = 0; column < 3; ++column) {
+                const float value = raw.imgdata.color.cam_xyz[row][column];
+                if (!std::isfinite(value)) return nullptr;
+                matrix[row * 3 + column] = value;
+                nonzero |= value != 0.0f;
+            }
+        }
+        // Some formats populate the matrix only during processing: retain the old fallback there.
+        if (!nonzero) return nullptr;
+        jfloatArray result = env->NewFloatArray(9);
+        if (result) env->SetFloatArrayRegion(result, 0, 9, matrix);
+        return result;
+    } catch (const std::exception& error) {
+        throw_engine_error(env, error.what());
+        return nullptr;
+    }
+}
+
 JNIEXPORT jobject JNICALL
 Java_com_spektralab_android_engine_RawDecoder_nativeDecodeForExport(
-    JNIEnv* env, jobject, jstring path, jint maxLongEdge, jfloatArray userMul) {
+    JNIEnv* env, jobject, jstring path, jint maxLongEdge, jfloatArray userMul, jobject cancellation) {
     try {
+        const RawCancellation cancelled(env, cancellation);
+        if (env->ExceptionCheck()) return nullptr;
         const char* text = env->GetStringUTFChars(path, nullptr);
         if (!text) return nullptr;
         const std::string file(text);
@@ -285,7 +380,8 @@ Java_com_spektralab_android_engine_RawDecoder_nativeDecodeForExport(
         }
         DecodedRaw raw;
         std::string error;
-        if (!decode_raw(file, false, userMul ? multipliers : nullptr, raw, error, maxLongEdge)) {
+        if (!decode_raw(file, false, userMul ? multipliers : nullptr, raw, error, maxLongEdge, &cancelled)) {
+            if (env->ExceptionCheck()) return nullptr;
             throw_engine_error(env, error); return nullptr;
         }
         auto pixels = std::make_unique<NativeRawPixels>();
@@ -384,7 +480,9 @@ Java_com_spektralab_android_engine_NativeRawImage_nativeCorrectLens(
 
 JNIEXPORT jobject JNICALL
 Java_com_spektralab_android_engine_RawDecoder_nativeDecodeRaw(
-    JNIEnv* env, jobject, jstring path, jboolean halfSize, jfloatArray userMul) {
+    JNIEnv* env, jobject, jstring path, jboolean halfSize, jfloatArray userMul, jobject cancellation) {
+    const RawCancellation cancelled(env, cancellation);
+    if (env->ExceptionCheck()) return nullptr;
     const char* p = env->GetStringUTFChars(path, nullptr);
     if (!p) return nullptr;
     const std::string file(p);
@@ -401,7 +499,8 @@ Java_com_spektralab_android_engine_RawDecoder_nativeDecodeRaw(
     std::string error;
     // The editor needs a responsive preview, not a half-resolution copy of a 50 MP sensor frame.
     if (!decode_raw(file, halfSize == JNI_TRUE, user_mul, decoded, error,
-                    halfSize == JNI_TRUE ? 2048 : 0)) {
+                    halfSize == JNI_TRUE ? 2048 : 0, &cancelled)) {
+        if (env->ExceptionCheck()) return nullptr;
         LOGE("%s", error.c_str());
         throw_engine_error(env, error);
         return nullptr;

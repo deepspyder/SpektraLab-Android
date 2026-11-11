@@ -69,6 +69,12 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var homeViewingStandOnly = false
     private var exportLayoutOnly = false
     private var theiaBrandOnly = false
+    private var holdOriginalOnly = false
+    private var nefImportOnly = false
+    private var fullExportPerfOnly = false
+    private var rawInputAccessOnly = false
+    private var rawCancellationOnly = false
+    private var exportEncodingOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -82,6 +88,12 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         homeViewingStandOnly = audit == "home-viewing-stand"
         exportLayoutOnly = audit == "export-layout"
         theiaBrandOnly = audit == "theia-brand"
+        holdOriginalOnly = audit == "hold-original"
+        nefImportOnly = audit == "nef-import"
+        fullExportPerfOnly = audit == "full-export-perf"
+        rawInputAccessOnly = audit == "raw-input-access"
+        rawCancellationOnly = audit == "raw-cancellation"
+        exportEncodingOnly = audit == "export-encoding"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -121,6 +133,48 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (exportEncodingOnly) {
+            case("export.encoding_and_atomic_publication") { ExportEncodingAudit(this).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (rawCancellationOnly) {
+            case("raw.cancel_full_size_decode") { RawCancellationAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (rawInputAccessOnly) {
+            case("raw.file_descriptor_and_pipe") { RawInputAccessAudit(this).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (fullExportPerfOnly) {
+            case("export.full_resolution_policy") { FullResolutionExportAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (nefImportOnly) {
+            case("raw.nikon_z6ii_camera_files") { NefImportAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (holdOriginalOnly) {
+            case("preview.hold_original_and_restore") { HoldOriginalAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if(theiaBrandOnly){
             case("brand.theia_and_upgrade_compatibility"){TheiaBrandAudit(this,output).run()}
             val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
@@ -504,7 +558,18 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         data class TiffInfo(val width: Int, val height: Int, val bits: List<Int>, val compression: Int,
                             val samples: Int, val hasIcc: Boolean)
         fun inspectTiff(outputUri: Uri): TiffInfo {
-            val bytes = targetContext.contentResolver.openInputStream(outputUri)?.use { it.readBytes() }
+            // Only IFD/ICC metadata is inspected here. Reading the entire TIFF
+            // while deliberately retaining a 3400px proof defeats the low-heap test.
+            val bytes = targetContext.contentResolver.openInputStream(outputUri)?.use { input ->
+                val header = ByteArray(64 * 1024)
+                var used = 0
+                while (used < header.size) {
+                    val count = input.read(header, used, header.size - used)
+                    if (count < 0) break
+                    used += count
+                }
+                header.copyOf(used)
+            }
                 ?: error("cannot read TIFF $outputUri")
             check(bytes.size >= 16 && bytes[0] == 'I'.code.toByte() && bytes[1] == 'I'.code.toByte()) { "TIFF is not little-endian" }
             val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -536,6 +601,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             val bits = (0..2).map { buffer.getShort(bitOffset + it * 2).toInt() and 0xffff }
             val iccEntry = entries[34675]
             val hasIcc = iccEntry != null && (buffer.getInt(iccEntry + 4).toLong() and 0xffffffffL) > 0
+            targetContext.contentResolver.query(outputUri, arrayOf(MediaStore.Images.Media.SIZE), null, null, null)?.use {
+                check(it.moveToFirst() && it.getLong(0) == scalar(273) + scalar(279)) { "TIFF pixel payload is incomplete" }
+            } ?: error("cannot query TIFF size")
             return TiffInfo(scalar(256).toInt(), scalar(257).toInt(), bits,
                 scalar(259).toInt(), scalar(277).toInt(), hasIcc)
         }
@@ -549,6 +617,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             } ?: error("cannot query published TIFF")
         }
 
+        val frameBeforeSave = vm.lastResult
+        val bitmapBeforeSave = vm.rendered
         runOnMainSync { vm.exportDi() }
         awaitAction("DI TIFF")
         val diUri = outputUri("DI 导出:")
@@ -570,6 +640,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         assertPublished(tiffUri, "Theia_")
         restoredInteractiveSession("TIFF export")
+        check(vm.lastResult === frameBeforeSave && vm.rendered === bitmapBeforeSave) {
+            "Saving triggered a redundant preview render"
+        }
 
         return "Soft proof followed the selected resolution; HD preview reopened the 3600px source; editor session recovered after all actions; DI and P3 TIFF headers, bit depth, dimensions, ICC and MediaStore publication verified."
         } finally {

@@ -72,17 +72,18 @@ jobject wrapResult(JNIEnv* env, const spk_result& r) {
     jshortArray arr = env->NewShortArray(total);
     if (!arr) return nullptr;
 
-    jshort* dst = env->GetShortArrayElements(arr, nullptr);
-    if (!dst) return nullptr;
     for (uint32_t y = 0; y < r.height; ++y) {
         const uint16_t* src = r.rgba16 + static_cast<size_t>(y) * r.row_stride_px * 4;
-        jshort* row = dst + static_cast<size_t>(y) * r.width * 4;
-        for (uint32_t x = 0; x < r.width * 4; ++x) {
-            // uint16 -> int16 保留原始位；Kotlin 侧用 `toInt() and 0xFFFF` 还原。
-            row[x] = static_cast<jshort>(static_cast<int16_t>(src[x]));
+        // Copy one row with identical uint16 bits; GetShortArrayElements may
+        // allocate or pin another full-frame array while the engine result is live.
+        env->SetShortArrayRegion(arr, static_cast<jsize>(y) * r.width * 4,
+                                 static_cast<jsize>(r.width) * 4,
+                                 reinterpret_cast<const jshort*>(src));
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(arr);
+            return nullptr;
         }
     }
-    env->ReleaseShortArrayElements(arr, dst, 0);
 
     jstring progress = env->NewStringUTF(r.progress_id);
 

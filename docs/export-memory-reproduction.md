@@ -1,5 +1,10 @@
 # Android large-image / RAW export reproduction — 2026-11-03
 
+Follow-up: [2026-11-11 full-resolution performance work](full-resolution-performance.md)
+records later allocation/publication changes, exact-output checks, remaining
+active GPU peaks and the distinction between emulator and phone evidence.
+The measurements below describe the earlier build.
+
 ## Environment
 
 - Android x86_64 emulator `emulator-5554`, model `sdk_gphone64_x86_64`, cold-booted after the 50 MP render saturated the earlier emulator session.

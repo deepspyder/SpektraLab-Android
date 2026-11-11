@@ -64,9 +64,8 @@ else()
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/imprint_raster.cpp
     )
 
-    set(SPK_GPU_SOURCES
-        ${SPEKTRA_ENGINE_DIR}/src/gpu/vulkan_gpu.cpp
-    )
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidVulkanMemory.cmake")
+    theia_android_vulkan_backend("${SPEKTRA_ENGINE_DIR}" SPK_GPU_SOURCES)
 
     set(SPK_VOLK_SOURCES
         ${SPEKTRA_ENGINE_DIR}/third_party/volk/volk.c
@@ -77,6 +76,8 @@ else()
     list(APPEND SPK_INCLUDE_DIRS
         ${SPEKTRA_ENGINE_DIR}/src
         ${SPEKTRA_ENGINE_DIR}/src/core
+        ${SPEKTRA_ENGINE_DIR}/src/gpu
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${SPEKTRA_ENGINE_DIR}/third_party/volk
         ${SPEKTRA_ENGINE_DIR}/third_party/stb
         ${CMAKE_CURRENT_BINARY_DIR}/generated

@@ -49,6 +49,42 @@ object ColorPipeline {
         return applyGradeImpl(rgba16, width, height, grade, sourceColorSpace, histogram = true)
     }
 
+    /** Keep large proof/preview conversion bounded: no full-frame managed ARGB copy. */
+    fun applyGradeToBitmap(rgba16: ShortArray, width: Int, height: Int, grade: Grade,
+                           sourceColorSpace: String = "sRGB"): Pair<Bitmap, Histogram> {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        try {
+            val rows = minOf(32, height)
+            val strip = IntArray(width * rows)
+            val histogram = Histogram(IntArray(256), IntArray(256), IntArray(256))
+            val pixel = FloatArray(3)
+            val transform = if (sourceColorSpace == "Display P3") {
+                ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB))
+            } else null
+            var y = 0
+            while (y < height) {
+                val count = minOf(rows, height - y)
+                for (i in 0 until width * count) {
+                    val index = (y * width + i) * 4
+                    grade.gradeAt(rgba16[index], rgba16[index + 1], rgba16[index + 2], pixel,
+                        i % width, y + i / width, width, height)
+                    transform?.transform(pixel)
+                    val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
+                    val g = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
+                    val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
+                    strip[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                    histogram.r[r]++; histogram.g[g]++; histogram.b[b]++
+                }
+                bitmap.setPixels(strip, 0, width, 0, y, width, count)
+                y += count
+            }
+            return bitmap to histogram
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            throw error
+        }
+    }
+
     private fun applyGradeImpl(rgba16: ShortArray, width: Int, height: Int, grade: Grade,
                                sourceColorSpace: String, histogram: Boolean): GradedFrame {
         val n = width * height
@@ -182,6 +218,9 @@ class Grade(
     private val identity = wbR == 1f && wbG == 1f && wbB == 1f && encodedExposureGain == 1f && contrast == 0f &&
         brightness == 0f && highlights == 0f && shadows == 0f && blackPoint == 0f && whitePoint == 0f &&
         saturation == 1f && cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
+
+    /** Neutral Layer 2 can pass the existing 16-bit samples through exactly. */
+    internal val isIdentity: Boolean get() = identity && vignetteGains == null
 
     /** 把 sRGB 编码的 16bit 像素调色，结果（0..1）写进 [out][0..2]。 */
     fun grade(r16: Short, g16: Short, b16: Short, out: FloatArray) {

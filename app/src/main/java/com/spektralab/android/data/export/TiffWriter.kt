@@ -107,6 +107,34 @@ object TiffWriter {
         if (icc != null) out.write(icc)
         out.write(payload.toByteArray())
 
+        // Neutral/DI output needs neither float grading nor per-sample ByteBuffer calls.
+        // A 16-bit sample round-trips through identity Grade unchanged; preserve it directly.
+        val outputGrade = grade?.takeUnless { it.isIdentity }
+        if (outputGrade == null) {
+            val rows = minOf(32, height)
+            val strip = ShortArray(width * rows * 4)
+            val encoded = ByteArray(width * rows * 6)
+            var y = 0
+            while (y < height) {
+                checkCancelled()
+                val count = minOf(rows, height - y)
+                read(y, count, strip)
+                var destination = 0
+                for (pixel in 0 until width * count) {
+                    val source = pixel * 4
+                    for (channel in 0..2) {
+                        val sample = strip[source + channel].toInt()
+                        encoded[destination++] = sample.toByte()
+                        encoded[destination++] = (sample ushr 8).toByte()
+                    }
+                }
+                out.write(encoded, 0, destination)
+                y += count
+            }
+            checkCancelled()
+            return
+        }
+
         // ---- 像素数据（分块写，避免一次性大缓冲）----
         val chunk = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
         val px = FloatArray(3)
@@ -119,17 +147,11 @@ object TiffWriter {
             read(y, stripRows, strip)
             for (i in 0 until width * stripRows) {
                 val index = i * 4
-                if (grade != null) {
-                    grade.gradeAt(strip[index], strip[index + 1], strip[index + 2], px, i % width, y + i / width, width, height)
-                    chunk.putShort(toU16(px[0]))
-                    chunk.putShort(toU16(px[1]))
-                    chunk.putShort(toU16(px[2]))
-                } else {
-                    // 无调色透传（DI 导出：设备 RGB 密度，不套 Layer 2）
-                    chunk.putShort(strip[index])
-                    chunk.putShort(strip[index + 1])
-                    chunk.putShort(strip[index + 2])
-                }
+                outputGrade.gradeAt(strip[index], strip[index + 1], strip[index + 2], px,
+                    i % width, y + i / width, width, height)
+                chunk.putShort(toU16(px[0]))
+                chunk.putShort(toU16(px[1]))
+                chunk.putShort(toU16(px[2]))
                 if (chunk.remaining() < 6) {
                     out.write(chunk.array(), 0, chunk.position())
                     chunk.clear()
