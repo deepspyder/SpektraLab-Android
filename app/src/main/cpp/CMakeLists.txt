@@ -19,7 +19,9 @@ set(SPK_INCLUDE_DIRS ${SPEKTRA_ENGINE_DIR}/include)
 
 set(SPK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/jni_bridge.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/curve_grade.cpp
 )
+set_source_files_properties(curve_grade.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 
 if(SPEKTRA_USE_STUB_ENGINE)
     # ---- stub 引擎 -----------------------------------------------------

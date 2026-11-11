@@ -1,16 +1,18 @@
 {
   "date": "2026-11-11",
-  "batch": "第二批：完成 T02 的优先调度/可观察状态/系统压力准入，以及 T03 的保守正式缓存接线。T02/T03 在本批支持范围内已验收；F01/F02 的更完整成本模型、随机种子和 tile 等仍标为进行中。未新增调色/图库界面。",
+  "batch": "v0.1.4（5）发布批次：集成 T04 五通道曲线、T05 八色 HSL 与自然饱和度，完成控件/历史/保存/复制/预览/三格式/批量全链路。发布版本的 23 组、175 条记录和 3 种屏幕配置重新通过。F04 功能代码已齐，真机持续性能/颜色与超宽图边界仍待验收；第二批 84d47d9 保持在 master 历史。",
   "validation": [
-    "最终修正版同一轮19组模拟器覆盖全部通过（逐文件核对时戳，未混用旧通过记录）：batch-selection, editing-feedback, effect-baselines, export-actions, export-cache-raw, export-cache, export-encoding, export-layout, export-memory, export, hold-original, import-selection, native, nef-import, raw-cancellation, raw-input-access, render-foundation, render-scheduling, smart-develop。",
-    "Debug、androidTest、签名 Release 构建通过；完整覆盖使用 Release native+测试签名。MediaStore URI 与同字节文件身份补测曾失败，修正授权描述符读取后通过；首次指纹取消和跨dispatcher租约回收已补齐。",
-    "优先级、同级 FIFO、8 次越过上限、取消等待者、异常恢复与状态计数通过；系统低内存策略使用可控输入测拒绝/允许，正常模拟器实际调用也通过。未人为制造真机 OOM。",
-    "正式单张/批量缓存 miss/write/hit；TIFF 完整字节一致；JPEG/PNG 复用；损坏重算、源图/参数失效、读取取消和随机/云端绕过通过。",
-    "24MP NEF 输出6064×4040，两份TIFF均146,992,152字节，SHA-256 3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3；最终轮首次8004ms、命中641ms。样本关闭颗粒/眩光，单次模拟器测量，不是默认效果或手机加速保证。",
-    "按住原图一轮截图把首页帧与编辑器帧比较而失败，证据已保留；测试改等真实帧提交，精确恢复/不重新渲染/参数不变断言保留，修正后通过。未修改产品预览UI。",
-    "缓存保留上限512MiB，写入额外要求两倍结果+256MiB可用空间；默认随机效果继续完整渲染，不改变质量。",
-    "小米17Pro与其他GPU真机未连接；首次全尺寸全局阶段活跃峰值仍未降低。UI没有新增控件，现有布局回归通过。",
-    "第二批提交范围为源码、测试与进度文档；旧 release APK/DM 留本地，不纳入本批提交。"
+    "v0.1.4（5）发布构建同一轮 23 组、175 条记录全部通过，核对时戳，未混用此前成功结果：color, color-raw, curves, curves-raw, render-scheduling, render-foundation, export-cache, export-actions, export, batch-selection, editing-feedback, raw-input-access, raw-cancellation, export-encoding, nef-import, export-memory, native, effect-baselines, import-selection, smart-develop, hold-original, export-layout, export-cache-raw。另有手机 1.3 倍大字体、平板和横屏 3 组完整交互/批量输出/截图核对通过。",
+    "Debug、androidTest、原签名 Release 构建通过；API 37 x86_64 模拟器使用 Release 原生库配合测试签名。应用仍为 Theia / com.spektralab.android / 0.1.4 (5)，arm64-v8a+x86_64，原签名 SHA-256 3df31b6b60a0e7edb705d495c086e28cb699883d1b29ceb723992b08ed43af39。",
+    "自然饱和度与八色 HSL 按原型定义接入已有饱和度和色彩平衡之间，版本为 1；中性跳过并保留旧数据/处理路径。色相环绕、灰色/高饱和色/正负极值、八色往返和复制/目标构图保持通过。",
+    "native 与 Kotlin 参考最大误差为 2.3841858e-7；与曲线/暗角组合、16 位 TIFF 样本及 sRGB/P3 预览一致性通过。预览和导出共用 CPU 原生条带，没有新增 GPU 调色内核。",
+    "真实拖动/取消、一次历史提交、撤销/重做不重新显影、无障碍调节、每色/全部复位通过。两张照片分别保存/切换，单张与批量 PNG 像素完全一致；JPEG/PNG/TIFF 实际导出及未来/畸形数据保留、拒绝静默导出通过。",
+    "24MP Z6II NEF 带新色彩调节的两次全尺寸 TIFF 均为 6064×4040、146,992,152 字节，SHA-256 3a9a999dd1df6821142fe0b96f9de36fee6ce13c3734f9ab19891bf32e8e4339，且与中性结果不同。发布回归首次 10438ms/缓存命中 3863ms，关闭颗粒和眩光；单次模拟器样本不作为手机性能保证。",
+    "已有曲线 RAW 输出保持 T04 哈希 8316f8bb09d07fab6d4fd0dae8ed25e67aa4c09180ced6989ac943df632f8890；中性 RAW 保持 3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3。原有胶片效果、按住原图、智能显影、裁剪/元数据/暗角、批量选择、队列、缓存/损坏/取消/失效、RAW 访问/NEF 导入、编码与导出内存回归通过。",
+    "截图核对后将新滑杆统一为现有细轨/圆点；圆体、炭灰、琥珀和原布局保持。测试曾因只向下寻找离屏控件及横屏没有滚动到所选滑杆而失败，已补双向定位并保留原断言，修正后的全部配置重新通过；旧失败和模拟器恢复记录保留本地。",
+    "共享引擎和 LibRaw 与 T04 基线一致，原有共享检出修改保留。包边界和 diff 空白检查通过。算法来源及 GPL 修改说明已补充到 NOTICE.md；旧 release APK/DM 留本地，不纳入本阶段源码提交范围。",
+    "小米 17 Pro 与其他 GPU 真机未连接；驱动、持续交互、颜色和峰值仍未验收，首次全尺寸全局阶段活跃峰值未降低。每次原生最多 32 行/1,048,576 像素，固定条带尚未适配宽度超过 32768 像素的超宽图。F05—F20 未开发能力继续保留。",
+    "发布回归曾在批量立即取消清理断言出现跨主线程读取时序失败；补充批量已启动检查、状态诊断和 Main idle 屏障，保留全部断言，随后同一轮 23 组与全部屏幕重新通过；未为此修改导出业务逻辑。"
   ],
   "features": [
     {
@@ -66,12 +68,23 @@
     {
       "id": "F04",
       "name": "曲线、八色 HSL、自然饱和度",
-      "status": "pending",
-      "evidence": [],
-      "remaining": [
-        "算法与 GPU/原生路径；Compose 控件；历史/保存/复制/导出；多尺寸视觉验收"
+      "status": "in_progress",
+      "evidence": [
+        "T04 五通道曲线及 T05 八色 HSL/自然饱和度功能代码已齐；模型/控件/历史/每图保存/复制/三格式/批量全链路已接通，新文案资源化",
+        "最终 23 组/175 条记录、3 种屏幕配置和 24MP RAW 全尺寸通过；真实取消与每图/批量像素一致，旧输出基线保持"
       ],
-      "sources": []
+      "remaining": [
+        "真机持续交互/颜色/性能验收；超宽图条带支持边界专项。功能开发已齐，不能以模拟器结果替代这些验收。"
+      ],
+      "sources": [
+        "app/src/main/java/com/spektralab/android/core/color/ToneCurves.kt",
+        "app/src/main/cpp/curve_grade.cpp",
+        "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/CurveEditor.kt",
+        "app/src/androidTest/java/com/spektralab/android/CurveAudit.kt",
+        "app/src/main/java/com/spektralab/android/core/color/ColorAdjustments.kt",
+        "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/ColorEditor.kt",
+        "app/src/androidTest/java/com/spektralab/android/ColorAudit.kt"
+      ]
     },
     {
       "id": "F05",
@@ -235,10 +248,9 @@
     }
   ],
   "next": [
-    "T04：曲线完整垂直切片；固定旧后期数学，再接GPU/原生处理、Compose曲线交互与全链路一致性。",
-    "T05：八色HSL与自然饱和度；与曲线共享后期合同，逐项做多尺寸视觉、撤销/保存/复制/导出验收。",
-    "F01/F02继续：设备成本模型、完整任务身份与阶段状态、显式随机种子、tile/容量测量；不因基础已通过而删除剩余条件。",
-    "T06/F07：资产/变体迁移原型，随后观景台项目输出和半格；其他F03—F20继续按清单逐项开发。"
+    "T06/F07：用 sidecar 副本和测试库建立 asset/variant 映射，验证幂等、中断恢复和唯一写入者，再连接正式入口；不先迁移用户记录。",
+    "继续 F01/F02 成本模型、随机 seed 合同与 tile/容量；F03/F04 大图全局峰值、真机颜色/性能和超宽条带仍需专项。",
+    "按方案继续 F05 通道混合/色轮、F06 分组复制/编辑预设，以及后续图库、持久观景台/导出和半格；F05—F20 未开发功能不删除或冒充完成。"
   ],
   "tasks": [
     {
@@ -268,14 +280,14 @@
     {
       "id": "T04",
       "name": "曲线垂直切片",
-      "status": "pending",
-      "detail": "下一批开始RGB/Luma及分通道曲线垂直切片，完成数学/原生路径、控件、历史、保存、复制和导出；S1剩余专项保持跟踪。"
+      "status": "verified",
+      "detail": "五通道曲线控件/手势/历史/每图保存/复制/预览/三格式导出已验收；数学与 native 误差、真实取消、24MP RAW 全尺寸、3 种屏幕配置及最终 21 组回归通过。采用 CPU 原生条带，真机性能/超宽图边界仍列出；不包含 T05 HSL/自然饱和度。"
     },
     {
       "id": "T05",
       "name": "HSL 与自然饱和度",
-      "status": "pending",
-      "detail": "依赖统一后期合同，不能只实现预览控件。"
+      "status": "verified",
+      "detail": "八色 HSL/自然饱和度垂直切片的模拟器功能验收完成，共用后期合同和原生 CPU 条带；控件/取消/历史/保存/复制/三格式/批量、23 组回归、3 种屏幕和 24MP RAW 通过。真机和超宽图边界仍列入 F04/F03，未宣称 GPU 内核。"
     },
     {
       "id": "T06",

@@ -62,6 +62,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -381,7 +382,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             (previous.cameraWbCustom != params.cameraWbCustom || previous.cameraWbKelvin != params.cameraWbKelvin || previous.cameraWbTint != params.cameraWbTint)) {
             scheduleCameraWb()
         }
-        scheduleRender()
+        if (previous.deltaJson(previewW, previewH) == params.deltaJson(previewW, previewH) &&
+            previous.cameraWbCustom == params.cameraWbCustom && previous.cameraWbKelvin == params.cameraWbKelvin &&
+            previous.cameraWbTint == params.cameraWbTint) scheduleGrade()
+        else scheduleRender()
         suppressHistory = false
     }
 
@@ -460,7 +464,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             zone(p.cbShadowTemp / 100f, p.cbShadowTint / 100f),
             zone(p.cbMidTemp / 100f, p.cbMidTint / 100f),
             zone(p.cbHighTemp / 100f, p.cbHighTint / 100f),
-            p.vignetteAmount / 100f, p.vignetteSize / 100f, p.vignetteFeather / 100f,
+            p.vignetteAmount / 100f, p.vignetteSize / 100f, p.vignetteFeather / 100f, p.toneCurves, p.colorAdjustments,
         )
     }
 
@@ -470,9 +474,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             grade(editParams), colorSpace).first
     }
 
-    private fun convertPreview(result: SpkResult, editParams: EditorParams, colorSpace: String): Pair<Bitmap, Histogram> {
+    private fun convertPreview(result: SpkResult, editParams: EditorParams, colorSpace: String, checkCancelled: () -> Unit = {}): Pair<Bitmap, Histogram> {
         return ColorPipeline.applyGradeToBitmap(result.rgba16, result.width, result.height,
-            grade(editParams), colorSpace)
+            grade(editParams), colorSpace, checkCancelled)
     }
 
     // 更新渲染结果 + 直方图 + 显示位图（一次渲染落地后调用）。
@@ -612,11 +616,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
-    fun scheduleGrade() {
+    fun scheduleGrade(commit: Boolean = true) {
         if (!hasPhoto || isExporting || isBatchExporting) return
-        recordHistory()
+        if (commit) recordHistory()
         dirty = true
-        currentUri?.let { EditStore.save(app, it, params) }
+        if (commit) currentUri?.let { EditStore.save(app, it, params) }
         val result = lastResult ?: return
         val editParams = EditSnapshot.capture(params).toParams()
         val colorSpace = resultColorSpace
@@ -625,15 +629,79 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         wbJob?.cancel()
         wbJob = viewModelScope.launch {
             delay(45)
-            val (bitmap, counts) = withContext(Dispatchers.Default) {
-                convertPreview(result, editParams, colorSpace)
-            }
-            if (photo == photoGeneration && generation == gradeGeneration && lastResult === result) {
-                rendered = bitmap
-                histogram = counts
-                rememberDevelopedPreview(bitmap)
+            var computed: Bitmap? = null
+            var published = false
+            try {
+                val (bitmap, counts) = withContext(Dispatchers.Default) {
+                    val task = currentCoroutineContext()
+                    convertPreview(result, editParams, colorSpace) { task.ensureActive() }.also { computed = it.first }
+                }
+                if (photo == photoGeneration && generation == gradeGeneration && lastResult === result) {
+                    rendered = bitmap
+                    histogram = counts
+                    rememberDevelopedPreview(bitmap)
+                    published = true
+                }
+            } finally {
+                if (!published) computed?.recycle()
             }
         }
+    }
+
+    private var colorStart: com.spektralab.android.core.color.ColorAdjustments? = null
+    private var colorStartUnreadable: String? = null
+
+    fun beginColorEdit() {
+        if (colorStart == null) {
+            colorStart = params.colorAdjustments
+            colorStartUnreadable = params.unreadableColorAdjustments
+            lastHistoryKey = null
+        }
+    }
+
+    fun changeColors(colors: com.spektralab.android.core.color.ColorAdjustments) {
+        if (busy || isExporting || isBatchExporting) return
+        params.colorAdjustments = colors
+        params.unreadableColorAdjustments = null
+        scheduleGrade(commit = false)
+    }
+
+    fun finishColorEdit(cancel: Boolean = false) {
+        val start = colorStart ?: return
+        colorStart = null
+        if (cancel) {
+            params.colorAdjustments = start
+            params.unreadableColorAdjustments = colorStartUnreadable
+        }
+        scheduleGrade(commit = !cancel && (params.colorAdjustments != start ||
+            params.unreadableColorAdjustments != colorStartUnreadable))
+        colorStartUnreadable = null
+    }
+
+    private var curveStartUnreadable: String? = null
+    private var curveStart: com.spektralab.android.core.color.ToneCurves? = null
+
+    fun beginCurveEdit() {
+        if (curveStart == null) {
+            curveStart = params.toneCurves
+            curveStartUnreadable = params.unreadableToneCurves
+            lastHistoryKey = null
+        }
+    }
+
+    fun changeCurves(curves: com.spektralab.android.core.color.ToneCurves) {
+        if (isExporting || isBatchExporting) return
+        params.toneCurves = curves
+        params.unreadableToneCurves = null
+        scheduleGrade(commit = false)
+    }
+
+    fun finishCurveEdit(cancel: Boolean = false) {
+        val start = curveStart ?: return
+        curveStart = null
+        if (cancel) { params.toneCurves = start; params.unreadableToneCurves = curveStartUnreadable }
+        scheduleGrade(commit = !cancel && (params.toneCurves != start || params.unreadableToneCurves != curveStartUnreadable))
+        curveStartUnreadable = null
     }
 
     // 相机白平衡（解码侧，仅 RAW）：Kelvin/tint 变化后去抖重新解码 + 重开会话。
@@ -1045,6 +1113,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun export() {
         val e = engine ?: return
         if (!hasPhoto || isExporting || isBatchExporting || busy) return
+        if (params.unreadableColorAdjustments != null) { fail(app.getString(com.spektralab.android.R.string.color_unsupported)); return }
+        if (params.unreadableToneCurves != null) { fail(app.getString(com.spektralab.android.R.string.curve_unsupported)); return }
         isExporting = true
         exportCancelRequested = false
         isExportCommitCompleted = false
@@ -1195,6 +1265,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Invalidate before changing identity; cancellation alone cannot stop synchronous native work. */
     private fun invalidatePhotoWork(): Long {
+        colorStart?.let {
+            params.colorAdjustments = it
+            params.unreadableColorAdjustments = colorStartUnreadable
+        }
+        colorStart = null
+        colorStartUnreadable = null
+        curveStart?.let { params.toneCurves = it }
+        curveStart = null
         smartApplyJob?.cancel()
         photoGeneration++
         renderGeneration++
@@ -1510,6 +1588,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 切换前把当前照片的编辑落盘（避免 120ms 去抖未到就切换而丢编辑）。
     private fun saveCurrentSidecar() {
+        finishCurveEdit(cancel = true)
+        finishColorEdit(cancel = true)
         currentUri?.takeIf { it == paramsUri }?.let { EditStore.save(app, it, params) }
     }
 
@@ -1581,6 +1661,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
                         val photoParams = edits.getValue(uri).toParams()
+                        check(photoParams.unreadableColorAdjustments == null) { app.getString(com.spektralab.android.R.string.color_unsupported) }
+                        check(photoParams.unreadableToneCurves == null) { app.getString(com.spektralab.android.R.string.curve_unsupported) }
                         val request = renderCache.prepare(uri, photoParams, options, ::checkExportCancellation)
                         val cached = request?.let { renderCache.acquire(it, ::checkExportCancellation) }
                         var dimensions = ""
@@ -1888,11 +1970,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             val argb = IntArray(result.width * rows)
             val g = grade(editParams)
             val pixel = FloatArray(3)
+            val native = if (g.usesNativeGrade) FloatArray(result.width * rows * 3) else null
             var y = 0
             while (y < result.height) {
                 checkExportCancellation()
                 val count = minOf(rows, result.height - y)
                 result.readRows(y, count, strip)
+                if (native != null) g.nativeRows(strip, 0, result.width, result.height, y, count, native)
                 if (g.isIdentity) {
                     for (i in 0 until result.width * count) {
                         val r = ((strip[i * 4].toInt() and 65535) * 255 + 32767) / 65535
@@ -1902,7 +1986,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 } else {
                     for (i in 0 until result.width * count) {
-                        g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
+                        if (native != null) {
+                            pixel[0] = native[i * 3]; pixel[1] = native[i * 3 + 1]; pixel[2] = native[i * 3 + 2]
+                        } else g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
                             i % result.width, y + i / result.width, result.width, result.height)
                         val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
                         val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)

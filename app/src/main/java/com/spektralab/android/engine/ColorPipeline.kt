@@ -1,5 +1,7 @@
 package com.spektralab.android.engine
 
+import com.spektralab.android.core.color.ToneCurves
+import com.spektralab.android.core.color.ColorAdjustments
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import kotlin.math.pow
@@ -51,22 +53,27 @@ object ColorPipeline {
 
     /** Keep large proof/preview conversion bounded: no full-frame managed ARGB copy. */
     fun applyGradeToBitmap(rgba16: ShortArray, width: Int, height: Int, grade: Grade,
-                           sourceColorSpace: String = "sRGB"): Pair<Bitmap, Histogram> {
+                           sourceColorSpace: String = "sRGB", checkCancelled: () -> Unit = {}): Pair<Bitmap, Histogram> {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             val rows = minOf(32, height)
             val strip = IntArray(width * rows)
             val histogram = Histogram(IntArray(256), IntArray(256), IntArray(256))
             val pixel = FloatArray(3)
+            val native = if (grade.usesNativeGrade) FloatArray(width * rows * 3) else null
             val transform = if (sourceColorSpace == "Display P3") {
                 ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB))
             } else null
             var y = 0
             while (y < height) {
+                checkCancelled()
                 val count = minOf(rows, height - y)
+                if (native != null) grade.nativeRows(rgba16, y * width * 4, width, height, y, count, native)
                 for (i in 0 until width * count) {
                     val index = (y * width + i) * 4
-                    grade.gradeAt(rgba16[index], rgba16[index + 1], rgba16[index + 2], pixel,
+                    if (native != null) {
+                        pixel[0] = native[i * 3]; pixel[1] = native[i * 3 + 1]; pixel[2] = native[i * 3 + 2]
+                    } else grade.gradeAt(rgba16[index], rgba16[index + 1], rgba16[index + 2], pixel,
                         i % width, y + i / width, width, height)
                     transform?.transform(pixel)
                     val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
@@ -207,6 +214,8 @@ class Grade(
     private val vignetteAmount: Float = 0f,
     private val vignetteSize: Float = .5f,
     private val vignetteFeather: Float = .7f,
+    private val curves: ToneCurves = ToneCurves.IDENTITY,
+    private val colors: ColorAdjustments = ColorAdjustments.NEUTRAL,
 ) {
     private val midGrey = 0.4614f  // SRGB_MID_GREY（desktop adjustments.ts）
     private val encodedExposureGain = Math.pow(exposureGain.toDouble(), 1.0 / 2.2).toFloat()
@@ -220,7 +229,31 @@ class Grade(
         saturation == 1f && cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
 
     /** Neutral Layer 2 can pass the existing 16-bit samples through exactly. */
-    internal val isIdentity: Boolean get() = identity && vignetteGains == null
+    internal val isIdentity: Boolean get() = identity && vignetteGains == null && curves.isIdentity && colors.isNeutral
+    internal val usesNativeGrade: Boolean get() = !curves.isIdentity || !colors.isNeutral
+    private val colorUniforms by lazy { colors.uniforms() }
+    private val curveTable by lazy { curves.table() }
+    private val nativeUniforms by lazy { floatArrayOf(wbR, wbG, wbB, encodedExposureGain, contrast, brightness, saturation,
+        highlights, shadows, blackPoint, whitePoint, *cbShadow, *cbMid, *cbHigh,
+        vignetteAmount, vignetteSize, vignetteFeather, if (curves.isIdentity) 0f else 1f, if (identity && colors.isNeutral) 1f else 0f) }
+
+    internal fun nativeRows(input: ShortArray, offset: Int, width: Int, height: Int, y: Int, rows: Int, output: FloatArray) {
+        check(usesNativeGrade)
+        NativeCurveGrade.apply(input, offset, width, height, y, rows, nativeUniforms, curveTable, colorUniforms, vignetteGains, output)
+    }
+
+    private fun curve(x: Float, row: Int): Float {
+        val at = x.coerceIn(0f, 1f) * (ToneCurves.TABLE_SIZE - 1)
+        val low = at.toInt(); val high = minOf(low + 1, ToneCurves.TABLE_SIZE - 1); val f = at - low
+        return curveTable[row * ToneCurves.TABLE_SIZE + low] * (1f - f) + curveTable[row * ToneCurves.TABLE_SIZE + high] * f
+    }
+
+    private fun applyCurves(out: FloatArray) {
+        if (curves.isIdentity) return
+        val lum = luma(out[0], out[1], out[2]); val mapped = curve(lum, 1)
+        val gain = if (lum > 1e-4f) mapped / lum else 1f
+        for (channel in 0..2) out[channel] = curve(curve((out[channel] * gain).coerceIn(0f, 1f), 0), channel + 2)
+    }
 
     /** 把 sRGB 编码的 16bit 像素调色，结果（0..1）写进 [out][0..2]。 */
     fun grade(r16: Short, g16: Short, b16: Short, out: FloatArray) {
@@ -228,8 +261,9 @@ class Grade(
         var g = (g16.toInt() and 0xFFFF) / 65535f
         var b = (b16.toInt() and 0xFFFF) / 65535f
 
-        if (identity) {
+        if (identity && colors.isNeutral) {
             out[0] = r; out[1] = g; out[2] = b
+            applyCurves(out)
             return
         }
 
@@ -271,13 +305,21 @@ class Grade(
         r = lum + (r - lum) * saturation
         g = lum + (g - lum) * saturation
         b = lum + (b - lum) * saturation
-        val ls = tonePosition(lum, midGrey).coerceIn(0f, 1f)
+        var balanceLuma = lum
+        if (!colors.isNeutral) {
+            out[0] = r; out[1] = g; out[2] = b
+            colors.apply(out)
+            r = out[0]; g = out[1]; b = out[2]
+            balanceLuma = luma(r, g, b)
+        }
+        val ls = tonePosition(balanceLuma, midGrey).coerceIn(0f, 1f)
         val wS = (1f - ls) * (1f - ls)
         val wH = ls * ls
         val wM = (1f - wS - wH).coerceAtLeast(0f)
         out[0] = (r + cbShadow[0] * wS + cbMid[0] * wM + cbHigh[0] * wH).coerceIn(0f, 1f)
         out[1] = (g + cbShadow[1] * wS + cbMid[1] * wM + cbHigh[1] * wH).coerceIn(0f, 1f)
         out[2] = (b + cbShadow[2] * wS + cbMid[2] * wM + cbHigh[2] * wH).coerceIn(0f, 1f)
+        applyCurves(out)
     }
 
     /** Output-relative coordinates make preview, JPEG/PNG and strip-written TIFF agree. */

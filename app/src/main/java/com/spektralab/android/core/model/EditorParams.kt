@@ -1,5 +1,7 @@
 package com.spektralab.android.core.model
 
+import com.spektralab.android.core.color.ToneCurves
+import com.spektralab.android.core.color.ColorAdjustments
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,6 +94,10 @@ class EditorParams {
     var shadows by mutableFloatStateOf(0f)
     var blackPoint by mutableFloatStateOf(0f)
     var whitePoint by mutableFloatStateOf(0f)
+    var colorAdjustments by mutableStateOf(ColorAdjustments.NEUTRAL)
+    var unreadableColorAdjustments by mutableStateOf<String?>(null)
+    var toneCurves by mutableStateOf(ToneCurves.IDENTITY)
+    var unreadableToneCurves by mutableStateOf<String?>(null)
     var vignetteAmount by mutableFloatStateOf(0f) // 0..100, zero preserves existing output
     var vignetteSize by mutableFloatStateOf(50f)
     var vignetteFeather by mutableFloatStateOf(70f)
@@ -229,6 +235,12 @@ class EditorParams {
         .put("date_imprint_inset_x", dateImprintInsetX.toDouble())
         .put("date_imprint_inset_y", dateImprintInsetY.toDouble())
         .put("date_imprint_data_text", dateImprintDataText)
+        .apply {
+            if (unreadableColorAdjustments != null) put("color_adjustments", org.json.JSONTokener(unreadableColorAdjustments!!).nextValue())
+            else if (!colorAdjustments.isNeutral) put("color_adjustments", colorAdjustments.toJson())
+            if (unreadableToneCurves != null) put("tone_curves", JSONObject(unreadableToneCurves!!))
+            else if (!toneCurves.isDefault) put("tone_curves", toneCurves.toJson())
+        }
 
     fun copy(): EditorParams = fromJson(toJson())
 
@@ -262,6 +274,8 @@ class EditorParams {
         temperature = p.temperature; tint = p.tint; gradeExposure = p.gradeExposure
         contrast = p.contrast; brightness = p.brightness; saturation = p.saturation
         highlights = p.highlights; shadows = p.shadows; blackPoint = p.blackPoint; whitePoint = p.whitePoint
+        colorAdjustments = p.colorAdjustments; unreadableColorAdjustments = p.unreadableColorAdjustments
+        toneCurves = p.toneCurves; unreadableToneCurves = p.unreadableToneCurves
         vignetteAmount = p.vignetteAmount; vignetteSize = p.vignetteSize; vignetteFeather = p.vignetteFeather
         cbShadowTemp = p.cbShadowTemp; cbShadowTint = p.cbShadowTint; cbMidTemp = p.cbMidTemp; cbMidTint = p.cbMidTint
         cbHighTemp = p.cbHighTemp; cbHighTint = p.cbHighTint; cameraFilter = p.cameraFilter
@@ -344,6 +358,18 @@ class EditorParams {
             p.shadows = json.optDouble("shadows", 0.0).toFloat()
             p.blackPoint = json.optDouble("black_point", 0.0).toFloat()
             p.whitePoint = json.optDouble("white_point", 0.0).toFloat()
+            if (json.has("color_adjustments")) {
+                val raw = json.get("color_adjustments")
+                p.colorAdjustments = try { ColorAdjustments.fromJson(raw as JSONObject) } catch (_: Exception) {
+                    p.unreadableColorAdjustments = org.json.JSONArray().put(raw).toString().let { it.substring(1, it.length - 1) }
+                    ColorAdjustments.NEUTRAL
+                }
+            }
+            val curveData = json.optJSONObject("tone_curves")
+            p.toneCurves = try { ToneCurves.fromJson(curveData) } catch (_: Exception) {
+                p.unreadableToneCurves = curveData?.toString()
+                ToneCurves.IDENTITY
+            }
             p.vignetteAmount = json.optDouble("vignette_amount", 0.0).toFloat().coerceIn(0f, 100f)
             p.vignetteSize = json.optDouble("vignette_size", 50.0).toFloat().coerceIn(0f, 100f)
             p.vignetteFeather = json.optDouble("vignette_feather", 70.0).toFloat().coerceIn(0f, 100f)

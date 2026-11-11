@@ -79,6 +79,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var renderSchedulingOnly = false
     private var exportCacheOnly = false
     private var fullSizeCacheOnly = false
+    private var colorOnly = false
+    private var fullSizeColorCacheOnly = false
+    private var curvesOnly = false
+    private var fullSizeCurveCacheOnly = false
     private val w = 512
     private val h = 384
     private val input = FloatArray(w * h * 3) { i ->
@@ -101,7 +105,11 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         renderFoundationOnly = audit == "render-foundation"
         renderSchedulingOnly = audit == "render-scheduling"
         exportCacheOnly = audit == "export-cache"
-        fullSizeCacheOnly = audit == "export-cache-raw"
+        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw"
+        fullSizeCurveCacheOnly = audit == "curves-raw"
+        curvesOnly = audit == "curves"
+        colorOnly = audit == "color"
+        fullSizeColorCacheOnly = audit == "color-raw"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
         refactorOnly = audit == "ui-refactor" || audit == "ui-layout" || audit == "photo-stage" || audit == "home-ui"
@@ -141,10 +149,26 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (colorOnly) {
+            val audit = ColorAudit(this, output)
+            case("color.math_and_native") { audit.mathAndNative() }
+            case("editor.color_complete_workflow") { audit.editor() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (curvesOnly) {
+            case("editor.curves_complete_workflow") { CurveAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (renderSchedulingOnly || exportCacheOnly || fullSizeCacheOnly) {
             if (renderSchedulingOnly) case("render.priority_state_and_admission") { RenderSchedulingAudit.run() }
             if (exportCacheOnly) case("export.production_cache") { ExportCacheAudit(this).run() }
-            if (fullSizeCacheOnly) case("export.full_size_raw_cache") { FullSizeCacheAudit(this, output).run() }
+            if (fullSizeCacheOnly) case(if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") { FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
                 Bundle().apply { putString("stream", rows.toString(2)) })
@@ -466,15 +490,25 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         val savedBeforeCancel=vm.log.windowed("导出成功".length).count{it=="导出成功"}
         runOnMainSync {vm.export();vm.cancelRender()}
         await{!vm.isExporting}
+        // The busy flag is cleared before the other fields in the same Main cleanup block.
+        // Wait for that block to finish before inspecting its fields from this audit thread.
+        waitForIdleSync()
         check(vm.errorMessage==null&&vm.renderProgress==null&&vm.renderStage.isEmpty()){"cancel left an error or progress overlay"}
         check(vm.log.contains("导出已取消")&&vm.log.windowed("导出成功".length).count{it=="导出成功"}==savedBeforeCancel)
         val second=File(output,"batch-progress.jpg");imageFile.copyTo(second,true)
         runOnMainSync{vm.openPhotos(listOf(uri,Uri.fromFile(second)))};await{vm.hasPhoto&&!vm.busy&&vm.lastResult!=null}
-        runOnMainSync{vm.batchExport();vm.cancelRender()};await{!vm.isBatchExporting}
-        check(vm.errorMessage==null&&vm.renderProgress==null&&vm.renderStage.isEmpty()&&vm.log.contains("批量导出已取消"))
+        var batchStarted = false
+        runOnMainSync{vm.batchExport();batchStarted=vm.isBatchExporting;vm.cancelRender()}
+        check(batchStarted) { "Batch did not start: busy=${vm.busy}; selected=${vm.selectedBatchExportPhotos.size}; single=${vm.isExporting}; log=${vm.log.takeLast(800)}" }
+        await{!vm.isBatchExporting}
+        waitForIdleSync()
+        check(vm.errorMessage==null&&vm.renderProgress==null&&vm.renderStage.isEmpty()&&vm.log.contains("批量导出已取消")) {
+            "Batch cancel cleanup: error=${vm.errorMessage}; progress=${vm.renderProgress}; stage=${vm.renderStage}; log=${vm.log.takeLast(1000)}"
+        }
         val held=File(output,"export-progress-held.jpg");check(imageFile.renameTo(held))
         try {
             runOnMainSync{vm.export()};await{!vm.isExporting}
+            waitForIdleSync()
             check(vm.errorMessage!=null&&vm.renderProgress==null&&vm.renderStage.isEmpty()){"failure left progress active"}
         } finally {check(held.renameTo(imageFile));runOnMainSync{vm.dismissError()}}
         return "${values.size} samples, ${levels.size} levels, ${values.first()}→${values.last()}%; single/batch cancellation and missing-file cleanup passed; stages=${phases.joinToString()}"

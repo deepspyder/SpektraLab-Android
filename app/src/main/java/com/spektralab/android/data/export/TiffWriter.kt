@@ -140,14 +140,18 @@ object TiffWriter {
         val px = FloatArray(3)
         val rows = minOf(32, height)
         val strip = ShortArray(width * rows * 4)
+        val native = if (outputGrade.usesNativeGrade) FloatArray(width * rows * 3) else null
         var y = 0
         while (y < height) {
             checkCancelled()
             val stripRows = minOf(rows, height - y)
             read(y, stripRows, strip)
+            if (native != null) outputGrade.nativeRows(strip, 0, width, height, y, stripRows, native)
             for (i in 0 until width * stripRows) {
                 val index = i * 4
-                outputGrade.gradeAt(strip[index], strip[index + 1], strip[index + 2], px,
+                if (native != null) {
+                    px[0] = native[i * 3]; px[1] = native[i * 3 + 1]; px[2] = native[i * 3 + 2]
+                } else outputGrade.gradeAt(strip[index], strip[index + 1], strip[index + 2], px,
                     i % width, y + i / width, width, height)
                 chunk.putShort(toU16(px[0]))
                 chunk.putShort(toU16(px[1]))

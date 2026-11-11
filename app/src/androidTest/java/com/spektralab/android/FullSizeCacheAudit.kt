@@ -13,7 +13,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /** Stream checksums rather than bringing a 147 MB TIFF into the small ART heap. */
-internal class FullSizeCacheAudit(private val test: Instrumentation, private val output: File) {
+internal class FullSizeCacheAudit(private val test: Instrumentation, private val output: File, private val withCurves: Boolean = false, private val withColor: Boolean = false) {
     fun run(): String {
         val source = File(output, "perf-z6ii.NEF")
         check(source.isFile) { "Push perf-z6ii.NEF before running this explicit camera-file audit" }
@@ -42,6 +42,12 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                 EditorParams().apply {
                     grainActive = false
                     glareActive = false
+                    if (withColor) colorAdjustments = com.spektralab.android.core.color.ColorAdjustments.NEUTRAL
+                        .withVibrance(30f).with(com.spektralab.android.core.color.HslColor.BLUE,
+                            com.spektralab.android.core.color.HslBand(25f, -15f, 12f))
+                    if (withCurves) toneCurves = com.spektralab.android.core.color.ToneCurves.IDENTITY.with(
+                        com.spektralab.android.core.color.CurveChannel.RGB,
+                        com.spektralab.android.core.color.ToneCurve.IDENTITY.add(.5f,.63f))
                 },
             )
             test.runOnMainSync { vm.openPhotos(listOf(uri)) }
@@ -88,6 +94,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
             val afterFirst = vm.exportCacheStats
             val second = export()
             check(first.hash == second.hash && first.bytes == second.bytes)
+            if (withCurves || withColor) check(first.hash != "3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3") { "Active curves did not affect full-size RAW export" }
             check(vm.exportCacheStats.hits == afterFirst.hits + 1)
             check(vm.exportCacheStats.writes == afterFirst.writes)
             return "6064x4040 RAW TIFF byte-exact; bytes=${first.bytes}; sha256=${first.hash}; first_ms=${first.ms}; second_ms=${second.ms}; initial=$stats first=$afterFirst final=${vm.exportCacheStats}"

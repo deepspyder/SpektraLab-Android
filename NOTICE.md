@@ -30,6 +30,19 @@ The shared engine also contains separately authored product profiles under
 Consult that notice and the notices shipped with each resource rather than
 assuming every resource has the same origin or license.
 
+## SpektraLab post-print colour adjustments
+
+The version 1 vibrance and eight-band HSL mathematics in
+`app/src/main/java/com/spektralab/android/core/color/ColorAdjustments.kt` and
+`app/src/main/cpp/curve_grade.cpp` are adapted from SpektraLab's
+GPL-3.0-or-later application code: `app/SpektraLab/Sources/Engine/Layer2Kernel.swift`
+and `app/SpektraLab/Sources/Model/Adjustments.swift`, commit
+`1952c63537ec576d24422f1065b12495631346a5`. Modified on 2026-11-11 for Android
+with immutable versioned parameters, a Kotlin reference, bounded JNI/C++ CPU
+strips, and integration with Theia's existing grading order and output.
+The upstream code's GPL-3.0-or-later terms remain in effect; no film or paper
+profiles were modified by this adaptation.
+
 ## Fonts, icons and native dependencies
 
 | Component | Attribution / terms | License location |

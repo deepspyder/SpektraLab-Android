@@ -269,9 +269,12 @@ internal fun EditorScreen(
                         PhotoCanvas(vm, comparing, onImport = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             modifier = Modifier.weight(1.08f).fillMaxHeight())
                         Column(Modifier.weight(1f).fillMaxHeight()) {
-                            PhotoMetadataStrip(vm)
-                            EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
-                            EditorPanel(vm, destination, Modifier.weight(1f).fillMaxWidth(), panelStates, onSaveRecipe = { showSaveRecipeDialog = true })
+                            if (destination != EditorTab.Grade) {
+                                PhotoMetadataStrip(vm)
+                                EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
+                            }
+                            EditorPanel(vm, destination, Modifier.weight(1f).fillMaxWidth(), panelStates,
+                                showHeader = destination != EditorTab.Grade, onSaveRecipe = { showSaveRecipeDialog = true })
                         }
                     }
                     destination == EditorTab.Shoot && !showAllShootControls -> Column(Modifier.fillMaxSize()) {
