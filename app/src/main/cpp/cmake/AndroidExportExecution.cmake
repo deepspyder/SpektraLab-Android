@@ -15,9 +15,15 @@ function(theia_android_export_execution engine_dir engine_output pipeline_output
     set(before_pack "    if (ok) ok = run_print_for(session, negative, rgb, &session->progress, error);\n    if (ok) ok = materialise(session, rgb, out, error);")
     set(after_pack "    if (ok) ok = run_print_for(session, negative, rgb, &session->progress, error);\n    if (ok && theia::export_execution::one_shot) {\n        const size_t source_bytes = session->source.bytes();\n        const size_t negative_bytes = negative.bytes();\n        negative = Image{};\n        tier_source = Image{};\n        session->tiers.clear();\n        session->source = Image{};\n        theia::export_execution::released_before_readback(source_bytes, negative_bytes);\n    }\n    if (ok) ok = materialise(session, rgb, out, error);")
     set(before_timing "    // Opt-in, because turning it on serialises every node. See Progress.\n    session->progress.detailed = std::getenv(\"SPEKTRAFILM_NODE_TIMINGS\") != nullptr;")
-    set(after_timing "    // Detailed export diagnostics are opt-in and do not change pixel operations.\n    session->progress.detailed = std::getenv(\"SPEKTRAFILM_NODE_TIMINGS\") != nullptr || theia::export_execution::detailed;")
+    set(after_timing "    // Detailed export diagnostics are opt-in and do not change pixel operations.\n    session->progress.detailed = std::getenv(\"SPEKTRAFILM_NODE_TIMINGS\") != nullptr || theia::export_execution::detailed;\n    if (theia::export_execution::one_shot) theia::export_execution::cancellation = &session->progress.cancelled;")
 
-    foreach(anchor include negative pack timing)
+    # Metering, film processing and overscan layout have finished before print.
+    # A consumed session needs neither its source nor the redundant tier owner
+    # during glare, scanner blur and output packing. Keep negative itself alive.
+    set(before_print "    if (ok) ok = run_print_for(session, negative, rgb, &session->progress, error);")
+    set(after_print "    if (ok && theia::export_execution::one_shot) {\n        theia::export_execution::trace_memory(gpu, \"before_source_release\");\n        tier_source = Image{};\n        session->tiers.clear();\n        session->source = Image{};\n        theia::export_execution::trace_memory(gpu, \"after_source_release\");\n    }\n    if (ok) ok = run_print_for(session, negative, rgb, &session->progress, error);\n    theia::export_execution::trace_memory(gpu, \"after_print\");")
+
+    foreach(anchor include negative pack timing print)
         string(FIND "${source}" "${before_${anchor}}" found)
         if(found EQUAL -1)
             message(FATAL_ERROR "Theia export adapter: shared engine changed at ${anchor}; review its lifetimes")
@@ -56,6 +62,25 @@ function(theia_android_export_execution engine_dir engine_output pipeline_output
     endif()
     string(REPLACE "#include \"pipeline.hpp\"" "#include \"pipeline.hpp\"\n#include \"export_execution.hpp\"" pipeline_source "${pipeline_source}")
     string(REPLACE "${before_couplers}" "${after_couplers}" pipeline_source "${pipeline_source}")
+    # run_film kept its prefix result alive throughout every later stage.
+    # Transfer that owner into the chain so finishing the first stage can
+    # actually release the input instead of retaining another whole plane.
+    set(before_segment "    if (!film_segment(cur, out, error)) return false;")
+    set(after_segment "    if (theia::export_execution::one_shot) {\n        Chain chain;\n        chain.cur = std::move(cur);\n        for (size_t i = 0; i < kFilmStageCount; ++i) {\n            Chain next;\n            if (!(this->*kFilmStages[i].run)(chain, next, error)) return false;\n            chain = std::move(next);\n        }\n        out = std::move(chain.cur);\n    } else if (!film_segment(cur, out, error)) return false;")
+    string(FIND "${pipeline_source}" "${before_segment}" segment_found)
+    if(segment_found EQUAL -1)
+        message(FATAL_ERROR "Theia export adapter: film prefix ownership changed; review its last reader")
+    endif()
+    string(REPLACE "${before_segment}" "${after_segment}" pipeline_source "${pipeline_source}")
+    # Every existing node already flushes. Sample after that boundary so the
+    # first rise in the high-water counter identifies the allocating node.
+    set(before_flush "        if (!gpu_->flush(error)) return false;                             \\")
+    set(after_flush "${before_flush}\n        theia::export_execution::trace_memory(gpu_, #call);                 \\")
+    string(FIND "${pipeline_source}" "${before_flush}" flush_found)
+    if(flush_found EQUAL -1)
+        message(FATAL_ERROR "Theia export adapter: node flush changed; review memory diagnostics")
+    endif()
+    string(REPLACE "${before_flush}" "${after_flush}" pipeline_source "${pipeline_source}")
     set(pipeline_generated "${CMAKE_CURRENT_BINARY_DIR}/generated/pipeline_android.cpp")
     set(previous_pipeline "")
     if(EXISTS "${pipeline_generated}")

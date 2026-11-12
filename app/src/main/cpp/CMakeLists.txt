@@ -57,9 +57,11 @@ else()
     # view_process / overscan / imprint_raster 是片边/日期后背的 Vulkan 路径。
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidExportExecution.cmake")
     theia_android_export_execution("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_ENGINE_SOURCE SPK_ANDROID_PIPELINE_SOURCE)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidExportFir.cmake")
+    theia_android_export_fir("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_BLUR_SOURCE)
 
     set(SPK_PIPELINE_SOURCES
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/blur.cpp
+        ${SPK_ANDROID_BLUR_SOURCE}
         ${SPK_ANDROID_ENGINE_SOURCE}
         ${SPK_ANDROID_PIPELINE_SOURCE}
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/scene_latitude.cpp

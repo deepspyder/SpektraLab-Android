@@ -15,6 +15,7 @@
 #include <android/bitmap.h>
 #include "native_pixels.hpp"
 #include "export_execution.hpp"
+#include "export_fir_bands.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -308,8 +309,13 @@ JNIEXPORT jobject JNICALL
 Java_com_spektralab_android_engine_EngineClient_nativeRenderExportOnce(
     JNIEnv* env, jobject object, jlong enginePtr, jlong sessionPtr) {
     theia::export_execution::Scope execution;
+    theia::export_execution::fir_bands = {};
     jobject result = Java_com_spektralab_android_engine_EngineClient_nativeRenderForExport(
         env, object, enginePtr, sessionPtr);
+    const auto bands = theia::export_execution::fir_bands;
+    __android_log_print(ANDROID_LOG_INFO, "SpkExport",
+        "fir_bands calls=%zu bands=%zu largest_work_bytes=%zu",
+        bands.calls, bands.bands, bands.largest_work_bytes);
     if (result && theia::export_execution::detailed) {
         char* progress = nullptr;
         if (spk_progress(asSession(sessionPtr), nullptr, &progress) == SPK_OK && progress) {

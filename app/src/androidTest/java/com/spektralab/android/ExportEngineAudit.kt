@@ -146,8 +146,20 @@ internal class ExportEngineAudit(
                     actual.readRows(0, actual.height, pixels)
                     check(pixels.contentEquals(expected.rgba16)) { "One-shot changed fresh-session grain" }
                 }
+                // A consumed session may also arrive with a cached negative.
+                // Releasing its tier owners before print must preserve that
+                // negative and its already-realised grain through readback.
+                engine.open(input, width, height, 3, freshSessionParams)
+                val cached = engine.render("full")
+                engine.renderExportOnce().use { actual ->
+                    val pixels = ShortArray(cached.rgba16.size)
+                    actual.readRows(0, actual.height, pixels)
+                    check(pixels.contentEquals(cached.rgba16)) { "Source release invalidated cached negative" }
+                    check(JSONObject(engine.memoryReport()).getJSONObject("persistent")
+                        .getJSONArray("sessions").length() == 0)
+                }
             }
-            return "All film families and compatible papers, geometry, overscan/date and fresh-session grain match full U16 pixels; output survives closed session and later editor still caches its negative; cases=" + (cases.size + 1)
+            return "All film families and compatible papers, geometry, overscan/date, fresh-session grain and cached-negative consumption match full U16 pixels; output survives closed session and later editor still caches its negative; cases=" + (cases.size + 2)
         }
 
         fun cancellation(context: Context): String {

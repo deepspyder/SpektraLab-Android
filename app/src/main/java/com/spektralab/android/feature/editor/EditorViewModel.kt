@@ -238,11 +238,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var paramsUri: Uri? = null
     @Volatile private var cleared = false
     private var wbJob: Job? = null
-    private data class PendingPreview(val result: SpkResult, val colorSpace: String, val photo: Long, val revision: Long)
+    private data class PendingPreview(
+        val result: SpkResult,
+        val colorSpace: String,
+        val photo: Long,
+        val revision: Long,
+        val renderRequest: Long? = null,
+    )
     private var pendingPreview: PendingPreview? = null
     private var gradeGeneration = 0L
     private var gradeRequest = 0L
     private var renderRequest = 0L
+    private var publishedRenderRequest = 0L
     @Volatile private var renderGeneration = 0L
     private var cameraWbJob: Job? = null
     private var engineCreateJob: Job? = null
@@ -514,8 +521,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         photo: Long = photoGeneration,
         revision: Long = renderGeneration,
         editParams: EditorParams = params.copy(),
+        request: Long? = null,
     ) {
-        val pending = PendingPreview(result, colorSpace, photo, revision)
+        val pending = PendingPreview(result, colorSpace, photo, revision, request)
         val grading = withContext(Dispatchers.Main.immediate) {
             if (photo != photoGeneration || revision != renderGeneration) return@withContext null
             // Make the new base available to post edits that arrive while it is being converted.
@@ -540,6 +548,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     rendered = bitmap
                     histogram = counts
                     lastResult = result
+                    pending.renderRequest?.let { publishedRenderRequest = it }
                     pendingPreview = null
                     rememberDevelopedPreview(bitmap)
                     published = true
@@ -707,6 +716,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         rendered = bitmap
                         histogram = counts
                         lastResult = result
+                        pending?.renderRequest?.let { publishedRenderRequest = it }
                         if (pendingPreview?.result === result) pendingPreview = null
                         rememberDevelopedPreview(bitmap)
                         published = true
@@ -973,7 +983,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         val r = e.render("live")
                         if (photo != photoGeneration || generation != renderGeneration) return@onEngine
                         withContext(Dispatchers.Main.immediate) { stockPreviewJob?.cancel() }
-                        updateResult(r, photo = photo, revision = generation, editParams = editParams)
+                        updateResult(r, photo = photo, revision = generation, editParams = editParams, request = request)
                         append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
                     } catch (ex: CancellationException) {
                         throw ex
@@ -1217,7 +1227,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // 渲染期间并发轮询进度，支持取消。
     private data class InterruptedPreview(val photo: Long, val render: Boolean, val grade: Boolean)
 
-    private fun pendingPreviewWork() = InterruptedPreview(photoGeneration, renderJob?.isActive == true, wbJob?.isActive == true)
+    private fun pendingPreviewWork() = InterruptedPreview(
+        photoGeneration,
+        renderJob?.isActive == true && publishedRenderRequest != renderRequest,
+        wbJob?.isActive == true,
+    )
 
     private fun resumePreview(work: InterruptedPreview) {
         if (cleared || work.photo != photoGeneration) return

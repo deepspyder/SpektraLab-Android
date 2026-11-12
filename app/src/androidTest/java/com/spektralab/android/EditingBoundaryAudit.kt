@@ -23,6 +23,42 @@ import kotlin.math.abs
 
 /** Cross-feature boundaries that ordinary single-control happy paths do not exercise. */
 internal class EditingBoundaryAudit(private val test: Instrumentation, private val output: File) {
+    fun publishedPreviewDoesNotResume(): String = withPhoto("published-preview") { vm, _ ->
+        test.runOnMainSync { vm.params.exposureEv = .3f; vm.scheduleRender() }
+        idle(vm)
+        val frame = vm.lastResult
+        val bitmap = vm.rendered
+        val media = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val resolver = test.targetContext.contentResolver
+        fun ids(): Set<Long> = buildSet {
+            resolver.query(media, arrayOf(MediaStore.Images.Media._ID), null, null, null)?.use {
+                while (it.moveToNext()) add(it.getLong(0))
+            }
+        }
+        val before = ids()
+        val retiring = Job()
+        val field = EditorViewModel::class.java.getDeclaredField("renderJob").apply { isAccessible = true }
+        try {
+            // Hold the exact already-published/but-still-active boundary deterministically.
+            test.runOnMainSync {
+                field.set(vm, retiring)
+                vm.exportFormat = "PNG"; vm.exportRes = 512
+                vm.exportKeepCapture = false; vm.exportKeepLocation = false
+                vm.export()
+                retiring.complete()
+            }
+            idle(vm)
+            check(vm.errorMessage == null) { vm.errorMessage.orEmpty() }
+            check(vm.lastResult === frame && vm.rendered === bitmap) {
+                "Export restarted an already published native preview"
+            }
+            return@withPhoto "Export ignores a retiring worker whose latest frame is already published; genuine pending changes are tested separately"
+        } finally {
+            retiring.complete()
+            (ids() - before).forEach { resolver.delete(ContentUris.withAppendedId(media, it), null, null) }
+        }
+    }
+
     fun batchResume(native: Boolean, cancel: Boolean): String = withPhoto("batch-$native-$cancel") { vm, _ ->
         val resolver = test.targetContext.contentResolver
         val media = MediaStore.Images.Media.EXTERNAL_CONTENT_URI

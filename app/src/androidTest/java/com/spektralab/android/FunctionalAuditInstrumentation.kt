@@ -199,6 +199,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         }
         if (editingBoundariesOnly) {
             val audit = EditingBoundaryAudit(this, output)
+            case("editing.export_does_not_resume_published_preview") { audit.publishedPreviewDoesNotResume() }
             case("editing.cancel_curve_overlapping_save") { audit.cancelPostEdit(curve = true) }
             case("editing.cancel_color_overlapping_save") { audit.cancelPostEdit(curve = false) }
             case("editing.small_locked_crop_commit") { audit.smallCrop() }
