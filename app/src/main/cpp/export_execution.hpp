@@ -4,6 +4,7 @@
 #include <sys/system_properties.h>
 #include <cstddef>
 #include <atomic>
+#include <utility>
 
 namespace theia::export_execution {
 
@@ -13,6 +14,30 @@ inline thread_local bool one_shot = false;
 inline thread_local bool detailed = false;
 inline thread_local bool experimental_fir_bands = false;
 inline thread_local const std::atomic<bool>* cancellation = nullptr;
+
+// The engine owns the export negative; the pipeline normally only borrows it.
+// Register that one local owner for the duration of run_print, so the one-shot
+// stage chain can take it after print setup has finished. Exact object identity
+// prevents consuming any unrelated alias or an ordinary interactive input.
+template <typename Image>
+class PrintInputScope {
+public:
+    explicit PrintInputScope(Image& input) : previous_(input_) {
+        input_ = one_shot ? &input : nullptr;
+    }
+    ~PrintInputScope() { input_ = previous_; }
+    PrintInputScope(const PrintInputScope&) = delete;
+    PrintInputScope& operator=(const PrintInputScope&) = delete;
+
+    static Image take(const Image& input) {
+        if (one_shot && input_ == &input) return std::exchange(*input_, Image{});
+        return input;
+    }
+
+private:
+    inline static thread_local Image* input_ = nullptr;
+    Image* previous_;
+};
 
 class Scope {
 public:

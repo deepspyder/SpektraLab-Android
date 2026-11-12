@@ -1,0 +1,20 @@
+    if (theia::export_execution::one_shot) {
+        // This node consumes its two inputs. The generated body is the same
+        // upstream node, with each owner dropped after its final GPU reader.
+        const auto consume_dir = [&](Image cmy, Image log_raw, Image& out,
+                                     std::string& error) -> bool {
+@THEIA_DIR_BODY@
+        };
+        Chain chain;
+        chain.cur = std::move(cur);
+        for (size_t i = 0; i < kFilmStageCount; ++i) {
+            Chain next;
+            if (kFilmStages[i].run == &Pipeline::film_couplers) {
+                SPK_NODE(consume_dir(std::move(chain.cur), std::move(chain.log_e_film), next.cur, error));
+            } else if (!(this->*kFilmStages[i].run)(chain, next, error)) {
+                return false;
+            }
+            chain = std::move(next);
+        }
+        out = std::move(chain.cur);
+    } else if (!film_segment(cur, out, error)) return false;

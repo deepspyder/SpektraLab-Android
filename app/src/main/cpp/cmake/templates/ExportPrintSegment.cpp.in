@@ -1,0 +1,14 @@
+    const bool ok = [&]() {
+        if (!theia::export_execution::one_shot) return print_segment(cmy, out, error);
+        Chain chain;
+        chain.cur = theia::export_execution::PrintInputScope<Image>::take(cmy);
+        theia::export_execution::trace_memory(gpu_, "print_input_transferred");
+        for (size_t i = 0; i < kPrintStageCount; ++i) {
+            Chain next;
+            if (!(this->*kPrintStages[i].run)(chain, next, error)) return false;
+            chain = std::move(next);
+            theia::export_execution::trace_memory(gpu_, kPrintStages[i].name);
+        }
+        out = std::move(chain.cur);
+        return true;
+    }();
