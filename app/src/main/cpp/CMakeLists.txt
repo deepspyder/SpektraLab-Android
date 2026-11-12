@@ -55,10 +55,13 @@ else()
 
     # 非 Apple 分支（Android 走这里）：windows_unported 是「显式边界」占位，
     # view_process / overscan / imprint_raster 是片边/日期后背的 Vulkan 路径。
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidExportExecution.cmake")
+    theia_android_export_execution("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_ENGINE_SOURCE SPK_ANDROID_PIPELINE_SOURCE)
+
     set(SPK_PIPELINE_SOURCES
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/blur.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/engine.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/pipeline.cpp
+        ${SPK_ANDROID_ENGINE_SOURCE}
+        ${SPK_ANDROID_PIPELINE_SOURCE}
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/scene_latitude.cpp
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/windows_unported.cpp
         ${SPEKTRA_ENGINE_DIR}/src/pipeline/view_process.cpp
@@ -79,6 +82,7 @@ else()
         ${SPEKTRA_ENGINE_DIR}/src
         ${SPEKTRA_ENGINE_DIR}/src/core
         ${SPEKTRA_ENGINE_DIR}/src/gpu
+        ${SPEKTRA_ENGINE_DIR}/src/pipeline
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${SPEKTRA_ENGINE_DIR}/third_party/volk
         ${SPEKTRA_ENGINE_DIR}/third_party/stb

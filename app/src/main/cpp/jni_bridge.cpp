@@ -14,6 +14,7 @@
 #include <android/log.h>
 #include <android/bitmap.h>
 #include "native_pixels.hpp"
+#include "export_execution.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -301,6 +302,22 @@ Java_com_spektralab_android_engine_EngineClient_nativeRenderForExport(
     if (obj) result.release();
     else spk_result_free(result.get());
     return obj;
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_spektralab_android_engine_EngineClient_nativeRenderExportOnce(
+    JNIEnv* env, jobject object, jlong enginePtr, jlong sessionPtr) {
+    theia::export_execution::Scope execution;
+    jobject result = Java_com_spektralab_android_engine_EngineClient_nativeRenderForExport(
+        env, object, enginePtr, sessionPtr);
+    if (result && theia::export_execution::detailed) {
+        char* progress = nullptr;
+        if (spk_progress(asSession(sessionPtr), nullptr, &progress) == SPK_OK && progress) {
+            __android_log_print(ANDROID_LOG_INFO, "SpkExport", "one_shot_nodes=%s", progress);
+        }
+        if (progress) spk_string_free(progress);
+    }
+    return result;
 }
 
 JNIEXPORT void JNICALL

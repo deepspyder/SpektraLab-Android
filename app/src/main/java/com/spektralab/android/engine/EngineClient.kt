@@ -73,6 +73,15 @@ class EngineClient private constructor(
 
     fun renderForExport(): NativeRenderResult = requireSession { nativeRenderForExport(enginePtr, sessionPtr) }
 
+    /** Consume an export-only session; the returned CPU pixels own their storage. */
+    fun renderExportOnce(): NativeRenderResult {
+        try {
+            return requireSession { nativeRenderExportOnce(enginePtr, sessionPtr) }
+        } finally {
+            closeSession()
+        }
+    }
+
     fun closeSession() {
         sessionLifetime.write {
             releaseSessionLocked()
@@ -212,6 +221,7 @@ class EngineClient private constructor(
     private external fun nativeOpenBitmap(enginePtr: Long, bitmap: Bitmap, paramsJson: String): Long
     private external fun nativeOpenRaw(enginePtr: Long, pixels: Long, paramsJson: String): Long
     private external fun nativeRenderForExport(enginePtr: Long, sessionPtr: Long): NativeRenderResult
+    private external fun nativeRenderExportOnce(enginePtr: Long, sessionPtr: Long): NativeRenderResult
     private external fun nativeSetParams(enginePtr: Long, sessionPtr: Long, deltaJson: String): String
     private external fun nativeGetParams(enginePtr: Long, sessionPtr: Long): String
     private external fun nativeSolve(enginePtr: Long, sessionPtr: Long, target: String): String

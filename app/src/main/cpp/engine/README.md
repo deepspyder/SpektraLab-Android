@@ -1,17 +1,34 @@
-# 接入真实引擎（里程碑 M0）
+# Android 引擎接入
 
-`CMakeLists.txt` 默认编译 `stub/spk_stub_engine.cpp`（能 build+link+run，不能渲染）。
-下面说明如何切换到真实引擎，以及需要哪些外部依赖。
+`CMakeLists.txt` 默认编译真实 C++20 引擎，`SPEKTRA_USE_STUB_ENGINE=OFF`。本目录只保存接入说明，实际源码来自构建时的 `SPEKTRA_ENGINE_DIR`，默认指向工作区同级的 `SpektraLab-Windows/engine`。
 
-## 切换
+引擎编译进入 Android 的 `libspektralab.so`，在应用自身进程内执行。手机不访问电脑上的源码、桌面应用或网络服务；共用源码目录本身不增加运行时传输或会话争用。
 
-在 `app/build.gradle.kts` 的 `externalNativeBuild.cmake.arguments` 里加：
+## Android 一次性导出路径
 
-```kotlin
-arguments += listOf("-DSPEKTRA_USE_STUB_ENGINE=OFF")
-```
+单张和批量成片导出使用 `EngineClient.renderExportOnce()`，保持 full 层级、计算节点及像素精度：
 
-（或直接在 CMake 配置时传 `-DSPEKTRA_USE_STUB_ENGINE=OFF`。）
+1. DIR 最后一次读取后释放不再使用的曝光中间图，避免与颗粒阶段叠加驻留。
+2. 不为随即关闭的导出会话额外复制完整浮点负片。
+3. 冲印结束后，在最终打包和 CPU 读回前释放已无用途的源图、负片及层级引用。
+4. 返回独立拥有的 CPU RGBA16 结果并关闭会话，之后编码仍按既有精度逐行读取。
+
+普通编辑预览和 `renderForExport()` 保留原先缓存语义。作用域按线程隔离并在失败时恢复，不能用于仍需继续交互重印的会话。软打样和 DI 沿用原有入口。
+
+`cmake/AndroidExportExecution.cmake` 在 Android 构建目录生成专用引擎和流水线源文件；`cmake/AndroidVulkanMemory.cmake` 同样生成移动端分配适配。这些适配不会修改桌面引擎检出。上游锚点变化会让构建失败，必须重新审查资源生命周期。
+
+这不是完整分块渲染：全局归约、模糊和颗粒仍可能需要多个全尺寸图面。GPU 临时池高水位不等于进程 PSS，仍需在手机上核对驱动和总体峰值。
+
+## 分阶段诊断
+
+`SpkExport` 记录解码、镜头校正、引擎输入、渲染和编码耗时。需要检查一次性导出的具体节点时可临时开启：
+
+    adb shell setprop debug.theia.export_timings 1
+    adb logcat -s SpkExport
+
+完成后恢复为 0。诊断默认关闭；开启会获取同步节点计时，不能与正常运行的总耗时直接混作同一指标。
+
+测试入口 `audit=export-once` 核对全部胶片家族、兼容相纸、裁剪、片边、日期、相同初始随机状态颗粒、实际取消和再次打开；`audit=engine-export` 使用真实 RAW 完成全尺寸分阶段计时及完整 TIFF 哈希。相机测试文件不进入应用或 Git。
 
 ## 依赖清单（已核实）
 
@@ -22,8 +39,8 @@ arguments += listOf("-DSPEKTRA_USE_STUB_ENGINE=OFF")
 | volk | ✅ `engine/third_party/volk` | 运行时 `dlopen` 加载 `libvulkan.so`（Android 已提供） |
 | stb_truetype | ✅ `engine/third_party/stb` | 片边文字光栅化 |
 | 片边字体 | ✅ `engine/resources_product/fonts` | CMake 里 `file(READ ... HEX)` 嵌入二进制 |
-| **glslangValidator** | ❌ **需单独安装** | 把 47 个 `.comp` 编译成 SPIR-V。没有它 `.so` 能编译，但运行时加载不到 SPIR-V 无法渲染 |
-| LibRaw | ⏸️ 可选（M0 暂不做） | RAW 解码。M0 用 Android 侧解码线性像素喂给 `spk_open`；后续再做 LibRaw NDK |
+| **glslangValidator** | 由本地构建环境提供 | 编译 Vulkan 内核为 SPIR-V；运行包需要包含相应着色器 |
+| LibRaw | 已接入 0.22.2 | 源码默认来自工作区 deps；当前 Android 构建未启用 OpenMP |
 
 ## 编译 SPIR-V（运行前必须）
 
@@ -56,11 +73,10 @@ vulkan/*.spv                                        # 上一步编译出的 SPIR
 
 - **Vulkan 后端用 `spk_open`，不用 `spk_open_device`**：`spk_open_device` 在 Vulkan 后端被拒绝。
 - **`spk_engine_create` 的 `device` 参数传 `NULL`**（Vulkan 后端自建 instance/device；`EngineClient` 已经这么做）。
-- **内存**：45MP 全分辨率渲染在手机内存会爆。引擎有 `spk_memory_report` / `trim_pool`，
-  生产版要在 Kotlin 侧限制最大帧尺寸 + 用 live/preview tier 交互、后台 full 渲染。
+- **内存**：全分辨率的活跃图面、GPU 驱动和 CPU 编码都占用内存；保留 full 输出尺寸，先降低无用复制和生命周期重叠。设备能力必须实测，不能靠降低画质冒充优化。
 - **线程**：引擎 C ABI 里 `spk_cancel` 可跨线程；渲染本身单线程单飞。Kotlin 侧用 `Dispatchers.IO` + 单飞调度。
 
 ## 对比度遮罩（contrast mask）
 
 Windows/Vulkan 后端**尚未实现** contrast mask（`engine/src/pipeline/windows_unported.cpp` 明确拒绝）。
-Android 走的是同一条非 Apple 分支，所以该控件在 M0 阶段应隐藏/置灰，与 Windows 版行为一致。
+Android 走的是同一条非 Apple 分支，因此不能将尚不支持的内核作为已实现功能开放。

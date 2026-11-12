@@ -86,6 +86,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var curveLayoutOnly = false
     private var editingBoundariesOnly = false
     private var stockComparisonOnly = false
+    private var exportEngineOnly = false
+    private var exportOnceOnly = false
+    private var exportEngineEffects = false
+    private var exportEngineInput = "perf-z6ii.NEF"
     private var interactionPerfLabel = "current"
     private var colorOnly = false
     private var fullSizeColorCacheOnly = false
@@ -123,6 +127,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         curveLayoutOnly = audit == "curve-layout"
         editingBoundariesOnly = audit == "editing-boundaries"
         stockComparisonOnly = audit == "stock-comparison"
+        exportEngineOnly = audit == "engine-export"
+        exportOnceOnly = audit == "export-once"
+        exportEngineEffects = arguments?.getString("effects") == "true"
+        exportEngineInput = arguments?.getString("input") ?: "perf-z6ii.NEF"
         stockInteractionOnly = audit == "stock-interaction"
         interactionPerfLabel = arguments?.getString("label") ?: "current"
         fullSizeColorCacheOnly = audit == "color-raw"
@@ -165,6 +173,23 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (exportOnceOnly) {
+            case("export.one_shot_native_parity") { ExportEngineAudit.parity(targetContext) }
+            case("export.one_shot_cancel_and_reopen") { ExportEngineAudit.cancellation(targetContext) }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (exportEngineOnly) {
+            case("export.engine_full_resolution") {
+                ExportEngineAudit(this, output, exportEngineInput, exportEngineEffects, interactionPerfLabel).run()
+            }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (stockComparisonOnly) {
             case("preview.stock_hold_and_split") { StockComparisonAudit(this, output).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }

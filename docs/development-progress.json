@@ -1,7 +1,14 @@
 {
   "date": "2026-11-12",
-  "batch": "导出高级设置排版统一：拍摄/GPS/高级设置的字体层级、左对齐、说明行距和分隔线统一至上方列表；展开内容采用相同主标签/次级值。最终5组/5条既有回归及大字体/平板/横屏通过，导出算法与画质保持；20项工作包及T06状态不变，未提交/未发布。",
+  "batch": "一次性全尺寸导出：在Android适配中提前释放DIR后log图、避免持久负片复制、读回前释放源图并关闭导出会话；保留普通编辑缓存。24MP和50MP默认效果临时池高水位分别减少约280MiB和576MiB，原生测试TIFF摘要保持。23组/181条回归通过；追加的50MP真实应用JPEG导出仍渲染超时，不能宣称全部大图问题已修复。F03进行中、T06未开始，本次提交未发布新Release。",
   "validation": [
+    "本批最终同一构建23组/181条记录通过；新一次性导出含35组全U16像素对照和真实取消/再次打开。证据.tmp/export-engine-optimization/verification.json，报告full-resolution-export-engine.md。",
+    "24MP默认效果的GPU临时池高水位1962.5MiB降至1682.2MiB；50MP默认效果4032MiB降至3456MiB。三种相机场景完整TIFF摘要/尺寸/字节数一致；指标不等于进程总峰值，50MP仍有很高活跃工作集。",
+    "实际应用24MP中性/曲线/HSL全尺寸TIFF摘要保持原基线；94项引擎资源不变，桌面引擎检出未修改。Android两种ABI完成编译；本轮.so因生命周期适配而变化，不能沿用上一批原生库字节不变声明。",
+    "源码共享仅发生在构建时，Android进程内执行自己的libspektralab.so。实际瓶颈需分别看RAW解码、镜头校正、同步Vulkan与活跃图面，不能靠复制目录推断性能变化。",
+    "首次快捷导出回归出现Java堆OOM，保留崩溃日志；原代码和修复包同用例复测均通过。最终增加预览OOM捕获并重跑相关回归。新内存优化不代表消除了所有Java/GPU峰值；真机未连接，计时仅模拟器单次采样。",
+    "追加50MP真实应用JPEG导出在渲染阶段超过240秒，随后模拟器出现系统native crash_dump异常。保留失败记录；按用户要求冷启动恢复桌面，但未完成该用例复测，50MP应用TIFF未执行。原生50MP输出成功不替代这一失败，F03仍需解决总体活跃峰值和连续运行可靠性。",
+    "上一批导出排版批次说明：导出高级设置排版统一：拍摄/GPS/高级设置的字体层级、左对齐、说明行距和分隔线统一至上方列表；展开内容采用相同主标签/次级值。最终5组/5条既有回归及大字体/平板/横屏通过，导出算法与画质保持；20项工作包及T06状态不变，未提交/未发布。",
     "本批5组/5条记录通过：export-layout, editing-feedback, export-actions, batch-selection, export；export-layout在大字体手机/平板/横屏3种配置通过；证据.tmp/export-settings-polish/verification.json。",
     "仅修改ExportScreen.kt排版组件。元数据开关、权限、配方和导出路径保持；6个原生库及94项引擎资源与上一包逐字节一致，原证书V1/V2/V3验证通过。详见export-settings-typography.md。",
     "未重跑此前全参数/全尺寸RAW矩阵，真机/F03大图峰值/F04持续交互和T06等剩余项保持，不将本轮UI优化计为新功能阶段完成。",
@@ -95,12 +102,20 @@
     {
       "id": "F03",
       "name": "大图活跃峰值专项",
-      "status": "pending",
-      "evidence": [],
+      "status": "in_progress",
+      "evidence": [
+        "2026-11-12 Android一次性导出缩短中间图和源图生命周期，35组完整U16与24MP/50MP相机全尺寸哈希一致；默认效果临时池高水位减少约280MiB/576MiB，仍需真实全局峰值和真机专项。"
+      ],
       "remaining": [
         "逐阶段活跃区间测量；全局归约、卷积/IIR/颗粒分块等价性；24MP/50MP 真机验证"
       ],
-      "sources": []
+      "sources": [
+        "app/src/main/cpp/cmake/AndroidExportExecution.cmake",
+        "app/src/main/cpp/export_execution.hpp",
+        "app/src/main/java/com/spektralab/android/engine/EngineClient.kt",
+        "app/src/androidTest/java/com/spektralab/android/ExportEngineAudit.kt",
+        "docs/full-resolution-export-engine.md"
+      ]
     },
     {
       "id": "F04",

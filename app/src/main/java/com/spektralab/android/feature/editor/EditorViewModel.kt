@@ -977,6 +977,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
                     } catch (ex: CancellationException) {
                         throw ex
+                    } catch (_: OutOfMemoryError) {
+                        withContext(Dispatchers.Main.immediate) {
+                            if (photo == photoGeneration && generation == renderGeneration) {
+                                fail("编辑预览内存不足，已保留当前画面。请重新打开当前照片后重试")
+                            }
+                        }
                     } catch (ex: Exception) {
                         withContext(Dispatchers.Main.immediate) {
                             if (photo == photoGeneration && generation == renderGeneration &&
@@ -1282,7 +1288,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                         withContext(engineDispatcher) {
-                            measureExport("render") { e.renderForExport() }.use { result ->
+                            measureExport("render") { e.renderExportOnce() }.use { result ->
                                 poller?.cancelAndJoin()
                                 poller = null
                                 checkExportCancellation()
@@ -1791,7 +1797,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             RenderAdmission.check(app)
                             openExportSource(e, uri, photoParams, options.resolution, outputCs, options)
                             checkExportCancellation()
-                            measureExport("render") { e.renderForExport() }.use { r ->
+                            measureExport("render") { e.renderExportOnce() }.use { r ->
                                 checkExportCancellation()
                                 e.closeSession()
                                 dimensions = "${r.width}×${r.height}"
