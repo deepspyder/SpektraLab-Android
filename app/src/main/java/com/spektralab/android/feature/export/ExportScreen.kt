@@ -91,18 +91,19 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                 } else vm.exportKeepLocation = keep
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                .clip(TheiaShapes.control)
-                .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .clickable(enabled = !processing, role = Role.Button, onClick = { advanced = !advanced })
-                .semantics { contentDescription = "高级设置"; stateDescription = if (advanced) "已展开" else "已收起" }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("高级设置", fontSize = 12.sp)
-                    Text("位深 · 元数据 · 文件命名 · 保存位置", fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "高级设置"
+                    stateDescription = if (advanced) "已展开" else "已收起"
                 }
-                Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, modifier = Modifier.size(18.dp))
+                .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                ExportOptionText("高级设置", "位深 · 文件命名 · 保存位置 · 配方",
+                    Modifier.weight(1f).padding(end = 12.dp))
+                Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null,
+                    modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            ExportSettingDivider()
             if (advanced) {
                 val extension = when (vm.exportFormat) {
                     "PNG" -> "png"
@@ -204,13 +205,13 @@ private fun ExportInfoRow(label: String, value: String) {
         Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, modifier = Modifier.widthIn(min = 88.dp), fontSize = 12.sp, lineHeight = 16.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, modifier = Modifier.padding(end = 16.dp), fontSize = 12.sp, lineHeight = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface)
         Text(value, modifier = Modifier.weight(1f), fontSize = 11.sp, lineHeight = 16.sp,
-            color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.End,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.End,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f), thickness = .5.dp)
+    ExportSettingDivider()
 }
 
 @Composable
@@ -249,7 +250,21 @@ private fun ExportSettingRow(label: String, value: String, options: List<String>
             options.forEach { option -> DropdownMenuItem(text = { Text(optionLabel(option)) }, onClick = { onSelect(option); expanded = false }) }
         }
     }
+    ExportSettingDivider()
+}
+
+@Composable
+private fun ExportSettingDivider() {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f), thickness = .5.dp)
+}
+
+/** Two-line settings share the same label scale and leading edge as the single-line rows. */
+@Composable
+private fun ExportOptionText(label: String, detail: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+        Text(detail, fontSize = 10.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
@@ -336,11 +351,10 @@ private fun ExportInlineProgress(vm: EditorViewModel) {
 private fun ExportMetadataOption(label: String, detail: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
         .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
-        .semantics(mergeDescendants = true) { contentDescription = label }, verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 2.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        .semantics(mergeDescendants = true) { contentDescription = label }
+        .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        ExportOptionText(label, detail, Modifier.weight(1f).padding(end = 12.dp))
         Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
+    ExportSettingDivider()
 }

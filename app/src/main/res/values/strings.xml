@@ -11,7 +11,18 @@
     <string name="curve_add_midpoint">添加中间控制点</string>
     <string name="curve_previous_point">选择上一个控制点</string>
     <string name="curve_next_point">选择下一个控制点</string>
-    <string name="curve_hint">轻点添加控制点，拖动调整。也可用下方数值微调。</string>
+    <string name="curve_hint">拖动圆点调整 · 轻点加点 · 右下角精调</string>
+    <string name="curve_undo">撤销曲线编辑</string>
+    <string name="curve_redo">重做曲线编辑</string>
+    <string name="curve_more">曲线复位选项</string>
+    <string name="curve_expand_photo">展开照片预览</string>
+    <string name="curve_restore_tools">返回曲线调整</string>
+    <string name="curve_coordinates">输入 %1$d · 输出 %2$d</string>
+    <string name="curve_edit">编辑曲线</string>
+    <string name="curve_close">关闭曲线</string>
+    <string name="curve_done">完成</string>
+    <string name="curve_entry_summary">五通道精细调整 · 在独立编辑区操作</string>
+    <string name="curve_entry_changed">已调整 · 进入编辑或复位</string>
     <string name="curve_point">控制点 %1$d / %2$d</string>
     <string name="curve_input">曲线输入</string>
     <string name="curve_output">曲线输出</string>
@@ -42,4 +53,13 @@
     <string name="color_reset_band">复位此颜色</string>
     <string name="color_reset_all">复位全部色彩</string>
     <string name="color_unsupported">这份色彩数据无法读取，原记录已保留。请更新应用，或复位色彩后再导出。</string>
+    <string name="stock_photo_preview">胶片实时预览</string>
+    <string name="stock_original">原图</string>
+    <string name="stock_printed">冲印效果</string>
+    <string name="stock_split_comparison">分割对比</string>
+    <string name="stock_compare">前后对比</string>
+    <string name="stock_close_comparison">关闭前后对比</string>
+    <string name="stock_hold_original">按住查看原图</string>
+    <string name="stock_original_release">原图 · 松手恢复</string>
+    <string name="stock_preview_empty">导入照片后可实时试片</string>
 </resources>

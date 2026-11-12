@@ -134,13 +134,15 @@ internal fun PhotoCanvas(
     comparing: Boolean,
     onImport: () -> Unit,
     modifier: Modifier = Modifier,
+    showHistogram: Boolean = true,
+    backgroundColor: Color = MaterialTheme.colorScheme.surfaceVariant,
 ) {
     val canCompare = vm.sourceBitmap != null && vm.rendered != null && !vm.isCropping
     val canHoldOriginal = canCompare && !comparing
     var holdingOriginal by remember(vm.currentUri, vm.sourceBitmap) { mutableStateOf(false) }
     val showingOriginal = canHoldOriginal && holdingOriginal
     BoxWithConstraints(
-        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)
+        modifier.fillMaxWidth().background(backgroundColor)
             .semantics {
                 contentDescription = "照片预览"
                 if (canCompare) stateDescription = when {
@@ -192,7 +194,7 @@ internal fun PhotoCanvas(
             }
         }
         val displayed = rendered ?: source
-        if (!showingOriginal && (!comparing || !canCompare) && displayed != null) {
+        if (showHistogram && !showingOriginal && (!comparing || !canCompare) && displayed != null) {
             val aspect = displayed.width.toFloat() / displayed.height
             val photoWidth = minOf(maxWidth, maxHeight * aspect)
             val photoHeight = photoWidth / aspect

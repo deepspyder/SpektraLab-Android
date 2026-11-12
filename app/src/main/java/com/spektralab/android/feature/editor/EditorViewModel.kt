@@ -238,7 +238,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var paramsUri: Uri? = null
     @Volatile private var cleared = false
     private var wbJob: Job? = null
+    private data class PendingPreview(val result: SpkResult, val colorSpace: String, val photo: Long, val revision: Long)
+    private var pendingPreview: PendingPreview? = null
     private var gradeGeneration = 0L
+    private var gradeRequest = 0L
+    private var renderRequest = 0L
     @Volatile private var renderGeneration = 0L
     private var cameraWbJob: Job? = null
     private var engineCreateJob: Job? = null
@@ -306,13 +310,30 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 重置全部编辑参数到默认（保留当前照片）。
     fun resetAll() {
+        finishCurveEdit(cancel = true)
+        finishColorEdit(cancel = true)
         params = EditorParams()
         cropAspect = "原始"
         scheduleRender()
     }
 
     private fun historyKey(uri: Uri? = currentUri): String = uri?.toString() ?: "session"
-    private fun historySnapshot(): String = params.toJson().toString()
+    /** A live gesture is preview-only until release, even if another operation saves. */
+    private fun committedParams(): EditorParams {
+        if (curveStart == null && colorStart == null) return params
+        return params.copy().apply {
+            curveStart?.let {
+                toneCurves = it
+                unreadableToneCurves = curveStartUnreadable
+            }
+            colorStart?.let {
+                colorAdjustments = it
+                unreadableColorAdjustments = colorStartUnreadable
+            }
+        }
+    }
+
+    private fun historySnapshot(): String = committedParams().toJson().toString()
 
     private fun refreshHistoryButtons() {
         val key = historyKey()
@@ -358,6 +379,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun redo() = restoreHistory(redo = true)
 
     private fun restoreHistory(redo: Boolean) {
+        finishCurveEdit(cancel = true)
+        finishColorEdit(cancel = true)
         val key = historyKey()
         val undo = undoHistory[key] ?: return
         val redoStack = redoHistory.getOrPut(key) { mutableListOf() }
@@ -374,7 +397,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             undo.removeAt(undo.lastIndex)
             params = EditorParams.fromJson(JSONObject(undo.last()))
         }
-        currentUri?.let { EditStore.save(app, it, params) }
+        if (previous.cropX != params.cropX || previous.cropY != params.cropY ||
+            previous.cropW != params.cropW || previous.cropH != params.cropH) {
+            cropAspect = if (params.cropW >= 1f && params.cropH >= 1f) "原始" else "自定义"
+        }
+        currentUri?.let { EditStore.save(app, it, committedParams()) }
         refreshHistoryButtons()
         lastHistoryKey = null
         suppressHistory = true
@@ -391,7 +418,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun syncSettingsToOtherPhotos() {
         val uri = currentUri ?: return
-        val source = params.copy()
+        val source = committedParams().copy()
         var count = 0
         photos.filter { it != uri }.forEach { targetUri ->
             val target = EditStore.load(app, targetUri) ?: EditorParams()
@@ -437,8 +464,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** Commit the crop overlay as a bounded geometry edit and re-render it. */
     fun finishCrop() {
         if (!isCropping) return
-        params.cropW = params.cropW.coerceIn(0.1f, 1f)
-        params.cropH = params.cropH.coerceIn(0.1f, 1f)
+        // Match the overlay's 2% minimum; a second 10% clamp changed valid selections.
+        params.cropW = params.cropW.coerceIn(0.02f, 1f)
+        params.cropH = params.cropH.coerceIn(0.02f, 1f)
         params.cropX = params.cropX.coerceIn(0f, 1f - params.cropW)
         params.cropY = params.cropY.coerceIn(0f, 1f - params.cropH)
         isCropping = false
@@ -487,15 +515,43 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         revision: Long = renderGeneration,
         editParams: EditorParams = params.copy(),
     ) {
-        if (photo != photoGeneration || revision != renderGeneration) return
-        val (bitmap, counts) = withContext(Dispatchers.Default) { convertPreview(result, editParams, colorSpace) }
-        withContext(Dispatchers.Main.immediate) {
-            if (photo != photoGeneration || revision != renderGeneration) { bitmap.recycle(); return@withContext }
-            resultColorSpace = colorSpace
-            rendered = bitmap
-            histogram = counts
-            lastResult = result
-            rememberDevelopedPreview(bitmap)
+        val pending = PendingPreview(result, colorSpace, photo, revision)
+        val grading = withContext(Dispatchers.Main.immediate) {
+            if (photo != photoGeneration || revision != renderGeneration) return@withContext null
+            // Make the new base available to post edits that arrive while it is being converted.
+            // A film request's earlier snapshot must not overwrite a newer curve or colour edit.
+            wbJob?.cancel()
+            val generation = ++gradeGeneration
+            pendingPreview = pending
+            generation to if (isExporting || isBatchExporting) editParams else params.copy()
+        } ?: return
+        var computed: Bitmap? = null
+        var published = false
+        try {
+            val (bitmap, counts) = withContext(Dispatchers.Default) {
+                val task = currentCoroutineContext()
+                convertPreview(result, grading.second, colorSpace) { task.ensureActive() }
+                    .also { computed = it.first }
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (photo == photoGeneration && revision == renderGeneration &&
+                    grading.first == gradeGeneration && pendingPreview === pending) {
+                    resultColorSpace = colorSpace
+                    rendered = bitmap
+                    histogram = counts
+                    lastResult = result
+                    pendingPreview = null
+                    rememberDevelopedPreview(bitmap)
+                    published = true
+                }
+            }
+        } catch (error: Throwable) {
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                if (pendingPreview === pending) pendingPreview = null
+            }
+            throw error
+        } finally {
+            if (!published) computed?.recycle()
         }
     }
 
@@ -620,31 +676,45 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!hasPhoto || isExporting || isBatchExporting) return
         if (commit) recordHistory()
         dirty = true
-        if (commit) currentUri?.let { EditStore.save(app, it, params) }
-        val result = lastResult ?: return
-        val editParams = EditSnapshot.capture(params).toParams()
-        val colorSpace = resultColorSpace
-        val generation = ++gradeGeneration
-        val photo = photoGeneration
-        wbJob?.cancel()
+        if (commit) currentUri?.let { EditStore.save(app, it, committedParams()) }
+        gradeRequest++
+        if (wbJob?.isActive == true) return
         wbJob = viewModelScope.launch {
-            delay(45)
-            var computed: Bitmap? = null
-            var published = false
-            try {
-                val (bitmap, counts) = withContext(Dispatchers.Default) {
-                    val task = currentCoroutineContext()
-                    convertPreview(result, editParams, colorSpace) { task.ensureActive() }.also { computed = it.first }
+            // One worker finishes a frame while input replaces the next request. A trailing
+            // debounce cancelled every frame during continuous drags, starving the preview.
+            do {
+                delay(16)
+                if (!hasPhoto || isExporting || isBatchExporting) return@launch
+                val request = gradeRequest
+                val pending = pendingPreview?.takeIf { it.photo == photoGeneration && it.revision == renderGeneration }
+                val result = pending?.result ?: lastResult ?: return@launch
+                val editParams = EditSnapshot.capture(params).toParams()
+                val colorSpace = pending?.colorSpace ?: resultColorSpace
+                val generation = ++gradeGeneration
+                val photo = photoGeneration
+                val revision = renderGeneration
+                var computed: Bitmap? = null
+                var published = false
+                try {
+                    val (bitmap, counts) = withContext(Dispatchers.Default) {
+                        val task = currentCoroutineContext()
+                        convertPreview(result, editParams, colorSpace) { task.ensureActive() }.also { computed = it.first }
+                    }
+                    if (photo == photoGeneration && revision == renderGeneration && generation == gradeGeneration &&
+                        !isExporting && !isBatchExporting &&
+                        (lastResult === result || pendingPreview?.result === result)) {
+                        resultColorSpace = colorSpace
+                        rendered = bitmap
+                        histogram = counts
+                        lastResult = result
+                        if (pendingPreview?.result === result) pendingPreview = null
+                        rememberDevelopedPreview(bitmap)
+                        published = true
+                    }
+                } finally {
+                    if (!published) computed?.recycle()
                 }
-                if (photo == photoGeneration && generation == gradeGeneration && lastResult === result) {
-                    rendered = bitmap
-                    histogram = counts
-                    rememberDevelopedPreview(bitmap)
-                    published = true
-                }
-            } finally {
-                if (!published) computed?.recycle()
-            }
+            } while (request != gradeRequest)
         }
     }
 
@@ -708,7 +778,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun scheduleCameraWb() {
         if (!currentIsRaw || !hasPhoto) return
         recordHistory()
-        currentUri?.let { EditStore.save(app, it, params) }
+        currentUri?.let { EditStore.save(app, it, committedParams()) }
         val uri = currentUri ?: return
         val photo = photoGeneration
         val editParams = EditSnapshot.capture(params).toParams()
@@ -861,57 +931,81 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // 在当前会话上 set_params + reprint，带 120ms 去抖（最新状态生效）。
-    fun scheduleRender() {
+    // Keep one render in flight; coalesce continuous input into the next complete frame.
+    fun scheduleRender() = scheduleRender(immediate = false)
+
+    private fun scheduleRender(immediate: Boolean) {
         if (isExporting || isBatchExporting) return
         recordHistory()
         val e = engine ?: return
         if (!hasPhoto) return
         dirty = true
-        val generation = ++renderGeneration
-        val photo = photoGeneration
-        val uri = currentUri
-        val editParams = EditSnapshot.capture(params).toParams()
-        val delta = editParams.deltaJson(previewW, previewH)
-        renderJob?.cancel()
-        e.cancel()
+        renderRequest++
+        if (immediate) {
+            renderJob?.cancel()
+            e.cancel()
+        } else if (renderJob?.isActive == true) return
         renderJob = viewModelScope.launch {
-            delay(120)
-            engineTasks.onEngine {
-                if (photo != photoGeneration || generation != renderGeneration) return@onEngine
-                try {
-                    e.setParams(delta)
-                    uri?.let { EditStore.save(app, it, editParams) }
-                    val r = e.render("live")
+            do {
+                if (!immediate) delay(16)
+                if (!hasPhoto || isExporting || isBatchExporting) return@launch
+                val request = renderRequest
+                val generation = ++renderGeneration
+                pendingPreview = null
+                val photo = photoGeneration
+                val uri = currentUri
+                val editParams = EditSnapshot.capture(params).toParams()
+                val delta = editParams.deltaJson(previewW, previewH)
+                stockPreviewJob?.cancel()
+                wbJob?.cancel()
+                gradeGeneration++
+                engineTasks.onEngine {
                     if (photo != photoGeneration || generation != renderGeneration) return@onEngine
-                    withContext(Dispatchers.Main.immediate) { stockPreviewJob?.cancel() }
-                    updateResult(r, photo = photo, revision = generation, editParams = editParams)
-                    append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
-                } catch (ex: CancellationException) {
-                    throw ex
-                } catch (ex: Exception) {
-                    withContext(Dispatchers.Main.immediate) {
-                        if (photo == photoGeneration && generation == renderGeneration &&
-                            ex.message?.contains("cancel", ignoreCase = true) != true) fail("${ex::class.simpleName}: ${ex.message}")
+                    try {
+                        e.setChangedParams(delta)
+                        // UI post edits may be newer than this debounced native request. Keep saves
+                        // ordered with those edits instead of writing the older render snapshot.
+                        withContext(Dispatchers.Main.immediate) {
+                            if (photo == photoGeneration && generation == renderGeneration && uri == currentUri) {
+                                uri?.let { EditStore.save(app, it, committedParams()) }
+                            }
+                        }
+                        val r = e.render("live")
+                        if (photo != photoGeneration || generation != renderGeneration) return@onEngine
+                        withContext(Dispatchers.Main.immediate) { stockPreviewJob?.cancel() }
+                        updateResult(r, photo = photo, revision = generation, editParams = editParams)
+                        append("render: ${r.width}×${r.height}  ${r.elapsedMs}ms  reprint=${r.reprint}")
+                    } catch (ex: CancellationException) {
+                        throw ex
+                    } catch (ex: Exception) {
+                        withContext(Dispatchers.Main.immediate) {
+                            if (photo == photoGeneration && generation == renderGeneration &&
+                                ex.message?.contains("cancel", ignoreCase = true) != true) fail("${ex::class.simpleName}: ${ex.message}")
+                        }
                     }
                 }
-            }
+            } while (request != renderRequest)
         }
     }
 
     // 相纸切换：先用打印 LUT 给近似预览（~10ms），再排程真正的 reprint
     // （LUT 无法表示曝光/滤色/glare，只作快速反馈）。
     fun selectFilm(stockId: String) {
+        if (busy || isExporting || isBatchExporting) return
+        val film = films.firstOrNull { it.id == stockId } ?: return
+        if (stockId == params.filmId && papers.any { it.id == params.paperId } &&
+            StockCatalog.canPrint(stockId, params.paperId)) return
+        val paper = if (StockCatalog.canPrint(stockId, params.paperId) && papers.any { it.id == params.paperId })
+            params.paperId else papers.firstOrNull { it.id == film.targetPrint && StockCatalog.canPrint(stockId, it.id) }?.id
+                ?: papers.firstOrNull { StockCatalog.canPrint(stockId, it.id) }?.id ?: return
         params.filmId = stockId
-        if (!StockCatalog.canPrint(stockId, params.paperId)) {
-            params.paperId = films.firstOrNull { it.id == stockId }?.targetPrint
-                ?: papers.first { StockCatalog.canPrint(stockId, it.id) }.id
-        }
-        scheduleRender()
+        params.paperId = paper
+        scheduleRender(immediate = true)
     }
 
     fun selectPaper(stockId: String) {
-        if (!StockCatalog.canPrint(params.filmId, stockId)) return
+        if (busy || isExporting || isBatchExporting || stockId == params.paperId ||
+            papers.none { it.id == stockId } || !StockCatalog.canPrint(params.filmId, stockId)) return
         params.paperId = stockId
         val e = engine ?: return
         if (!hasPhoto) return
@@ -1084,6 +1178,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             if (isExporting && (renderProgress ?: 0f) >= 100f) return
             exportCancelRequested = true
             renderStage = "正在取消…"
+        } else {
+            renderJob?.cancel()
+            wbJob?.cancel()
+            stockPreviewJob?.cancel()
+            pendingPreview = null
         }
         engine?.cancel()
     }
@@ -1110,11 +1209,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 以导出分辨率重新解码原图 → 全分辨率渲染 → 存盘 → 恢复预览会话。
     // 渲染期间并发轮询进度，支持取消。
+    private data class InterruptedPreview(val photo: Long, val render: Boolean, val grade: Boolean)
+
+    private fun pendingPreviewWork() = InterruptedPreview(photoGeneration, renderJob?.isActive == true, wbJob?.isActive == true)
+
+    private fun resumePreview(work: InterruptedPreview) {
+        if (cleared || work.photo != photoGeneration) return
+        if (work.render) scheduleRender() else if (work.grade) scheduleGrade(commit = false)
+    }
+
     fun export() {
         val e = engine ?: return
         if (!hasPhoto || isExporting || isBatchExporting || busy) return
         if (params.unreadableColorAdjustments != null) { fail(app.getString(com.spektralab.android.R.string.color_unsupported)); return }
         if (params.unreadableToneCurves != null) { fail(app.getString(com.spektralab.android.R.string.curve_unsupported)); return }
+        val interruptedPreview = pendingPreviewWork()
         isExporting = true
         exportCancelRequested = false
         isExportCommitCompleted = false
@@ -1231,6 +1340,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     exportCancelRequested = false
                     isExportCommitCompleted = false
                     isExporting = false
+                    resumePreview(interruptedPreview)
                 }
             }
         }
@@ -1278,6 +1388,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         renderGeneration++
         gradeGeneration++
         photoLoadJob?.cancel()
+        pendingPreview = null
         frameRenderJob?.cancel()
         renderJob?.cancel()
         wbJob?.cancel()
@@ -1631,6 +1742,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val options = captureExportOptions()
         val batchSmartStyle = smartStyle
         val batchAutoDevelop = smartAutoEnabled
+        val interruptedPreview = pendingPreviewWork()
         isBatchExporting = true
         exportCancelRequested = false
         isExportCommitCompleted = false
@@ -1727,6 +1839,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         renderStage = ""
                         exportCancelRequested = false
                         isExportCommitCompleted = false
+                        resumePreview(interruptedPreview)
                     }
                 }
             }
@@ -1751,6 +1864,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val previewWidth = previewW
         val previewHeight = previewH
         val previewInputSpace = previewInputColorSpace
+        val interruptedPreview = pendingPreviewWork()
         isExporting = true
         exportCancelRequested = false
         isExportCommitCompleted = false
@@ -1834,6 +1948,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             exportCancelRequested = false
                             isExportCommitCompleted = false
                             isExporting = false
+                            resumePreview(interruptedPreview)
                         }
                     }
                 }

@@ -5,6 +5,8 @@ import com.spektralab.android.core.color.ColorAdjustments
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import kotlin.math.pow
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * 色彩管线辅助。
@@ -18,6 +20,8 @@ import kotlin.math.pow
 object ColorPipeline {
 
     private val srgb8ToLinear = FloatArray(256) { srgbToLinear(it) }
+    // The exact existing Float quantizer, for every possible U16 value (no interpolation).
+    private val srgb16To8 = IntArray(65536) { ((it / 65535f) * 255f + .5f).toInt().coerceIn(0, 255) }
 
     /** sRGB 8bit 通道（0..255）→ 线性 float。 */
     fun srgbToLinear(c: Int): Float {
@@ -64,6 +68,7 @@ object ColorPipeline {
             val transform = if (sourceColorSpace == "Display P3") {
                 ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB))
             } else null
+            val passthrough = grade.isIdentity && transform == null
             var y = 0
             while (y < height) {
                 checkCancelled()
@@ -71,6 +76,14 @@ object ColorPipeline {
                 if (native != null) grade.nativeRows(rgba16, y * width * 4, width, height, y, count, native)
                 for (i in 0 until width * count) {
                     val index = (y * width + i) * 4
+                    if (passthrough) {
+                        val r = srgb16To8[rgba16[index].toInt() and 0xFFFF]
+                        val g = srgb16To8[rgba16[index + 1].toInt() and 0xFFFF]
+                        val b = srgb16To8[rgba16[index + 2].toInt() and 0xFFFF]
+                        strip[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                        histogram.r[r]++; histogram.g[g]++; histogram.b[b]++
+                        continue
+                    }
                     if (native != null) {
                         pixel[0] = native[i * 3]; pixel[1] = native[i * 3 + 1]; pixel[2] = native[i * 3 + 2]
                     } else grade.gradeAt(rgba16[index], rgba16[index + 1], rgba16[index + 2], pixel,
@@ -219,6 +232,22 @@ class Grade(
 ) {
     private val midGrey = 0.4614f  // SRGB_MID_GREY（desktop adjustments.ts）
     private val encodedExposureGain = Math.pow(exposureGain.toDouble(), 1.0 / 2.2).toFloat()
+    private val contrastGain = 1f + contrast * 1.2f
+    private val pointSpan = (1f - blackPoint - whitePoint).coerceAtLeast(.05f)
+    private val balanceNeutral = cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
+    // Brightness was evaluating three double-precision powers per pixel. All inputs here
+    // are U16: memoize the unchanged channel operations at every discrete input value.
+    private val brightnessChannels = run {
+        if (brightness == 0f || usesNativeGrade) null else Array(3) { channel ->
+            val wb = when (channel) { 0 -> wbR; 1 -> wbG; else -> wbB }
+            FloatArray(65536) { sample ->
+                var value = (sample / 65535f) * wb
+                if (encodedExposureGain != 1f) value *= encodedExposureGain
+                if (contrast != 0f) value = (value - midGrey) * (1f + contrast * 1.2f) + midGrey
+                powAtLeast0(value, 1f / (1f + brightness * .8f))
+            }
+        }
+    }
     private val vignetteGains = if (vignetteAmount > 0f) FloatArray(1025) { index ->
         val t = index / 1024f
         val weight = t * t * (3f - 2f * t)
@@ -236,10 +265,15 @@ class Grade(
     private val nativeUniforms by lazy { floatArrayOf(wbR, wbG, wbB, encodedExposureGain, contrast, brightness, saturation,
         highlights, shadows, blackPoint, whitePoint, *cbShadow, *cbMid, *cbHigh,
         vignetteAmount, vignetteSize, vignetteFeather, if (curves.isIdentity) 0f else 1f, if (identity && colors.isNeutral) 1f else 0f) }
+    private val nativeBrightness by lazy {
+        if (brightness == 0f) null else ByteBuffer.allocateDirect(3 * 65536 * Float.SIZE_BYTES)
+            .order(ByteOrder.nativeOrder()).also { NativeCurveGrade.prepareBrightness(nativeUniforms, it) }
+    }
 
     internal fun nativeRows(input: ShortArray, offset: Int, width: Int, height: Int, y: Int, rows: Int, output: FloatArray) {
         check(usesNativeGrade)
-        NativeCurveGrade.apply(input, offset, width, height, y, rows, nativeUniforms, curveTable, colorUniforms, vignetteGains, output)
+        NativeCurveGrade.apply(input, offset, width, height, y, rows, nativeUniforms, curveTable, colorUniforms,
+            vignetteGains, nativeBrightness, output)
     }
 
     private fun curve(x: Float, row: Int): Float {
@@ -267,21 +301,28 @@ class Grade(
             return
         }
 
-        r *= wbR; g *= wbG; b *= wbB
-        if (encodedExposureGain != 1f) {
-            r *= encodedExposureGain; g *= encodedExposureGain; b *= encodedExposureGain
+        val channels = brightnessChannels
+        if (channels != null) {
+            r = channels[0][r16.toInt() and 0xFFFF]
+            g = channels[1][g16.toInt() and 0xFFFF]
+            b = channels[2][b16.toInt() and 0xFFFF]
+        } else {
+            r *= wbR; g *= wbG; b *= wbB
+            if (encodedExposureGain != 1f) {
+                r *= encodedExposureGain; g *= encodedExposureGain; b *= encodedExposureGain
+            }
+            if (contrast != 0f) {
+                val k = contrastGain
+                r = (r - midGrey) * k + midGrey
+                g = (g - midGrey) * k + midGrey
+                b = (b - midGrey) * k + midGrey
+            }
+            if (brightness != 0f) {
+                val e = 1f / (1f + brightness * 0.8f)
+                r = powAtLeast0(r, e); g = powAtLeast0(g, e); b = powAtLeast0(b, e)
+            }
         }
-        if (contrast != 0f) {
-            val k = 1f + contrast * 1.2f
-            r = (r - midGrey) * k + midGrey
-            g = (g - midGrey) * k + midGrey
-            b = (b - midGrey) * k + midGrey
-        }
-        if (brightness != 0f) {
-            val e = 1f / (1f + brightness * 0.8f)
-            r = powAtLeast0(r, e); g = powAtLeast0(g, e); b = powAtLeast0(b, e)
-        }
-        val l0 = tonePosition(luma(r, g, b), midGrey)
+        val l0 = if (shadows != 0f || highlights != 0f) tonePosition(luma(r, g, b), midGrey) else 0f
         if (shadows != 0f) {
             val w = (1f - l0) * (1f - l0)
             r += shadows * 0.25f * w * (1f - r)
@@ -297,7 +338,7 @@ class Grade(
                 r += k * r; g += k * g; b += k * b
             }
         }
-        val span = (1f - blackPoint - whitePoint).coerceAtLeast(0.05f)
+        val span = pointSpan
         r = (r - blackPoint) / span
         g = (g - blackPoint) / span
         b = (b - blackPoint) / span
@@ -311,6 +352,13 @@ class Grade(
             colors.apply(out)
             r = out[0]; g = out[1]; b = out[2]
             balanceLuma = luma(r, g, b)
+        }
+        if (balanceNeutral) {
+            out[0] = (r + 0f).coerceIn(0f, 1f)
+            out[1] = (g + 0f).coerceIn(0f, 1f)
+            out[2] = (b + 0f).coerceIn(0f, 1f)
+            applyCurves(out)
+            return
         }
         val ls = tonePosition(balanceLuma, midGrey).coerceIn(0f, 1f)
         val wS = (1f - ls) * (1f - ls)

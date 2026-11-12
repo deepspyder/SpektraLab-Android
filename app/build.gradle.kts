@@ -19,8 +19,8 @@ android {
         applicationId = "com.spektralab.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
         testInstrumentationRunner = "com.spektralab.android.FunctionalAuditInstrumentation"
 
         // Vulkan 与 LibRaw 在 64 位 ARM 上最稳；加 x86_64 方便在模拟器上跑。
@@ -46,6 +46,11 @@ android {
             storePassword = releaseSigningProperties.getProperty("storePassword")
             keyAlias = releaseSigningProperties.getProperty("keyAlias", "spektralab-release")
             keyPassword = releaseSigningProperties.getProperty("keyPassword")
+            // Some vendor installers inspect the JAR certificate before handing an APK to
+            // PackageManager. Keep it alongside the modern APK signing blocks.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

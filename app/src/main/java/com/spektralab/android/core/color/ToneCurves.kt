@@ -17,8 +17,8 @@ enum class CurveChannel(val key: String) {
 /** Immutable monotone-Hermite control points. X is strictly ordered; endpoints stay at x=0/1. */
 class ToneCurve private constructor(points: List<CurvePoint>) {
     val points: List<CurvePoint> = java.util.Collections.unmodifiableList(points.toList())
-    val isIdentity: Boolean
-        get() = points.all { it.x == it.y }
+    // Immutable state: compute once instead of allocating list iterators for every output pixel.
+    val isIdentity: Boolean = this.points.all { it.x == it.y }
 
     private val tangents: DoubleArray by lazy {
         val d =
@@ -125,11 +125,9 @@ class ToneCurve private constructor(points: List<CurvePoint>) {
 class ToneCurves private constructor(private val rows: List<ToneCurve>) {
     operator fun get(channel: CurveChannel): ToneCurve = rows[channel.ordinal]
 
-    val isIdentity: Boolean
-        get() = rows.all { it.isIdentity }
+    val isIdentity: Boolean = rows.all { it.isIdentity }
 
-    val isDefault: Boolean
-        get() = rows.all { it == ToneCurve.IDENTITY }
+    val isDefault: Boolean = rows.all { it == ToneCurve.IDENTITY }
 
     fun with(channel: CurveChannel, curve: ToneCurve): ToneCurves =
         ToneCurves(rows.mapIndexed { i, old -> if (i == channel.ordinal) curve else old })

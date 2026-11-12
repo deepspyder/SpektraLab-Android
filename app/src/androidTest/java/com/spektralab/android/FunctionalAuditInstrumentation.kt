@@ -79,6 +79,14 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var renderSchedulingOnly = false
     private var exportCacheOnly = false
     private var fullSizeCacheOnly = false
+    private var stockInteractionOnly = false
+    private var interactionPerfOnly = false
+    private var parameterPerfOnly = false
+    private var changedParamsOnly = false
+    private var curveLayoutOnly = false
+    private var editingBoundariesOnly = false
+    private var stockComparisonOnly = false
+    private var interactionPerfLabel = "current"
     private var colorOnly = false
     private var fullSizeColorCacheOnly = false
     private var curvesOnly = false
@@ -109,6 +117,14 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
+        interactionPerfOnly = audit == "interaction-perf"
+        parameterPerfOnly = audit == "parameter-perf"
+        changedParamsOnly = audit == "changed-params"
+        curveLayoutOnly = audit == "curve-layout"
+        editingBoundariesOnly = audit == "editing-boundaries"
+        stockComparisonOnly = audit == "stock-comparison"
+        stockInteractionOnly = audit == "stock-interaction"
+        interactionPerfLabel = arguments?.getString("label") ?: "current"
         fullSizeColorCacheOnly = audit == "color-raw"
         editingFeedbackOnly = audit == "editing-feedback"
         importSelectionOnly = audit == "import-selection"
@@ -149,6 +165,62 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (stockComparisonOnly) {
+            case("preview.stock_hold_and_split") { StockComparisonAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (editingBoundariesOnly) {
+            val audit = EditingBoundaryAudit(this, output)
+            case("editing.cancel_curve_overlapping_save") { audit.cancelPostEdit(curve = true) }
+            case("editing.cancel_color_overlapping_save") { audit.cancelPostEdit(curve = false) }
+            case("editing.small_locked_crop_commit") { audit.smallCrop() }
+            case("editing.crop_history_aspect_lock") { audit.cropHistory() }
+            case("editing.batch_resumes_capture_and_post") { audit.batchResume(native = true, cancel = false) }
+            case("editing.batch_cancel_resumes_capture_and_post") { audit.batchResume(native = true, cancel = true) }
+            case("editing.batch_resumes_post_only") { audit.batchResume(native = false, cancel = false) }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (curveLayoutOnly) {
+            case("editor.curves_photo_layout") { CurveAudit(this, output).capturePhoto() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (changedParamsOnly) {
+            case("render.changed_params_exact_reprint") { ChangedParamsAudit.run(targetContext) }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (parameterPerfOnly) {
+            case("interaction.parameter_timing_matrix") { ParameterPerformanceAudit(this, output, interactionPerfLabel).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (stockInteractionOnly) {
+            case("interaction.material_and_grade_consistency") { StockInteractionAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (interactionPerfOnly) {
+            case("interaction.preview_and_film_latency") { InteractionPerformanceAudit(this, output, interactionPerfLabel).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (colorOnly) {
             val audit = ColorAudit(this, output)
             case("color.math_and_native") { audit.mathAndNative() }

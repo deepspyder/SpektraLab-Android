@@ -106,9 +106,10 @@ internal class StockLibraryAudit(private val test: Instrumentation, private val 
             assertNoSearch()
             check(find("胶片实时预览") != null) { "Photo preview is missing from the filter workspace" }
             val beforeCompare = vm.lastResult
-            click("对比原片")
-            await("original comparison") { find("原片") != null && find("查看胶片效果") != null }
-            click("查看胶片效果")
+            click("前后对比")
+            await("original comparison") { find("前后对比分界线") != null && find("关闭前后对比") != null }
+            check(find("Before · 原图") != null && find("After · 冲印") != null)
+            click("关闭前后对比")
             check(vm.lastResult === beforeCompare) { "Comparing rerendered the photo" }
             capture("films")
             val beforeFilm = vm.lastResult

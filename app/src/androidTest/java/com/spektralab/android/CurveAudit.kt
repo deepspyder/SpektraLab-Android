@@ -22,10 +22,59 @@ import java.io.File
 import kotlin.math.abs
 
 internal class CurveAudit(private val test: Instrumentation, private val output: File) {
+    fun capturePhoto(): String {
+        releasePointers()
+        val context = test.targetContext
+        val source = File(output, "perf-z6ii.NEF")
+        check(source.isFile)
+        val uri = Uri.fromFile(source)
+        val previous = EditStore.load(context, uri)
+        val activity = test.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        lateinit var vm: EditorViewModel
+        test.runOnMainSync { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
+        try {
+            await { vm.engine != null && !vm.busy }
+            EditStore.save(context, uri, EditorParams().apply { grainActive = false; glareActive = false })
+            test.runOnMainSync { vm.openPhotos(listOf(uri)) }
+            await { vm.hasPhoto && !vm.busy && vm.rendered != null }
+            click("继续显影"); click("调色"); click("编辑曲线")
+            await { find("RGB曲线图") != null }
+            val base = vm.lastResult
+            val original = vm.rendered
+            test.runOnMainSync {
+                vm.beginCurveEdit()
+                vm.changeCurves(ToneCurves.IDENTITY.with(CurveChannel.RGB,
+                    ToneCurve.IDENTITY.add(.25f, .2f).add(.75f, .8f)))
+                vm.finishCurveEdit()
+            }
+            await { vm.rendered !== original }
+            test.waitForIdleSync(); SystemClock.sleep(250)
+            fun shot(name: String) {
+                val bitmap = test.uiAutomation.takeScreenshot()!!
+                File(output, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            click("精细调整输入 / 输出")
+            click("选择下一个控制点")
+            shot("curves-real-precision.png")
+            click("收起精细调整")
+            shot("curves-real-photo.png")
+            click("展开照片预览")
+            shot("curves-real-expanded.png")
+            check(vm.lastResult === base) { "Layout inspection redeveloped the film" }
+            return "Real NEF curve workspace, precision and expanded photo screenshots captured without native re-render"
+        } finally {
+            releasePointers()
+            previous?.let { EditStore.save(context, uri, it) }
+            test.runOnMainSync { activity.finish() }
+        }
+    }
+
     fun run(): String {
         mathAndNative()
         editor()
-        return "Five-channel curve model, identity/linear/Hermite bounds, native/reference and TIFF strips; persistence/copy/undo/redo/cancel; real plot touch, reset and JPEG/PNG/TIFF exports"
+        return "Five-channel math/native/output parity; explicit curve workspace; blank swipe unchanged, tap-add/point-drag/cancel; history/copy/save/reset and JPEG/PNG/TIFF exports"
     }
 
     private fun grade(curves: ToneCurves, adjusted: Boolean) =
@@ -199,13 +248,14 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
     }
 
     private fun click(label: String) {
+        for (direction in listOf(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
         repeat(12) {
             if (find(label) != null) return@repeat
             fun scroll(node: AccessibilityNodeInfo?): Boolean {
                 if (node == null) return false
                 if (
                     node.isScrollable &&
-                        node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                        node.performAction(direction)
                 )
                     return true
                 for (i in 0 until node.childCount) if (scroll(node.getChild(i))) return true
@@ -213,6 +263,7 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
             }
             if (!scroll(root())) return@repeat
             SystemClock.sleep(100)
+        }
         }
         await { find(label) != null }
         var n = find(label)!!
@@ -223,6 +274,7 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
     }
 
     private fun editor() {
+        releasePointers()
         val context = test.targetContext
         val activity =
             test.startActivitySync(
@@ -263,20 +315,69 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
             await { vm.hasPhoto && !vm.busy && vm.rendered != null }
             click("继续显影")
             click("调色")
-            click("曲线")
+            check(find("RGB曲线图") == null) { "Curve plot intercepts the ordinary grade panel" }
+            click("编辑曲线")
             await { find("RGB曲线图") != null }
-            val rect = Rect().also { find("RGB曲线图")!!.getBoundsInScreen(it) }
+            var rect = Rect().also { find("RGB曲线图")!!.getBoundsInScreen(it) }
             val result = vm.lastResult
             val original = vm.rendered
-            val start = SystemClock.uptimeMillis()
+            var start = SystemClock.uptimeMillis()
             fun pointer(action: Int, x: Float, y: Float) {
+                if (action == MotionEvent.ACTION_DOWN) start = SystemClock.uptimeMillis()
                 val event = MotionEvent.obtain(start, SystemClock.uptimeMillis(), action, x, y, 0)
+                event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
                 try {
                     check(test.uiAutomation.injectInputEvent(event, true))
                 } finally {
                     event.recycle()
                 }
             }
+            val photo = Rect().also { find("照片预览")!!.getBoundsInScreen(it) }
+            val screen = Rect().also { root()!!.getBoundsInScreen(it) }
+            val footer = Rect().also { find("曲线复位选项")!!.getBoundsInScreen(it) }
+            check(footer.bottom <= screen.bottom - 16f * context.resources.displayMetrics.density) {
+                "Curve actions overlap the system navigation area: " + footer
+            }
+            if (screen.width() < screen.height() && context.resources.configuration.screenWidthDp < 840) {
+                check(photo.height() > screen.height() * .40f && photo.width() > screen.width() * .88f) {
+                    "Curve preview is too small: photo=" + photo + " screen=" + screen
+                }
+            } else check(photo.width() > screen.width() * .50f) { "Wide curve layout gives too little room to the photograph" }
+            pointer(MotionEvent.ACTION_DOWN, photo.exactCenterX(), photo.exactCenterY())
+            test.waitForIdleSync()
+            await { find("原图 · 松手恢复") != null }
+            pointer(MotionEvent.ACTION_UP, photo.exactCenterX(), photo.exactCenterY())
+            test.waitForIdleSync()
+            await { find("按住查看原图") != null }
+            check(vm.lastResult === result)
+            // A blank swipe is navigation, never a curve edit or history operation.
+            pointer(MotionEvent.ACTION_DOWN, rect.left + rect.width() * .12f, rect.top + rect.height() * .15f)
+            pointer(MotionEvent.ACTION_MOVE, rect.left + rect.width() * .12f, rect.top + rect.height() * .35f)
+            pointer(MotionEvent.ACTION_UP, rect.left + rect.width() * .12f, rect.top + rect.height() * .35f)
+            test.waitForIdleSync()
+            check(vm.params.toneCurves.isDefault && EditStore.load(context, uri)!!.toneCurves.isDefault)
+            find("RGB曲线图")!!.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            test.waitForIdleSync()
+            SystemClock.sleep(200)
+            rect = Rect().also { find("RGB曲线图")!!.getBoundsInScreen(it) }
+            val inset = 18f * context.resources.displayMetrics.density
+            val anchorX = rect.left + inset + (rect.width() - 2 * inset) * .25f
+            val anchorY = rect.top + inset + (rect.height() - 2 * inset) * .75f
+            pointer(MotionEvent.ACTION_DOWN, anchorX, anchorY)
+            pointer(MotionEvent.ACTION_MOVE, anchorX, anchorY - rect.height() * .2f)
+            pointer(MotionEvent.ACTION_UP, anchorX, anchorY - rect.height() * .2f)
+            await { !vm.params.toneCurves.isIdentity }
+            check(vm.params.toneCurves[CurveChannel.RGB].points.size == 3 && vm.lastResult === result) {
+                "A tonal guide must support a single drag without redeveloping the film"
+            }
+            click("撤销曲线编辑")
+            await { vm.params.toneCurves.isDefault }
+            // A tap and a drag are separate edits; scaled viewports need not map the tap to exact x=y.
+            pointer(MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY())
+            pointer(MotionEvent.ACTION_UP, rect.exactCenterX(), rect.exactCenterY())
+            test.waitForIdleSync()
+            check(vm.params.toneCurves[CurveChannel.RGB].points.size == 3)
+            val afterTap = vm.params.toneCurves
             pointer(MotionEvent.ACTION_DOWN, rect.exactCenterX(), rect.exactCenterY())
             pointer(MotionEvent.ACTION_MOVE, rect.exactCenterX(), rect.top + rect.height() * .3f)
             pointer(MotionEvent.ACTION_UP, rect.exactCenterX(), rect.top + rect.height() * .3f)
@@ -287,18 +388,18 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
             // Actual pointer cancellation must restore the starting curve and sidecar.
             pointer(
                 MotionEvent.ACTION_DOWN,
-                rect.left + rect.width() * .25f,
-                rect.top + rect.height() * .6f,
+                rect.exactCenterX(),
+                rect.top + rect.height() * .3f,
             )
             pointer(
                 MotionEvent.ACTION_MOVE,
-                rect.left + rect.width() * .25f,
-                rect.top + rect.height() * .4f,
+                rect.exactCenterX(),
+                rect.top + rect.height() * .5f,
             )
             pointer(
                 MotionEvent.ACTION_CANCEL,
-                rect.left + rect.width() * .25f,
-                rect.top + rect.height() * .4f,
+                rect.exactCenterX(),
+                rect.top + rect.height() * .5f,
             )
             test.waitForIdleSync()
             SystemClock.sleep(200)
@@ -306,7 +407,7 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
                 "Cancel mismatch: expected=${edited.toJson()} actual=${vm.params.toneCurves.toJson()}"
             }
             test.runOnMainSync { vm.undo() }
-            await { vm.params.toneCurves.isIdentity && !vm.busy }
+            await { vm.params.toneCurves == afterTap && !vm.busy }
             check(vm.lastResult === result) { "Curve undo redeveloped the film" }
             test.runOnMainSync { vm.redo() }
             await { vm.params.toneCurves == edited && !vm.busy }
@@ -316,6 +417,37 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
                 vm.changeCurves(ToneCurves.IDENTITY)
                 vm.finishCurveEdit(cancel = true)
             }
+            check(vm.params.toneCurves == edited)
+            val previewBeforePrecision = Rect().also { find("照片预览")!!.getBoundsInScreen(it) }
+            click("精细调整输入 / 输出")
+            check(find("曲线输出") != null && find("RGB曲线图") == null)
+            val previewInPrecision = Rect().also { find("照片预览")!!.getBoundsInScreen(it) }
+            check(previewInPrecision == previewBeforePrecision) { "Precision controls shrank the photo preview" }
+            fun slider(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+                if (node == null) return null
+                if (node.contentDescription?.toString() == "曲线输出" && node.rangeInfo != null) return node
+                for (index in 0 until node.childCount) slider(node.getChild(index))?.let { return it }
+                return null
+            }
+            val precisionSlider = slider(root()) ?: error("Curve output slider is not accessible")
+            val value = (precisionSlider.rangeInfo.current + .04f).coerceIn(0f, 1f)
+            check(precisionSlider.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
+                android.os.Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value) }))
+            await { vm.params.toneCurves != edited }
+            check(vm.lastResult === result) { "Precision adjustment redeveloped the film" }
+            click("撤销曲线编辑")
+            await { vm.params.toneCurves == edited }
+            val precisionShot = test.uiAutomation.takeScreenshot()!!
+            File(output, "curves-precision.png").outputStream().use { precisionShot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            precisionShot.recycle()
+            click("收起精细调整")
+            click("展开照片预览")
+            check(find("RGB曲线图") == null)
+            val expandedPhoto = Rect().also { find("照片预览")!!.getBoundsInScreen(it) }
+            check(expandedPhoto.width() > previewBeforePrecision.width() || expandedPhoto.height() > previewBeforePrecision.height())
+            check(vm.params.toneCurves == edited && vm.lastResult === result)
+            click("返回曲线调整")
+            await { find("RGB曲线图") != null }
             check(vm.params.toneCurves == edited)
             for ((label, plot) in
                 listOf(
@@ -327,6 +459,10 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
                 )) {
                 click(label)
                 await { find(plot) != null }
+                if (label == "蓝") {
+                    click("展开照片预览"); click("返回曲线调整")
+                    await { find("蓝曲线图") != null }
+                }
             }
             for (format in listOf("PNG", "JPEG", "TIFF")) {
                 val seen = ids()
@@ -361,6 +497,7 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
                 shot.compress(Bitmap.CompressFormat.PNG, 100, it)
             }
             shot.recycle()
+            click("曲线复位选项")
             click("复位此通道")
             await { vm.params.toneCurves.isIdentity }
             test.runOnMainSync {
@@ -372,12 +509,24 @@ internal class CurveAudit(private val test: Instrumentation, private val output:
                 vm.dismissError()
                 vm.params.unreadableToneCurves = null
             }
+            click("关闭曲线")
+            await { find("编辑曲线") != null }
+            check(find("RGB曲线图") == null && vm.params.toneCurves.isDefault)
         } finally {
+            releasePointers()
             (ids() - before).forEach {
                 resolver.delete(android.content.ContentUris.withAppendedId(media, it), null, null)
             }
             test.runOnMainSync { activity.finish() }
         }
+    }
+
+    /** Failed gesture audits must not leave Android's injected pointer pressed for the next run. */
+    private fun releasePointers() {
+        val time = SystemClock.uptimeMillis()
+        val cancel = MotionEvent.obtain(time, time, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
+        cancel.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+        try { test.uiAutomation.injectInputEvent(cancel, true) } finally { cancel.recycle() }
     }
 
     private fun await(condition: () -> Boolean) {

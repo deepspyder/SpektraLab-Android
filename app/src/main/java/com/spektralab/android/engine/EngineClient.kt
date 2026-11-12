@@ -9,6 +9,7 @@ import java.io.File
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
+import org.json.JSONObject
 
 /**
  * 引擎客户端：Kotlin 侧对 `spk_engine.h` C ABI 的封装。
@@ -88,6 +89,29 @@ class EngineClient private constructor(
 
     fun setParams(deltaJson: String): String =
         requireSession { nativeSetParams(enginePtr, sessionPtr, deltaJson) }
+
+    /** Apply a UI snapshot without making unchanged capture/material fields invalidate the negative.
+     * Read native state inside the session transaction, so solve/open/export restores cannot leave
+     * a stale host-side parameter cache. Low-level setParams keeps its explicit delta semantics.
+     */
+    fun setChangedParams(snapshotJson: String): String = requireSession {
+        val requested = runCatching { JSONObject(snapshotJson) }.getOrNull()
+            ?: return@requireSession nativeSetParams(enginePtr, sessionPtr, snapshotJson)
+        val current = JSONObject(nativeGetParams(enginePtr, sessionPtr))
+        val changed = JSONObject()
+        requested.keys().forEach { key ->
+            val value = requested.get(key)
+            val previous = current.opt(key)
+            val equal = when {
+                value is Number && previous is Number -> value.toDouble() == previous.toDouble()
+                value is String && previous is String -> value == previous
+                value is Boolean && previous is Boolean -> value == previous
+                else -> false // Preserve validation of unknown, null or incorrectly typed fields.
+            }
+            if (!equal) changed.put(key, value)
+        }
+        nativeSetParams(enginePtr, sessionPtr, changed.toString())
+    }
 
     fun getParams(): String =
         requireSession { nativeGetParams(enginePtr, sessionPtr) }

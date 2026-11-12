@@ -3,6 +3,7 @@ package com.spektralab.android.feature.library
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -25,20 +26,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spektralab.android.FilmFilter
+import com.spektralab.android.R
 import com.spektralab.android.engine.Stock
 import com.spektralab.android.engine.StockCatalog
 import com.spektralab.android.feature.editor.EditorViewModel
+import com.spektralab.android.ui.components.BeforeAfterPreview
 import com.spektralab.android.ui.theme.TheiaShapes
 
 /** Photo-first workspace: one live preview and a compact horizontal filter strip. */
@@ -46,7 +52,7 @@ import com.spektralab.android.ui.theme.TheiaShapes
 internal fun FilmStockScreen(vm: EditorViewModel, onBack: () -> Unit, startWithPaper: Boolean = false) {
     var paperTab by rememberSaveable { mutableStateOf(startWithPaper) }
     var filter by rememberSaveable { mutableStateOf(FilmFilter.All) }
-    var comparing by rememberSaveable { mutableStateOf(false) }
+    var comparing by rememberSaveable(vm.currentUri) { mutableStateOf(false) }
     var creditsVisible by remember { mutableStateOf(false) }
     val enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting
     val papers = vm.papers.filter { StockCatalog.canPrint(vm.params.filmId, it.id) }
@@ -100,23 +106,64 @@ internal fun FilmStockScreen(vm: EditorViewModel, onBack: () -> Unit, startWithP
 
 @Composable
 private fun StockPhotoPreview(vm: EditorViewModel, comparing: Boolean, onCompare: (Boolean) -> Unit, modifier: Modifier) {
-    val photo = if (comparing) vm.sourceBitmap else vm.rendered ?: vm.sourceBitmap
-    Box(modifier.padding(horizontal = 12.dp, vertical = 8.dp).semantics { contentDescription = "胶片实时预览" }) {
+    val source = vm.sourceBitmap
+    val rendered = vm.rendered
+    val canCompare = source != null && rendered != null && vm.hasPhoto
+    val splitComparison = comparing && canCompare
+    val canHold = canCompare && !splitComparison
+    var holding by remember(vm.currentUri, source) { mutableStateOf(false) }
+    val showingOriginal = canHold && holding
+    val photo = if (showingOriginal) source else rendered ?: source
+    val previewLabel = stringResource(R.string.stock_photo_preview)
+    val originalLabel = stringResource(R.string.stock_original)
+    val effectLabel = stringResource(R.string.stock_printed)
+    val splitLabel = stringResource(R.string.stock_split_comparison)
+    Box(modifier.padding(horizontal = 12.dp, vertical = 8.dp).semantics {
+        contentDescription = previewLabel
+        stateDescription = when {
+            splitComparison -> splitLabel
+            showingOriginal -> originalLabel
+            else -> effectLabel
+        }
+    }) {
         if (photo != null) {
-            Image(photo.asImageBitmap(), if (comparing) "原片预览" else "胶片效果预览",
-                Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            IconToggleButton(checked = comparing, onCheckedChange = onCompare,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+            // Only the photograph owns the hold gesture; sibling controls keep their clicks.
+            Box(Modifier.fillMaxSize().pointerInput(vm.currentUri, source, canHold) {
+                if (canHold) detectTapGestures(onPress = {
+                    holding = true
+                    try {
+                        tryAwaitRelease()
+                    } finally {
+                        holding = false
+                    }
+                })
+            }) {
+                if (splitComparison) {
+                    BeforeAfterPreview(source!!, rendered!!, Modifier.fillMaxSize())
+                } else {
+                    Image(photo.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+            }
+            IconToggleButton(checked = splitComparison, onCheckedChange = onCompare, enabled = canCompare,
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), TheiaShapes.control)) {
-                Icon(Icons.Rounded.Compare, if (comparing) "查看胶片效果" else "对比原片",
-                    tint = if (comparing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                Icon(Icons.Rounded.Compare, stringResource(
+                    if (splitComparison) R.string.stock_close_comparison else R.string.stock_compare),
+                    tint = if (splitComparison) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(21.dp))
             }
-            if (comparing) Text("原片", Modifier.align(Alignment.BottomStart).padding(12.dp)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = .9f), TheiaShapes.badge)
-                .padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+            if (canHold) Text(
+                stringResource(if (showingOriginal) R.string.stock_original_release else R.string.stock_hold_original),
+                Modifier.align(Alignment.BottomStart).padding(10.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .92f), TheiaShapes.badge)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         } else {
-            Text("导入照片后可实时试片", Modifier.align(Alignment.Center),
+            Text(stringResource(R.string.stock_preview_empty), Modifier.align(Alignment.Center),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -134,7 +181,10 @@ private fun StockFilterPanel(vm: EditorViewModel, paperTab: Boolean, onPaperTab:
     // Keep the active emulsion visible on entry, after filtering and after a paper auto-pair.
     LaunchedEffect(paperTab, filter, selectedId, stocks.map { it.id }) {
         val index = stocks.indexOfFirst { it.id == selectedId }
-        if (stocks.isNotEmpty()) state.animateScrollToItem(index.coerceAtLeast(0))
+        val target = stocks.getOrNull(index.coerceAtLeast(0))
+        if (target != null && state.layoutInfo.visibleItemsInfo.none { it.key == target.id }) {
+            state.animateScrollToItem(index.coerceAtLeast(0))
+        }
     }
     Column(Modifier.fillMaxWidth().clip(TheiaShapes.sheet).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(bottom = 8.dp)) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f), thickness = .5.dp)

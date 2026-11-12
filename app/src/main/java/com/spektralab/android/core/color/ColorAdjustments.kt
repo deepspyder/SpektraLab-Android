@@ -25,8 +25,9 @@ class ColorAdjustments private constructor(val vibrance: Float, private val band
     init { require(vibrance.isFinite() && vibrance in -100f..100f) }
 
     operator fun get(color: HslColor): HslBand = bands[color.ordinal]
-    val isHslNeutral: Boolean get() = bands.all { it.isNeutral }
-    val isNeutral: Boolean get() = vibrance == 0f && isHslNeutral
+    // These immutable flags are queried inside the legacy pixel loop.
+    val isHslNeutral: Boolean = bands.all { it.isNeutral }
+    val isNeutral: Boolean = vibrance == 0f && isHslNeutral
 
     fun withVibrance(value: Float): ColorAdjustments = ColorAdjustments(value, bands)
     fun with(color: HslColor, band: HslBand): ColorAdjustments =

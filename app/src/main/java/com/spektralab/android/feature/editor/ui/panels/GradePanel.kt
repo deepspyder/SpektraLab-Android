@@ -29,7 +29,6 @@ import com.spektralab.android.ui.components.SliderRow
 @Composable
 internal fun GradePanel(vm: EditorViewModel) {
     ColorEditor(vm)
-    CurveEditor(vm)
     EditorSection("暗角", "柔和压暗边缘 · 不改变中心曝光", initiallyExpanded = true) {
         SliderRow("暗角强度", vm.params.vignetteAmount, 0f..100f, "%.0f%%") {
             vm.params.vignetteAmount = it; vm.scheduleGrade()
@@ -57,6 +56,7 @@ internal fun GradePanel(vm: EditorViewModel) {
         SliderRow("白点", vm.params.whitePoint, -100f..100f, "%+.0f") { vm.params.whitePoint = it; vm.scheduleGrade() }
     }
 
+    CurveEditor(vm)
     EditorSection("色彩平衡", "阴影 · 中间调 · 高光", initiallyExpanded = false) {
         SliderRow("阴影 色温", vm.params.cbShadowTemp, -100f..100f, "%+.0f") { vm.params.cbShadowTemp = it; vm.scheduleGrade() }
         SliderRow("阴影 色调", vm.params.cbShadowTint, -100f..100f, "%+.0f") { vm.params.cbShadowTint = it; vm.scheduleGrade() }

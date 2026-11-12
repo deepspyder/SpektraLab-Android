@@ -53,14 +53,43 @@ float curve(const float* table, float x, int row) {
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeCurveGrade_prepareBrightness(
+    JNIEnv* env, jobject, jfloatArray uniforms, jobject channels) {
+    auto* table = static_cast<float*>(env->GetDirectBufferAddress(channels));
+    if (!table || env->GetDirectBufferCapacity(channels) != 3 * 65536 * sizeof(float) ||
+        env->GetArrayLength(uniforms) != 25) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Invalid brightness table");
+        return;
+    }
+    float p[25];
+    env->GetFloatArrayRegion(uniforms, 0, 25, p);
+    if (env->ExceptionCheck()) return;
+    // Enumerate all U16 samples with the original operations and double-precision power.
+    // This is an exact discrete memoization, never a sampled/interpolated colour LUT.
+    for (int channel = 0; channel < 3; ++channel) {
+        for (int sample = 0; sample < 65536; ++sample) {
+            float value = float(sample) / 65535.0f;
+            value *= p[channel];
+            if (p[3] != 1.0f) value *= p[3];
+            if (p[4] != 0.0f) value = (value - .4614f) * (1.0f + p[4] * 1.2f) + .4614f;
+            if (p[5] != 0.0f) value = power(value, 1.0f / (1.0f + p[5] * .8f));
+            table[channel * 65536 + sample] = value;
+        }
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
     jshortArray input, jint offset, jint width, jint height, jint y, jint rows,
-    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette, jfloatArray output) {
+    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette, jobject brightness, jfloatArray output) {
+    const auto* channels = brightness ? static_cast<const float*>(env->GetDirectBufferAddress(brightness)) : nullptr;
     const int64_t count = int64_t(width)*rows;
     if (width <= 0 || height <= 0 || y < 0 || rows <= 0 || rows > 32 || int64_t(y)+rows > height ||
         count > 1024*1024 || offset < 0 || int64_t(offset)+count*4 > env->GetArrayLength(input) ||
         env->GetArrayLength(output) < count*3 || env->GetArrayLength(uniforms) != 25 ||
-        env->GetArrayLength(curves) != 5125 || env->GetArrayLength(colors) != 26 || (vignette && env->GetArrayLength(vignette) != 1025)) {
+        env->GetArrayLength(curves) != 5125 || env->GetArrayLength(colors) != 26 ||
+        (brightness && (!channels || env->GetDirectBufferCapacity(brightness) != 3 * 65536 * sizeof(float))) ||
+        (vignette && env->GetArrayLength(vignette) != 1025)) {
         env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Invalid curve strip"); return;
     }
     try {
@@ -78,10 +107,16 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
             float g=float(uint16_t(pixels[i*4+1]))/65535.0f;
             float b=float(uint16_t(pixels[i*4+2]))/65535.0f;
             if (p[24] == 0.0f) {
+                if (channels) {
+                    r = channels[uint16_t(pixels[i*4])];
+                    g = channels[65536 + uint16_t(pixels[i*4+1])];
+                    b = channels[131072 + uint16_t(pixels[i*4+2])];
+                } else {
                 r*=p[0]; g*=p[1]; b*=p[2];
                 if (p[3]!=1.0f) { r*=p[3];g*=p[3];b*=p[3]; }
                 if (p[4]!=0.0f) { float k=1.0f+p[4]*1.2f; r=(r-.4614f)*k+.4614f; g=(g-.4614f)*k+.4614f; b=(b-.4614f)*k+.4614f; }
                 if (p[5]!=0.0f) { float e=1.0f/(1.0f+p[5]*.8f);r=power(r,e);g=power(g,e);b=power(b,e); }
+                }
                 const float t=tone(luma(r,g,b));
                 if (p[8]!=0.0f) { float w=(1.0f-t)*(1.0f-t);r+=p[8]*.25f*w*(1.0f-r);g+=p[8]*.25f*w*(1.0f-g);b+=p[8]*.25f*w*(1.0f-b); }
                 if (p[7]!=0.0f) { float k=p[7]*.25f*t*t; r+=k*(p[7]>0.0f?1.0f-r:r);g+=k*(p[7]>0.0f?1.0f-g:g);b+=k*(p[7]>0.0f?1.0f-b:b); }
