@@ -14,7 +14,8 @@ import java.security.MessageDigest
 
 /** Stream checksums rather than bringing a 147 MB TIFF into the small ART heap. */
 internal class FullSizeCacheAudit(private val test: Instrumentation, private val output: File, private val withCurves: Boolean = false,
-                                 private val withColor: Boolean = false, private val withMixer: Boolean = false, private val withWheels: Boolean = false) {
+                                 private val withColor: Boolean = false, private val withMixer: Boolean = false, private val withWheels: Boolean = false,
+                                 private val withPreset: Boolean = false) {
     fun run(): String {
         val source = File(output, "perf-z6ii.NEF")
         check(source.isFile) { "Push perf-z6ii.NEF before running this explicit camera-file audit" }
@@ -35,6 +36,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
         val before = media()
         val uri = Uri.fromFile(source)
         val previous = EditStore.load(context, uri)
+        var presetId: String? = null
         try {
             await { vm.engine != null && !vm.busy }
             EditStore.save(
@@ -64,6 +66,36 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
             test.runOnMainSync { vm.openPhotos(listOf(uri)) }
             await { vm.errorMessage != null || vm.hasPhoto && !vm.busy }
             check(vm.errorMessage == null) { vm.errorMessage.orEmpty() }
+            if (withPreset) {
+                await {
+                    vm.lastResult != null && vm.renderTaskState.active == null &&
+                        listOf("renderJob", "wbJob").none { name ->
+                            val field = EditorViewModel::class.java.getDeclaredField(name).apply { isAccessible = true }
+                            (field.get(vm) as? kotlinx.coroutines.Job)?.isActive == true
+                        }
+                }
+                val look = EditorParams().apply {
+                    colorWheels = com.spektralab.android.core.color.ColorWheels(
+                        master = com.spektralab.android.core.color.WheelAdjustment(35f, 12f, 6f),
+                        shadows = com.spektralab.android.core.color.WheelAdjustment(220f, 24f, -8f),
+                        midtones = com.spektralab.android.core.color.WheelAdjustment(320f, 8f, 3f),
+                        highlights = com.spektralab.android.core.color.WheelAdjustment(50f, 18f, 5f),
+                    )
+                }
+                val template = com.spektralab.android.core.model.EditTemplate.capture(look, setOf(com.spektralab.android.core.model.EditGroup.COLOR))
+                val name = "RAW preset audit ${System.nanoTime()}"
+                val preset = com.spektralab.android.data.local.EditPresetStore.save(context, name, template).presets.first { it.name == name }
+                presetId = preset.id
+                val loaded = com.spektralab.android.data.local.EditPresetStore.load(context).presets.first { it.id == preset.id }
+                val preview = kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { vm.previewEditTransfer(loaded.template, listOf(uri)) }
+                }
+                check(preview.changes.size == 1)
+                val native = vm.lastResult
+                test.runOnMainSync { vm.applyEditTransfer(preview) }
+                await { !vm.isApplyingEdits && !vm.busy && vm.params.colorWheels == look.colorWheels }
+                check(vm.editTransferError == null && vm.lastResult === native)
+            }
             test.runOnMainSync {
                 vm.exportFormat = "TIFF"
                 vm.exportColorSpace = "sRGB"
@@ -105,11 +137,13 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
             val afterFirst = vm.exportCacheStats
             val second = export()
             check(first.hash == second.hash && first.bytes == second.bytes)
-            if (withCurves || withColor || withMixer || withWheels) check(first.hash != "3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3") { "Active post edit did not affect full-size RAW export" }
+            if (withCurves || withColor || withMixer || withWheels || withPreset) check(first.hash != "3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3") { "Active post edit did not affect full-size RAW export" }
+            if (withPreset) check(first.hash == "62f1d58c709a4bc694ca93f8d552954320f921260fc64dd4c013bf4461926f3f") { "Preset changed the existing wheel TIFF output" }
             check(vm.exportCacheStats.hits == afterFirst.hits + 1)
             check(vm.exportCacheStats.writes == afterFirst.writes)
             return "6064x4040 RAW TIFF byte-exact; bytes=${first.bytes}; sha256=${first.hash}; first_ms=${first.ms}; second_ms=${second.ms}; initial=$stats first=$afterFirst final=${vm.exportCacheStats}"
         } finally {
+            presetId?.let { com.spektralab.android.data.local.EditPresetStore.delete(context, it) }
             if (previous != null) EditStore.save(context, uri, previous)
             (media() - before).forEach {
                 resolver.delete(

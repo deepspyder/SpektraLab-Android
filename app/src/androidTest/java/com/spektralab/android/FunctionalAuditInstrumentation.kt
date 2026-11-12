@@ -92,10 +92,15 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var exportEngineInput = "perf-z6ii.NEF"
     private var interactionPerfLabel = "current"
     private var colorOnly = false
+    private var editToolsOnly = false
+    private var editToolsLayoutOnly = false
+    private var editModelsOnly = false
+    private var editRawOnly = false
     private var wheelsOnly = false
     private var wheelsLayoutOnly = false
     private var wheelsPerformanceOnly = false
     private var fullSizeWheelsCacheOnly = false
+    private var fullSizePresetCacheOnly = false
     private var mixerOnly = false
     private var mixerLayoutOnly = false
     private var mixerPerformanceOnly = false
@@ -125,15 +130,20 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         renderFoundationOnly = audit == "render-foundation"
         renderSchedulingOnly = audit == "render-scheduling"
         exportCacheOnly = audit == "export-cache"
-        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw"
+        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw" || audit == "presets-raw"
         fullSizeMixerCacheOnly = audit == "mixer-raw"
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
+        editToolsOnly = audit == "edit-tools"
+        editToolsLayoutOnly = audit == "edit-tools-layout"
+        editModelsOnly = audit == "edit-models"
+        editRawOnly = audit == "edit-raw"
         wheelsOnly = audit == "wheels"
         wheelsLayoutOnly = audit == "wheels-layout"
         wheelsPerformanceOnly = audit == "wheels-perf"
         fullSizeWheelsCacheOnly = audit == "wheels-raw"
+        fullSizePresetCacheOnly = audit == "presets-raw"
         mixerOnly = audit == "mixer"
         mixerLayoutOnly = audit == "mixer-layout"
         mixerPerformanceOnly = audit == "mixer-perf"
@@ -189,6 +199,24 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (editRawOnly) {
+            case("editing.raw_decode_transfer") { EditRawTransferAudit(this, output).run() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (editToolsOnly || editToolsLayoutOnly || editModelsOnly) {
+            if (!editToolsLayoutOnly) {
+                case("editing.template_groups") { EditTemplateAudit.models(targetContext) }
+                case("editing.preset_storage_and_batch_recovery") { EditTemplateAudit.storage(targetContext, output) }
+            }
+            if (!editModelsOnly) case("editor.edit_tools_workflow") { EditToolsAudit(this, output).run(editToolsLayoutOnly) }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (wheelsOnly || wheelsLayoutOnly || wheelsPerformanceOnly) {
             if (wheelsPerformanceOnly) case("wheels.parameter_timings") { ColorWheelsMathAudit.timings() }
             if (wheelsOnly) case("wheels.math_and_native") { ColorWheelsMathAudit.run() }
@@ -306,8 +334,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         if (renderSchedulingOnly || exportCacheOnly || fullSizeCacheOnly) {
             if (renderSchedulingOnly) case("render.priority_state_and_admission") { RenderSchedulingAudit.run() }
             if (exportCacheOnly) case("export.production_cache") { ExportCacheAudit(this).run() }
-            if (fullSizeCacheOnly) case(if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
-                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly).run()
+            if (fullSizeCacheOnly) case(if (fullSizePresetCacheOnly) "export.full_size_raw_preset" else if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
+                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly, fullSizePresetCacheOnly).run()
             }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,

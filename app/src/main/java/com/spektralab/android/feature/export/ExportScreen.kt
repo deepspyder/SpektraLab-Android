@@ -39,7 +39,7 @@ import kotlin.math.roundToInt
 
 /** Export settings, progress and pinned action share the original ViewModel export paths. */
 @Composable
-internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, onSaveRecipe: () -> Unit) {
+internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, onCopySettings: () -> Unit = vm::syncSettingsToOtherPhotos, onSaveRecipe: () -> Unit) {
     val context = LocalContext.current
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         vm.exportKeepLocation = granted
@@ -143,7 +143,7 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                         Text("保存配方", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     FilledTonalButton(
-                        onClick = vm::syncSettingsToOtherPhotos,
+                        onClick = onCopySettings,
                         enabled = vm.photos.size > 1 && vm.currentUri != null && !processing,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         shape = TheiaShapes.control,
@@ -155,10 +155,10 @@ internal fun ExportScreen(vm: EditorViewModel, modifier: Modifier = Modifier, on
                     ) {
                         Icon(Icons.Rounded.Sync, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("同步其他照片", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.edit_copy_title), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                Text("同步胶片与调色参数；保留每张照片的独立裁剪。", fontSize = 10.sp, lineHeight = 14.sp,
+                Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.edit_copy_short_hint), fontSize = 10.sp, lineHeight = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
             Spacer(Modifier.height(12.dp))

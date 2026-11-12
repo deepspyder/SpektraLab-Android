@@ -20,6 +20,10 @@ import com.spektralab.android.core.color.DisplayP3Icc
 import com.spektralab.android.core.develop.SmartDevelop
 import com.spektralab.android.core.develop.SmartDevelopStyle
 import com.spektralab.android.core.model.EditSnapshot
+import com.spektralab.android.core.model.EditGroup
+import com.spektralab.android.core.model.EditTemplate
+import com.spektralab.android.core.model.EditTransferProblem
+import com.spektralab.android.R
 import com.spektralab.android.core.model.ExportOptions
 import com.spektralab.android.core.model.EditorParams
 import com.spektralab.android.core.model.ExportRecipe
@@ -92,6 +96,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     private val app get() = getApplication<Application>()
+
+    internal val editPresets by lazy { EditPresetController(app, viewModelScope) }
+    internal var isApplyingEdits by mutableStateOf(false)
+        private set
+    internal var editTransferError by mutableStateOf<String?>(null)
+        private set
+    internal var editTransferRevision by mutableStateOf(0)
+        private set
+    private var previewWorkRunning by mutableStateOf(false)
+    internal val canTransferEdits: Boolean get() = hasPhoto && !busy && !isExporting && !isBatchExporting &&
+        !isApplyingEdits && !isCropping && !previewWorkRunning
 
     var params by mutableStateOf(EditorParams())
         private set
@@ -227,8 +242,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var lastHistoryKey: String? = null
     private var lastHistoryEditMs = 0L
     private var renderJob: Job? = null
+        set(value) { field = value; trackPreviewWork(value) }
     private var photoLoadJob: Job? = null
     private var frameRenderJob: Job? = null
+        set(value) { field = value; trackPreviewWork(value) }
     private var stockPreviewJob: Job? = null
     private var developedPreviewJob: Job? = null
     private val thumbnailJobs = mutableMapOf<Uri, Job>()
@@ -238,6 +255,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var paramsUri: Uri? = null
     @Volatile private var cleared = false
     private var wbJob: Job? = null
+        set(value) { field = value; trackPreviewWork(value) }
     private data class PendingPreview(
         val result: SpkResult,
         val colorSpace: String,
@@ -252,6 +270,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private var publishedRenderRequest = 0L
     @Volatile private var renderGeneration = 0L
     private var cameraWbJob: Job? = null
+        set(value) { field = value; trackPreviewWork(value) }
+
+    /** Job completion must notify Compose even when no new bitmap/state follows it. */
+    private fun trackPreviewWork(job: Job?) {
+        fun refresh() {
+            previewWorkRunning = renderJob?.isActive == true || frameRenderJob?.isActive == true ||
+                wbJob?.isActive == true || cameraWbJob?.isActive == true
+        }
+        refresh()
+        job?.invokeOnCompletion { viewModelScope.launch(Dispatchers.Main.immediate) { refresh() } }
+    }
     private var engineCreateJob: Job? = null
     private var pendingFrame: PendingFrame? = null
     private var cropEditStart: FloatArray? = null
@@ -317,6 +346,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 重置全部编辑参数到默认（保留当前照片）。
     fun resetAll() {
+        if (isApplyingEdits) return
         finishCurveEdit(cancel = true)
         finishColorEdit(cancel = true)
         finishMixerEdit(cancel = true)
@@ -396,6 +426,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun redo() = restoreHistory(redo = true)
 
     private fun restoreHistory(redo: Boolean) {
+        if (isApplyingEdits) return
         finishCurveEdit(cancel = true)
         finishColorEdit(cancel = true)
         finishMixerEdit(cancel = true)
@@ -436,6 +467,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun syncSettingsToOtherPhotos() {
+        if (isApplyingEdits) return
         val uri = currentUri ?: return
         val source = committedParams().copy()
         var count = 0
@@ -449,8 +481,122 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         toast("已同步到 $count 张照片（保留各自裁剪）")
     }
 
+    internal fun captureEditTemplate(groups: Set<EditGroup>): EditTemplate = EditTemplate.capture(committedParams(), groups)
+
+    internal suspend fun previewEditTransfer(template: EditTemplate, targets: List<Uri>): EditTransferPreview {
+        editTransferError = null
+        val allowed = photos.toSet()
+        val selected = currentUri
+        val current = EditSnapshot.capture(committedParams())
+        val catalog = films.toList() to papers.toList()
+        val rows = withContext(Dispatchers.IO) {
+            targets.distinct().filter { it in allowed }.map { uri ->
+                val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
+                try {
+                    app.contentResolver.openAssetFileDescriptor(uri, "r")?.close()
+                        ?: error("SOURCE_UNAVAILABLE")
+                    val stored = EditStore.loadForTransfer(app, uri)
+                    val before = if (uri == selected) current else EditSnapshot.capture(stored.params)
+                    val raw = EditGroup.DECODE in template.groups && RawDecoder.isRaw(app, uri, name)
+                    val result = template.applyTo(before.toParams(), raw, catalog.first, catalog.second)
+                    val problem = result.problem?.let {
+                        app.getString(when (it) {
+                            EditTransferProblem.UNKNOWN_FILM -> R.string.edit_unknown_film
+                            EditTransferProblem.UNKNOWN_PAPER -> R.string.edit_unknown_paper
+                            EditTransferProblem.NO_COMPATIBLE_PAPER -> R.string.edit_no_paper
+                            EditTransferProblem.INCOMPATIBLE_MATERIAL -> R.string.edit_bad_pair
+                        })
+                    }
+                    EditTransferTarget(uri, name, before, stored.json, result.params?.let(EditSnapshot::capture), result.notices, problem,
+                        catalog.second.firstOrNull { it.id == result.params?.paperId }?.name)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    EditTransferTarget(uri, name, EditSnapshot.capture(EditorParams()), null, null,
+                        problem = app.getString(R.string.edit_source_unavailable))
+                }
+            }
+        }
+        return EditTransferPreview(template, rows)
+    }
+
+    internal fun applyEditTransfer(preview: EditTransferPreview) {
+        if (!canTransferEdits || preview.changes.isEmpty()) return
+        val changes = preview.changes
+        if (changes.any { it.uri !in photos } || changes.firstOrNull { it.uri == currentUri }?.let {
+                it.before != EditSnapshot.capture(committedParams())
+            } == true) {
+            editTransferError = app.getString(R.string.edit_targets_changed)
+            return
+        }
+        finishCurveEdit(cancel = true)
+        finishColorEdit(cancel = true)
+        finishMixerEdit(cancel = true)
+        finishWheelEdit(cancel = true)
+        editTransferError = null
+        isApplyingEdits = true
+        busy = true
+        renderStage = app.getString(R.string.edit_applying)
+        renderProgress = null
+        viewModelScope.launch {
+            try {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    changes.forEach { change ->
+                        app.contentResolver.openAssetFileDescriptor(change.uri, "r")?.close()
+                            ?: error("SOURCE_UNAVAILABLE")
+                    }
+                    EditStore.saveBatch(app, changes.map { EditStore.BatchEdit(it.uri, it.expectedJson, it.after!!.json) })
+                }
+                for (change in changes) {
+                    val key = historyKey(change.uri)
+                    val before = change.before.toParams().toJson().toString()
+                    val after = change.after!!.toParams().toJson().toString()
+                    val history = undoHistory.getOrPut(key) { mutableListOf(before) }
+                    if (history.lastOrNull() != before) history += before
+                    if (history.lastOrNull() != after) history += after
+                    while (history.size > 64) history.removeAt(0)
+                    redoHistory.remove(key)
+                    freshlySmartDeveloped.remove(change.uri)
+                    developedPreviews = developedPreviews - change.uri
+                    discardGalleryPreview(change.uri)
+                }
+                lastHistoryKey = null
+                val currentChange = changes.firstOrNull { it.uri == currentUri }
+                busy = false
+                isApplyingEdits = false
+                if (currentChange != null) {
+                    val previous = params
+                    params = currentChange.after!!.toParams()
+                    cropAspect = if (params.cropW >= 1f && params.cropH >= 1f) "原始" else "自定义"
+                    dirty = true
+                    suppressHistory = true
+                    try {
+                        val cameraChanged = previous.cameraWbCustom != params.cameraWbCustom ||
+                            previous.cameraWbKelvin != params.cameraWbKelvin || previous.cameraWbTint != params.cameraWbTint
+                        when {
+                            currentIsRaw && cameraChanged -> scheduleCameraWb()
+                            previous.deltaJson(previewW, previewH) == params.deltaJson(previewW, previewH) -> scheduleGrade(commit = false)
+                            else -> scheduleRender()
+                        }
+                    } finally { suppressHistory = false }
+                }
+                refreshHistoryButtons()
+                editTransferRevision++
+                toast(app.getString(R.string.edit_applied_count, changes.size))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                editTransferError = app.getString(R.string.edit_apply_error)
+            } finally {
+                if (isApplyingEdits) busy = false
+                isApplyingEdits = false
+            }
+        }
+    }
+
     // 新照片（无 sidecar）时重置几何/裁剪。
     fun resetGeometry() {
+        if (isApplyingEdits) return
         params.cropX = 0f; params.cropY = 0f; params.cropW = 1f; params.cropH = 1f
         params.quarterTurns = 0; params.flipH = false; params.flipV = false; params.rotationDeg = 0f
         cropAspect = "原始"
@@ -458,6 +604,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Enter the dedicated crop workspace and remember the pre-edit frame. */
     fun beginCrop() {
+        if (isApplyingEdits) return
         if (isCropping || sourceBitmap == null || params.overscanActive) return
         cropEditStart = floatArrayOf(params.cropX, params.cropY, params.cropW, params.cropH)
         isCropping = true
@@ -695,6 +842,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // Layer 2 调色只重转换缓存的渲染结果，不触发引擎重渲染。
     fun scheduleGrade(commit: Boolean = true) {
+        if (isApplyingEdits) return
         if (!hasPhoto || isExporting || isBatchExporting) return
         if (commit) recordHistory()
         dirty = true
@@ -1020,6 +1168,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun scheduleRender() = scheduleRender(immediate = false)
 
     private fun scheduleRender(immediate: Boolean) {
+        if (isApplyingEdits) return
         if (isExporting || isBatchExporting) return
         recordHistory()
         val e = engine ?: return
@@ -1264,6 +1413,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 取消当前进行中的渲染（跨线程安全，渲染在下个节点边界回退并返回 cancelled）。
     fun cancelRender() {
+        if (isApplyingEdits) return
         if (isExportCommitCompleted) return
         if (isExporting || isBatchExporting) {
             if (isExporting && (renderProgress ?: 0f) >= 100f) return
@@ -1545,6 +1695,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openPhoto(uri: Uri) {
+        if (isApplyingEdits) return
         if (isExporting || isBatchExporting) return
         val photo = invalidatePhotoWork()
         currentUri = uri
@@ -1657,7 +1808,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 if(!currentCoroutineContext().isActive)return@withLock null
                 val committed=withContext(Dispatchers.IO) {
                     // A manual/imported sidecar wins even if it appeared during analysis.
-                    EditStore.load(app,uri) ?: suggestion.also { EditStore.save(app,uri,it) }
+                    EditStore.saveIfAbsent(app, uri, suggestion)
                 }
                 if(committed===suggestion)withContext(Dispatchers.Main.immediate) { freshlySmartDeveloped.add(uri) }
                 committed
@@ -1717,6 +1868,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 打开多张照片（图库），第一张为当前。
     fun openPhotos(uris: List<Uri>) {
+        if (isApplyingEdits) return
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         photos = uris.distinct()
@@ -1733,6 +1885,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Queue-only callers can retain the edit; picker callers explicitly open the selected photo. */
     fun addPhotos(uris: List<Uri>, openSelected: Boolean = false) {
+        if (isApplyingEdits) return
         if (uris.isEmpty() || isBatchExporting || isExporting) return
         saveCurrentSidecar()
         val merged = (photos + uris).distinct()
@@ -1749,6 +1902,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 切换到图库中的第 [index] 张。
     fun selectPhoto(index: Int) {
+        if (isApplyingEdits) return
         if (index !in photos.indices || isBatchExporting || isExporting) return
         if (index == currentIndex && currentUri == photos[index] && (hasPhoto || photoLoadJob?.isActive == true)) return
         saveCurrentSidecar()

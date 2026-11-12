@@ -18,6 +18,9 @@ import org.json.JSONObject
  * 字段名均来自 engine/src/core/params.cpp 的 kFields。
  */
 class EditorParams {
+    // Opaque future extensions travel with their own photo, including history and copy.
+    // Empty for existing files; never sent to the engine or selected into a template.
+    private var preservedFields: Map<String, String> = emptyMap()
     // 胶片 & 相纸
     var filmId by mutableStateOf("kodak_portra_400")
     var paperId by mutableStateOf("kodak_portra_endura")
@@ -242,6 +245,7 @@ class EditorParams {
         .put("date_imprint_inset_y", dateImprintInsetY.toDouble())
         .put("date_imprint_data_text", dateImprintDataText)
         .apply {
+            preservedFields.forEach { (key, value) -> put(key, org.json.JSONTokener(value).nextValue()) }
             if (unreadableColorWheels != null) put("color_wheels", org.json.JSONTokener(unreadableColorWheels!!).nextValue())
             else if (!colorWheels.isDefault) put("color_wheels", colorWheels.toJson())
             if (unreadableChannelMixer != null) put("channel_mixer", org.json.JSONTokener(unreadableChannelMixer!!).nextValue())
@@ -257,6 +261,7 @@ class EditorParams {
     /** Copy editable capture/print/grade settings while keeping each photo's own geometry. */
     fun copySettingsFrom(source: EditorParams) {
         val copied = source.copy()
+        copied.preservedFields = preservedFields
         copied.cropX = cropX; copied.cropY = cropY
         copied.cropW = cropW; copied.cropH = cropH
         copied.quarterTurns = quarterTurns; copied.flipH = flipH; copied.flipV = flipV; copied.rotationDeg = rotationDeg
@@ -264,6 +269,7 @@ class EditorParams {
     }
 
     private fun copyAllFrom(p: EditorParams) {
+        preservedFields = p.preservedFields
         filmId = p.filmId; paperId = p.paperId; exposureEv = p.exposureEv
         smartDevelopStyle=p.smartDevelopStyle;smartDevelopSummary=p.smartDevelopSummary;smartDevelopVersion=p.smartDevelopVersion
         autoExposureMethod = p.autoExposureMethod; autoExposure = p.autoExposure; filmFormatMm = p.filmFormatMm
@@ -304,6 +310,10 @@ class EditorParams {
     }
 
     companion object {
+        private val knownFields: Set<String> by lazy {
+            EditorParams().toJson().keys().asSequence().toSet() +
+                setOf("tone_curves", "color_adjustments", "channel_mixer", "color_wheels")
+        }
         /** Same per-film RMS calibration as Windows desktop/shared/params.ts. */
         fun ownGrain(stock: String): Float = when (stock) {
             "kodak_tri_x_400" -> 1.70f
@@ -315,6 +325,9 @@ class EditorParams {
         /** 从 sidecar JSON 恢复参数（缺字段用默认值）。 */
         fun fromJson(json: JSONObject): EditorParams {
             val p = EditorParams()
+            p.preservedFields = json.keys().asSequence().filterNot { it in knownFields }.associateWith { key ->
+                org.json.JSONArray().put(json.get(key)).toString().let { it.substring(1, it.length - 1) }
+            }
             p.filmId = json.optString("film_stock", p.filmId)
             p.paperId = json.optString("print_stock", p.paperId)
             p.smartDevelopStyle=json.optString("smart_develop_style", "")

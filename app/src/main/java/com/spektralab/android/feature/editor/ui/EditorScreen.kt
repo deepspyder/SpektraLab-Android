@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -138,6 +140,7 @@ internal fun EditorScreen(
 
     var showSaveRecipeDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var editToolsMode by rememberSaveable { mutableStateOf<String?>(null) }
     var recipeName by remember { mutableStateOf("") }
     var comparing by rememberSaveable(vm.currentUri?.toString()) { mutableStateOf(false) }
 
@@ -196,6 +199,12 @@ internal fun EditorScreen(
                                 onClick = { showMoreMenu = false; vm.resetAll() })
                             DropdownMenuItem(text = { Text("测试图") }, onClick = { showMoreMenu = false; vm.openTestImage() })
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.edit_copy_title)) },
+                                leadingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.ContentCopy, null) },
+                                enabled = vm.canTransferEdits, onClick = { showMoreMenu = false; editToolsMode = "copy" })
+                            DropdownMenuItem(text = { Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.edit_presets_title)) },
+                                leadingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Bookmarks, null) },
+                                enabled = vm.canTransferEdits, onClick = { showMoreMenu = false; editToolsMode = "presets" })
                             DropdownMenuItem(text = { Text("关于") }, onClick = { showMoreMenu = false; aboutVisible = true })
                         }
                     }
@@ -235,7 +244,7 @@ internal fun EditorScreen(
                     label = "editor-destination-transition",
                 ) { destination ->
                     when {
-                    destination == EditorTab.Export -> ExportScreen(vm, Modifier.fillMaxSize(), onSaveRecipe = { showSaveRecipeDialog = true })
+                    destination == EditorTab.Export -> ExportScreen(vm, Modifier.fillMaxSize(), onCopySettings = { editToolsMode = "copy" }, onSaveRecipe = { showSaveRecipeDialog = true })
                     destination == EditorTab.Gallery -> {
                         GalleryScreen(
                             vm = vm,
@@ -391,6 +400,8 @@ internal fun EditorScreen(
         }
 
     }
+
+    editToolsMode?.let { mode -> EditToolsSheet(vm, presets = mode == "presets", onDismiss = { editToolsMode = null }) }
 
     if (exportHelpVisible) {
         AlertDialog(onDismissRequest = { exportHelpVisible = false }, title = { Text("导出帮助") },
