@@ -49,6 +49,24 @@ internal class EditingFeedbackAudit(private val test: Instrumentation, private v
         check(node.isEnabled && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Disabled: $label" }
         test.waitForIdleSync(); Thread.sleep(350)
     }
+    private fun reveal(label: String) {
+        fun scroll(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (node.isScrollable && node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return true
+            for (index in 0 until node.childCount) if (scroll(node.getChild(index))) return true
+            return false
+        }
+        repeat(20) {
+            find(label)?.let { node ->
+                node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                test.waitForIdleSync()
+                if (find(label)?.isVisibleToUser == true) return
+            }
+            check(scroll(root())) { "Cannot reveal $label" }
+            test.waitForIdleSync(); Thread.sleep(100)
+        }
+        error("Missing control: $label")
+    }
     private fun capture(name: String) {
         test.waitForIdleSync(); test.uiAutomation.waitForIdle(200, 5000)
         checkNotNull(test.uiAutomation.takeScreenshot()).also { bitmap ->
@@ -181,7 +199,7 @@ internal class EditingFeedbackAudit(private val test: Instrumentation, private v
             check(abs(vm.rendered!!.width.toFloat()/vm.rendered!!.height-2.39f)<.03f) { "Committed dimensions ${vm.rendered!!.width}x${vm.rendered!!.height}" }
             val beforeReset=vm.rendered
             main { vm.resetCropSelection();vm.scheduleRender() };await("reset render") { vm.rendered!==beforeReset }
-            click("调色");await("vignette UI") { find("暗角强度")!=null }
+            click("调色");reveal("暗角强度")
             val baseline=vm.rendered!!
             main { vm.params.vignetteAmount=75f; vm.scheduleGrade() }
             await("vignette applied") { vm.rendered!==baseline }

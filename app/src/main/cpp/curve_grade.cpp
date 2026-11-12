@@ -84,10 +84,11 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
     jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette, jobject brightness, jfloatArray output) {
     const auto* channels = brightness ? static_cast<const float*>(env->GetDirectBufferAddress(brightness)) : nullptr;
     const int64_t count = int64_t(width)*rows;
+    const auto color_count = env->GetArrayLength(colors);
     if (width <= 0 || height <= 0 || y < 0 || rows <= 0 || rows > 32 || int64_t(y)+rows > height ||
         count > 1024*1024 || offset < 0 || int64_t(offset)+count*4 > env->GetArrayLength(input) ||
         env->GetArrayLength(output) < count*3 || env->GetArrayLength(uniforms) != 25 ||
-        env->GetArrayLength(curves) != 5125 || env->GetArrayLength(colors) != 26 ||
+        env->GetArrayLength(curves) != 5125 || (color_count != 26 && color_count != 36 && color_count != 53) ||
         (brightness && (!channels || env->GetDirectBufferCapacity(brightness) != 3 * 65536 * sizeof(float))) ||
         (vignette && env->GetArrayLength(vignette) != 1025)) {
         env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Invalid curve strip"); return;
@@ -95,11 +96,11 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
     try {
         std::vector<jshort> pixels(size_t(count)*4);
         std::vector<float> result(size_t(count)*3), table(5125), gains(vignette ? 1025 : 0);
-        float p[25], color[26];
+        float p[25], color[53]{};
         env->GetShortArrayRegion(input, offset, jsize(count*4), pixels.data());
         env->GetFloatArrayRegion(uniforms, 0, 25, p);
         env->GetFloatArrayRegion(curves, 0, 5125, table.data());
-        env->GetFloatArrayRegion(colors, 0, 26, color);
+        env->GetFloatArrayRegion(colors, 0, color_count, color);
         if (vignette) env->GetFloatArrayRegion(vignette, 0, 1025, gains.data());
         if (env->ExceptionCheck()) return;
         for (int64_t i=0; i<count; ++i) {
@@ -127,10 +128,27 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
                     adjustColor(r, g, b, color);
                     lum = luma(r, g, b);
                 }
+                if (color[26] != 0.0f) {
+                    const float mr = color[27]*r + color[28]*g + color[29]*b;
+                    const float mg = color[30]*r + color[31]*g + color[32]*b;
+                    const float mb = color[33]*r + color[34]*g + color[35]*b;
+                    r = mr; g = mg; b = mb;
+                    lum = luma(r, g, b);
+                }
                 const float ls=clamp(tone(lum)), ws=(1.0f-ls)*(1.0f-ls), wh=ls*ls, wm=std::max(1.0f-ws-wh,0.0f);
-                r=clamp(r+p[11]*ws+p[14]*wm+p[17]*wh);
-                g=clamp(g+p[12]*ws+p[15]*wm+p[18]*wh);
-                b=clamp(b+p[13]*ws+p[16]*wm+p[19]*wh);
+                if (color[36] != 0.0f) {
+                    r=r+p[11]*ws+p[14]*wm+p[17]*wh;
+                    g=g+p[12]*ws+p[15]*wm+p[18]*wh;
+                    b=b+p[13]*ws+p[16]*wm+p[19]*wh;
+                    const float gain=1.0f+color[49]+color[50]*ws+color[51]*wm+color[52]*wh;
+                    r=clamp((r+color[37]+color[40]*ws+color[43]*wm+color[46]*wh)*gain);
+                    g=clamp((g+color[38]+color[41]*ws+color[44]*wm+color[47]*wh)*gain);
+                    b=clamp((b+color[39]+color[42]*ws+color[45]*wm+color[48]*wh)*gain);
+                } else {
+                    r=clamp(r+p[11]*ws+p[14]*wm+p[17]*wh);
+                    g=clamp(g+p[12]*ws+p[15]*wm+p[18]*wh);
+                    b=clamp(b+p[13]*ws+p[16]*wm+p[19]*wh);
+                }
             }
             if (p[23] != 0.0f) {
             const float lum=luma(r,g,b), mapped=curve(table.data(),lum,1);

@@ -2,6 +2,8 @@ package com.spektralab.android.core.model
 
 import com.spektralab.android.core.color.ToneCurves
 import com.spektralab.android.core.color.ColorAdjustments
+import com.spektralab.android.core.color.ChannelMixer
+import com.spektralab.android.core.color.ColorWheels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -96,6 +98,10 @@ class EditorParams {
     var whitePoint by mutableFloatStateOf(0f)
     var colorAdjustments by mutableStateOf(ColorAdjustments.NEUTRAL)
     var unreadableColorAdjustments by mutableStateOf<String?>(null)
+    var channelMixer by mutableStateOf(ChannelMixer.IDENTITY)
+    var unreadableChannelMixer by mutableStateOf<String?>(null)
+    var colorWheels by mutableStateOf(ColorWheels.NEUTRAL)
+    var unreadableColorWheels by mutableStateOf<String?>(null)
     var toneCurves by mutableStateOf(ToneCurves.IDENTITY)
     var unreadableToneCurves by mutableStateOf<String?>(null)
     var vignetteAmount by mutableFloatStateOf(0f) // 0..100, zero preserves existing output
@@ -236,6 +242,10 @@ class EditorParams {
         .put("date_imprint_inset_y", dateImprintInsetY.toDouble())
         .put("date_imprint_data_text", dateImprintDataText)
         .apply {
+            if (unreadableColorWheels != null) put("color_wheels", org.json.JSONTokener(unreadableColorWheels!!).nextValue())
+            else if (!colorWheels.isDefault) put("color_wheels", colorWheels.toJson())
+            if (unreadableChannelMixer != null) put("channel_mixer", org.json.JSONTokener(unreadableChannelMixer!!).nextValue())
+            else if (!channelMixer.isNeutral) put("channel_mixer", channelMixer.toJson())
             if (unreadableColorAdjustments != null) put("color_adjustments", org.json.JSONTokener(unreadableColorAdjustments!!).nextValue())
             else if (!colorAdjustments.isNeutral) put("color_adjustments", colorAdjustments.toJson())
             if (unreadableToneCurves != null) put("tone_curves", JSONObject(unreadableToneCurves!!))
@@ -275,6 +285,8 @@ class EditorParams {
         contrast = p.contrast; brightness = p.brightness; saturation = p.saturation
         highlights = p.highlights; shadows = p.shadows; blackPoint = p.blackPoint; whitePoint = p.whitePoint
         colorAdjustments = p.colorAdjustments; unreadableColorAdjustments = p.unreadableColorAdjustments
+        channelMixer = p.channelMixer; unreadableChannelMixer = p.unreadableChannelMixer
+        colorWheels = p.colorWheels; unreadableColorWheels = p.unreadableColorWheels
         toneCurves = p.toneCurves; unreadableToneCurves = p.unreadableToneCurves
         vignetteAmount = p.vignetteAmount; vignetteSize = p.vignetteSize; vignetteFeather = p.vignetteFeather
         cbShadowTemp = p.cbShadowTemp; cbShadowTint = p.cbShadowTint; cbMidTemp = p.cbMidTemp; cbMidTint = p.cbMidTint
@@ -358,6 +370,20 @@ class EditorParams {
             p.shadows = json.optDouble("shadows", 0.0).toFloat()
             p.blackPoint = json.optDouble("black_point", 0.0).toFloat()
             p.whitePoint = json.optDouble("white_point", 0.0).toFloat()
+            if (json.has("color_wheels")) {
+                val raw = json.get("color_wheels")
+                p.colorWheels = try { ColorWheels.fromJson(raw as JSONObject) } catch (_: Exception) {
+                    p.unreadableColorWheels = org.json.JSONArray().put(raw).toString().let { it.substring(1, it.length - 1) }
+                    ColorWheels.NEUTRAL
+                }
+            }
+            if (json.has("channel_mixer")) {
+                val raw = json.get("channel_mixer")
+                p.channelMixer = try { ChannelMixer.fromJson(raw as JSONObject) } catch (_: Exception) {
+                    p.unreadableChannelMixer = org.json.JSONArray().put(raw).toString().let { it.substring(1, it.length - 1) }
+                    ChannelMixer.IDENTITY
+                }
+            }
             if (json.has("color_adjustments")) {
                 val raw = json.get("color_adjustments")
                 p.colorAdjustments = try { ColorAdjustments.fromJson(raw as JSONObject) } catch (_: Exception) {

@@ -17,13 +17,21 @@ function(theia_android_export_execution engine_dir engine_output pipeline_output
     set(before_timing "    // Opt-in, because turning it on serialises every node. See Progress.\n    session->progress.detailed = std::getenv(\"SPEKTRAFILM_NODE_TIMINGS\") != nullptr;")
     set(after_timing "    // Detailed export diagnostics are opt-in and do not change pixel operations.\n    session->progress.detailed = std::getenv(\"SPEKTRAFILM_NODE_TIMINGS\") != nullptr || theia::export_execution::detailed;\n    if (theia::export_execution::one_shot) theia::export_execution::cancellation = &session->progress.cancelled;")
 
+    # Shape and metering still read the source first. Retire redundant session
+    # owners only after both are fixed; keep the TierState object for its EV and
+    # overscan metadata, which negative_for writes after film processing.
+    set(before_shape "    if (ok) ok = negative_for(session, *tier, &session->progress, negative, error);")
+    set(after_shape "    if (theia::export_execution::one_shot) tier_source = Image{};\n${before_shape}")
+    set(before_film "    Image negative;\n    if (!run_film_for(session, source, negative, progress, error)) return false;")
+    set(after_film "    if (theia::export_execution::one_shot && !session->params.settings.striped) {\n        for (auto& entry : session->tiers) entry.second.image = Image{};\n        session->source = Image{};\n    }\n    theia::export_execution::FilmInputScope<Image> input_scope(source);\n    Image negative;\n    if (!run_film_for(session, source, negative, progress, error)) return false;")
+
     # Metering, film processing and overscan layout have finished before print.
     # A consumed session needs neither its source nor the redundant tier owner
     # during glare, scanner blur and output packing. Keep negative itself alive.
     set(before_print "    if (ok) ok = run_print_for(session, negative, rgb, &session->progress, error);")
     set(after_print "    if (ok && theia::export_execution::one_shot) {\n        theia::export_execution::trace_memory(gpu, \"before_source_release\");\n        tier_source = Image{};\n        session->tiers.clear();\n        session->source = Image{};\n        theia::export_execution::trace_memory(gpu, \"after_source_release\");\n    }\n    if (ok) {\n        theia::export_execution::PrintInputScope<Image> input_scope(negative);\n        ok = run_print_for(session, negative, rgb, &session->progress, error);\n    }\n    theia::export_execution::trace_memory(gpu, \"after_print\");")
 
-    foreach(anchor include negative pack timing print)
+    foreach(anchor include negative pack timing print shape film)
         string(FIND "${source}" "${before_${anchor}}" found)
         if(found EQUAL -1)
             message(FATAL_ERROR "Theia export adapter: shared engine changed at ${anchor}; review its lifetimes")
@@ -73,6 +81,13 @@ function(theia_android_export_execution engine_dir engine_output pipeline_output
         message(FATAL_ERROR "Theia export adapter: film prefix ownership changed; review its last reader")
     endif()
     string(REPLACE "${before_segment}" "${after_segment}" pipeline_source "${pipeline_source}")
+    set(before_prefix "    if (!film_prefix(in, FrameShape{in.h, in.w}, cur, error)) return false;")
+    set(after_prefix "${before_prefix}\n    theia::export_execution::trace_memory(gpu_, \"before_film_source_release\");\n    theia::export_execution::FilmInputScope<Image>::retire(in);\n    theia::export_execution::trace_memory(gpu_, \"after_film_source_release\");")
+    string(FIND "${pipeline_source}" "${before_prefix}" prefix_found)
+    if(prefix_found EQUAL -1)
+        message(FATAL_ERROR "Theia export adapter: film prefix changed; review the source's final reader")
+    endif()
+    string(REPLACE "${before_prefix}" "${after_prefix}" pipeline_source "${pipeline_source}")
     # run_print previously borrowed the engine's negative for the whole print.
     # Transfer that exact owner only after constants and contrast-mask setup;
     # the first stage can then retire it before glare allocates its field.

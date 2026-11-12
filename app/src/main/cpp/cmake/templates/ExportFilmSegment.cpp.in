@@ -5,12 +5,22 @@
                                      std::string& error) -> bool {
 @THEIA_DIR_BODY@
         };
+        const auto consume_halation = [&](Image in, Image& out,
+                                          std::string& error) -> bool {
+@THEIA_HALATION_BODY@
+        };
         Chain chain;
         chain.cur = std::move(cur);
         for (size_t i = 0; i < kFilmStageCount; ++i) {
             Chain next;
             if (kFilmStages[i].run == &Pipeline::film_couplers) {
                 SPK_NODE(consume_dir(std::move(chain.cur), std::move(chain.log_e_film), next.cur, error));
+            } else if (kFilmStages[i].run == &Pipeline::film_blurs) {
+                Image lens;
+                SPK_NODE(node_lens_blur(chain.cur, lens, error));
+                chain.cur = Image{};
+                SPK_NODE(consume_halation(std::move(lens), next.cur, error));
+                next.log_e_film = std::move(chain.log_e_film);
             } else if (!(this->*kFilmStages[i].run)(chain, next, error)) {
                 return false;
             }

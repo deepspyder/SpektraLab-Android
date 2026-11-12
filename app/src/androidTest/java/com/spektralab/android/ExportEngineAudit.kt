@@ -113,6 +113,13 @@ internal class ExportEngineAudit(
                 grainActive = false; glareActive = false
                 overscanActive = true; dateImprintActive = true; dateImprintText = "'26 11 12"
             }
+            cases += EditorParams().apply {
+                autoExposure = false; grainActive = false; glareActive = false
+            }
+            cases += EditorParams().apply {
+                autoExposure = false; grainActive = false; glareActive = false
+                cropX = .1f; cropY = .15f; cropW = .7f; cropH = .65f
+            }
             EngineClient.create(context).use { engine ->
                 for ((index, params) in cases.withIndex()) {
                     val json = params.openJson(width, height)

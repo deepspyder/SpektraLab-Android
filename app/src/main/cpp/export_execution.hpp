@@ -15,6 +15,27 @@ inline thread_local bool detailed = false;
 inline thread_local bool experimental_fir_bands = false;
 inline thread_local const std::atomic<bool>* cancellation = nullptr;
 
+// A one-shot source may be retired after film_prefix's final reader. The
+// prefix result keeps its own counted handle when it aliases this input.
+template <typename Image>
+class FilmInputScope {
+public:
+    explicit FilmInputScope(Image& input) : previous_(input_) {
+        input_ = one_shot ? &input : nullptr;
+    }
+    ~FilmInputScope() { input_ = previous_; }
+    FilmInputScope(const FilmInputScope&) = delete;
+    FilmInputScope& operator=(const FilmInputScope&) = delete;
+
+    static void retire(const Image& input) {
+        if (one_shot && input_ == &input) *input_ = Image{};
+    }
+
+private:
+    inline static thread_local Image* input_ = nullptr;
+    Image* previous_;
+};
+
 // The engine owns the export negative; the pipeline normally only borrows it.
 // Register that one local owner for the duration of run_print, so the one-shot
 // stage chain can take it after print setup has finished. Exact object identity

@@ -25,12 +25,13 @@ static std::vector<float> read(spk::gpu::Gpu* gpu, const spk::Image& image) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "Pass the complete engine resources directory\n";
+    if (argc != 2 && argc != 3) {
+        std::cerr << "Pass the complete engine resources directory and optional 'halation' matrix\n";
         return 2;
     }
     try {
         const std::string resources = argv[1];
+        const bool halation_audit = argc == 3 && std::string(argv[2]) == "halation";
         std::string error;
         spk::Blob blob;
         spk::Colour colour;
@@ -53,7 +54,7 @@ int main(int argc, char** argv) {
         }};
         for (const auto& stock : stocks) {
             for (const auto shape : {std::array<unsigned, 2>{1, 37}, {63, 41}, {385, 257}}) {
-                for (int mode = 0; mode < 8; ++mode) {
+                for (int mode = 0; mode < (halation_audit ? 10 : 8); ++mode) {
                     spk::Params params;
                     require(spk::init_params(resources, stock[0], stock[1], filters, params, error), error);
                     params.camera.auto_exposure = false;
@@ -74,6 +75,25 @@ int main(int argc, char** argv) {
                     if (mode == 3) dir.diffusion_tail_um = 2000.;
                     dir.diffusion_tail_weight = mode == 2 ? 0. : .06;
                     if (mode == 4) dir.amount = 0.;
+                    if (halation_audit) {
+                        params.film_render.grain.active = mode == 9;
+                        auto& hal = params.film_render.halation;
+                        hal.active = mode != 0;
+                        hal.scatter_amount = mode == 2 ? 0. : (mode == 4 ? .35 : 1.);
+                        hal.halation_amount = mode == 1 ? 0. : (mode == 8 ? 2.3 : 1.);
+                        hal.halation_renormalize = mode != 5;
+                        if (mode == 3) {
+                            hal.scatter_amount = 0.;
+                            for (double& strength : hal.halation_strength) strength = 0.;
+                        }
+                        if (mode == 6) {
+                            hal.halation_first_sigma_um[0] = 1.;
+                            hal.halation_first_sigma_um[1] = 350.;
+                            hal.halation_first_sigma_um[2] = 0.;
+                        }
+                        if (mode == 7) params.camera.lens_blur_um = 50.;
+                        if (mode == 8) hal.scatter_spatial_scale = 4.;
+                    }
                     spk::Image source;
                     source.w = shape[0]; source.h = shape[1]; source.c = 3;
                     std::vector<float> input(source.elements());
@@ -92,7 +112,11 @@ int main(int argc, char** argv) {
                         theia::export_execution::one_shot = consuming;
                         gpu->begin_frame();
                         spk::Image negative;
-                        require(pipeline.run_film(source, negative, nullptr, error), error);
+                        {
+                            theia::export_execution::FilmInputScope ownership(source);
+                            require(pipeline.run_film(source, negative, nullptr, error), error);
+                        }
+                        require(consuming ? !source.valid() : source.valid(), "Wrong source ownership after film prefix");
                         const auto actual = read(gpu.get(), negative);
                         const auto peak = gpu->pool_stats().frame_high_water_bytes;
                         if (!consuming) {
@@ -132,9 +156,32 @@ int main(int argc, char** argv) {
             theia_dir_audit_cancel_checkpoint = checkpoint;
             theia::export_execution::one_shot = true;
             gpu->begin_frame();
-            const bool ok = pipeline.run_film(source, output, &progress, error);
+            bool ok;
+            {
+                theia::export_execution::FilmInputScope ownership(source);
+                ok = pipeline.run_film(source, output, &progress, error);
+            }
             require(!ok && progress.cancelled && error == "render cancelled", "DIR checkpoint failed to cancel");
-            require(!output.valid() && gpu->pool_stats().live_bytes == 0, "Cancelled DIR retained partial images");
+            require(!source.valid() && !output.valid() && gpu->pool_stats().live_bytes == 0,
+                    "Cancelled DIR retained its source or partial images");
+            source = {};
+            source.w = 13; source.h = 9; source.c = 3;
+            {
+                theia::export_execution::FilmInputScope outer(source);
+                auto alias = source;
+                {
+                    theia::export_execution::FilmInputScope inner(alias);
+                    theia::export_execution::FilmInputScope<spk::Image>::retire(source);
+                    require(source.w == 13, "Nested film scope retired an unrelated owner");
+                    theia::export_execution::FilmInputScope<spk::Image>::retire(alias);
+                    require(alias.w == 0, "Nested film scope failed to retire its owner");
+                }
+                theia::export_execution::FilmInputScope<spk::Image>::retire(source);
+                require(source.w == 0, "Nested film scope did not restore outer owner");
+            }
+            source.w = 13;
+            theia::export_execution::FilmInputScope<spk::Image>::retire(source);
+            require(source.w == 13, "Retired film scope escaped into reused source object");
             gpu->end_frame();
             theia_dir_audit_cancel_checkpoint = 0;
             theia::export_execution::one_shot = false;

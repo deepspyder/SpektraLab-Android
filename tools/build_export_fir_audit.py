@@ -11,12 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="Fresh local output directory")
-    parser.add_argument("--audit", choices=("fir", "dir", "print"), default="fir")
+    parser.add_argument("--audit", choices=("fir", "dir", "print", "mixture"), default="fir")
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists():
         parser.error("Use a new output directory to preserve previous evidence")
-    source_name = "blur_android.cpp" if args.audit == "fir" else "pipeline_android.cpp"
+    source_name = "blur_android.cpp" if args.audit in ("fir", "mixture") else "pipeline_android.cpp"
     candidates = list((ROOT / "app/.cxx/RelWithDebInfo").glob("*/x86_64/generated/" + source_name))
     if not candidates:
         parser.error("Build the x86_64 Release APK with the Android export adapters first")
@@ -40,6 +40,16 @@ def main():
     compiler = Path(compiler_value)
     toolchain = compiler.parent.parent
     output.mkdir(parents=True)
+    if args.audit == "mixture":
+        audit_source = generated.read_text(encoding="utf-8")
+        anchor = "        if (!gpu_->flush(error)) return false;\n        if (theia::export_execution::one_shot && theia::export_execution::cancellation &&"
+        if audit_source.count(anchor) != 1:
+            parser.error("Mixture component cancellation boundary changed")
+        audit_source = "extern void theia_mixture_audit_checkpoint();\n" + audit_source
+        audit_source = audit_source.replace(anchor,
+            "        theia_mixture_audit_checkpoint();\n" + anchor)
+        generated = output / "blur_audit.cpp"
+        generated.write_text(audit_source, encoding="utf-8")
     if args.audit == "dir":
         # Standalone fault injection only: public progress intentionally exposes
         # "rendering" while work is active, so it cannot select an internal node.
@@ -75,7 +85,8 @@ def main():
         *("-I" + str(engine / path) for path in ("src", "src/core", "src/pipeline", "src/gpu")),
         str(ROOT / {"fir": "tools/native/export_fir_bands_audit.cpp",
                     "dir": "tools/native/export_dir_audit.cpp",
-                    "print": "tools/native/export_print_audit.cpp"}[args.audit]), str(generated),
+                    "print": "tools/native/export_print_audit.cpp",
+                    "mixture": "tools/native/export_mixture_audit.cpp"}[args.audit]), str(generated),
         "-L" + str(output), "-lspektralab", "-lc++_shared", "-llog",
         "-Wl,-rpath,$ORIGIN", "-o", str(output / ("export-" + args.audit + "-audit")),
     ]

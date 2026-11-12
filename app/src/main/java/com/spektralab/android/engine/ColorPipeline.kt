@@ -229,6 +229,8 @@ class Grade(
     private val vignetteFeather: Float = .7f,
     private val curves: ToneCurves = ToneCurves.IDENTITY,
     private val colors: ColorAdjustments = ColorAdjustments.NEUTRAL,
+    private val mixer: com.spektralab.android.core.color.ChannelMixer = com.spektralab.android.core.color.ChannelMixer.IDENTITY,
+    private val wheels: com.spektralab.android.core.color.ColorWheels = com.spektralab.android.core.color.ColorWheels.NEUTRAL,
 ) {
     private val midGrey = 0.4614f  // SRGB_MID_GREY（desktop adjustments.ts）
     private val encodedExposureGain = Math.pow(exposureGain.toDouble(), 1.0 / 2.2).toFloat()
@@ -258,13 +260,14 @@ class Grade(
         saturation == 1f && cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
 
     /** Neutral Layer 2 can pass the existing 16-bit samples through exactly. */
-    internal val isIdentity: Boolean get() = identity && vignetteGains == null && curves.isIdentity && colors.isNeutral
-    internal val usesNativeGrade: Boolean get() = !curves.isIdentity || !colors.isNeutral
-    private val colorUniforms by lazy { colors.uniforms() }
+    internal val isIdentity: Boolean get() = identity && vignetteGains == null && curves.isIdentity && colors.isNeutral && mixer.isNeutral && wheels.isNeutral
+    internal val usesNativeGrade: Boolean get() = !curves.isIdentity || !colors.isNeutral || !mixer.isNeutral || !wheels.isNeutral
+    private val colorUniforms by lazy { colors.uniforms() + mixer.uniforms() + wheels.uniforms() }
     private val curveTable by lazy { curves.table() }
     private val nativeUniforms by lazy { floatArrayOf(wbR, wbG, wbB, encodedExposureGain, contrast, brightness, saturation,
         highlights, shadows, blackPoint, whitePoint, *cbShadow, *cbMid, *cbHigh,
-        vignetteAmount, vignetteSize, vignetteFeather, if (curves.isIdentity) 0f else 1f, if (identity && colors.isNeutral) 1f else 0f) }
+        vignetteAmount, vignetteSize, vignetteFeather, if (curves.isIdentity) 0f else 1f,
+        if (identity && colors.isNeutral && mixer.isNeutral && wheels.isNeutral) 1f else 0f) }
     private val nativeBrightness by lazy {
         if (brightness == 0f) null else ByteBuffer.allocateDirect(3 * 65536 * Float.SIZE_BYTES)
             .order(ByteOrder.nativeOrder()).also { NativeCurveGrade.prepareBrightness(nativeUniforms, it) }
@@ -295,7 +298,7 @@ class Grade(
         var g = (g16.toInt() and 0xFFFF) / 65535f
         var b = (b16.toInt() and 0xFFFF) / 65535f
 
-        if (identity && colors.isNeutral) {
+        if (identity && colors.isNeutral && mixer.isNeutral && wheels.isNeutral) {
             out[0] = r; out[1] = g; out[2] = b
             applyCurves(out)
             return
@@ -352,6 +355,23 @@ class Grade(
             colors.apply(out)
             r = out[0]; g = out[1]; b = out[2]
             balanceLuma = luma(r, g, b)
+        }
+        if (!mixer.isNeutral) {
+            out[0] = r; out[1] = g; out[2] = b
+            mixer.apply(out)
+            r = out[0]; g = out[1]; b = out[2]
+            balanceLuma = luma(r, g, b)
+        }
+        if (!wheels.isNeutral) {
+            val ls = tonePosition(balanceLuma, midGrey).coerceIn(0f, 1f)
+            val ws = (1f - ls) * (1f - ls); val wh = ls * ls; val wm = (1f - ws - wh).coerceAtLeast(0f)
+            out[0] = r + cbShadow[0] * ws + cbMid[0] * wm + cbHigh[0] * wh
+            out[1] = g + cbShadow[1] * ws + cbMid[1] * wm + cbHigh[1] * wh
+            out[2] = b + cbShadow[2] * ws + cbMid[2] * wm + cbHigh[2] * wh
+            wheels.apply(out, ws, wm, wh)
+            for (c in 0..2) out[c] = out[c].coerceIn(0f, 1f)
+            applyCurves(out)
+            return
         }
         if (balanceNeutral) {
             out[0] = (r + 0f).coerceIn(0f, 1f)

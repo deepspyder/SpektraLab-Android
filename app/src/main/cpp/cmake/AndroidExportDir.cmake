@@ -34,6 +34,8 @@ function(theia_android_export_dir pipeline_source output_variable)
     endforeach()
 
     set(template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/templates/ExportFilmSegment.cpp.in")
+    include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidExportHalation.cmake")
+    theia_android_export_halation("${pipeline_source}" THEIA_HALATION_BODY)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${template}")
     file(READ "${template}" segment)
     string(CONFIGURE "${segment}" segment @ONLY)

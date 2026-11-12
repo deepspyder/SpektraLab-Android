@@ -29,6 +29,8 @@ import com.spektralab.android.ui.components.SliderRow
 @Composable
 internal fun GradePanel(vm: EditorViewModel) {
     ColorEditor(vm)
+    ChannelMixerEditor(vm)
+    ColorWheelEditor(vm)
     EditorSection("暗角", "柔和压暗边缘 · 不改变中心曝光", initiallyExpanded = true) {
         SliderRow("暗角强度", vm.params.vignetteAmount, 0f..100f, "%.0f%%") {
             vm.params.vignetteAmount = it; vm.scheduleGrade()

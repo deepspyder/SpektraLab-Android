@@ -319,6 +319,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun resetAll() {
         finishCurveEdit(cancel = true)
         finishColorEdit(cancel = true)
+        finishMixerEdit(cancel = true)
+        finishWheelEdit(cancel = true)
         params = EditorParams()
         cropAspect = "原始"
         scheduleRender()
@@ -327,7 +329,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun historyKey(uri: Uri? = currentUri): String = uri?.toString() ?: "session"
     /** A live gesture is preview-only until release, even if another operation saves. */
     private fun committedParams(): EditorParams {
-        if (curveStart == null && colorStart == null) return params
+        if (curveStart == null && colorStart == null && mixerStart == null && wheelStart == null) return params
         return params.copy().apply {
             curveStart?.let {
                 toneCurves = it
@@ -336,6 +338,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             colorStart?.let {
                 colorAdjustments = it
                 unreadableColorAdjustments = colorStartUnreadable
+            }
+            wheelStart?.let {
+                colorWheels = it
+                unreadableColorWheels = wheelStartUnreadable
+            }
+            mixerStart?.let {
+                channelMixer = it
+                unreadableChannelMixer = mixerStartUnreadable
             }
         }
     }
@@ -388,6 +398,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun restoreHistory(redo: Boolean) {
         finishCurveEdit(cancel = true)
         finishColorEdit(cancel = true)
+        finishMixerEdit(cancel = true)
+        finishWheelEdit(cancel = true)
         val key = historyKey()
         val undo = undoHistory[key] ?: return
         val redoStack = redoHistory.getOrPut(key) { mutableListOf() }
@@ -500,6 +512,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             zone(p.cbMidTemp / 100f, p.cbMidTint / 100f),
             zone(p.cbHighTemp / 100f, p.cbHighTint / 100f),
             p.vignetteAmount / 100f, p.vignetteSize / 100f, p.vignetteFeather / 100f, p.toneCurves, p.colorAdjustments,
+            p.channelMixer, p.colorWheels,
         )
     }
 
@@ -726,6 +739,68 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } while (request != gradeRequest)
         }
+    }
+
+    private var wheelStart: com.spektralab.android.core.color.ColorWheels? = null
+    private var wheelStartUnreadable: String? = null
+
+    fun beginWheelEdit() {
+        if (!hasPhoto || busy || isExporting || isBatchExporting) return
+        if (wheelStart == null) {
+            wheelStart = params.colorWheels
+            wheelStartUnreadable = params.unreadableColorWheels
+            lastHistoryKey = null
+        }
+    }
+
+    fun changeWheels(wheels: com.spektralab.android.core.color.ColorWheels) {
+        if (!hasPhoto || busy || isExporting || isBatchExporting) return
+        params.colorWheels = wheels
+        params.unreadableColorWheels = null
+        scheduleGrade(commit = false)
+    }
+
+    fun finishWheelEdit(cancel: Boolean = false) {
+        val start = wheelStart ?: return
+        wheelStart = null
+        if (cancel) {
+            params.colorWheels = start
+            params.unreadableColorWheels = wheelStartUnreadable
+        }
+        scheduleGrade(commit = !cancel && (params.colorWheels != start ||
+            params.unreadableColorWheels != wheelStartUnreadable))
+        wheelStartUnreadable = null
+    }
+
+    private var mixerStart: com.spektralab.android.core.color.ChannelMixer? = null
+    private var mixerStartUnreadable: String? = null
+
+    fun beginMixerEdit() {
+        if (!hasPhoto || busy || isExporting || isBatchExporting) return
+        if (mixerStart == null) {
+            mixerStart = params.channelMixer
+            mixerStartUnreadable = params.unreadableChannelMixer
+            lastHistoryKey = null
+        }
+    }
+
+    fun changeMixer(mixer: com.spektralab.android.core.color.ChannelMixer) {
+        if (!hasPhoto || busy || isExporting || isBatchExporting) return
+        params.channelMixer = mixer
+        params.unreadableChannelMixer = null
+        scheduleGrade(commit = false)
+    }
+
+    fun finishMixerEdit(cancel: Boolean = false) {
+        val start = mixerStart ?: return
+        mixerStart = null
+        if (cancel) {
+            params.channelMixer = start
+            params.unreadableChannelMixer = mixerStartUnreadable
+        }
+        scheduleGrade(commit = !cancel && (params.channelMixer != start ||
+            params.unreadableChannelMixer != mixerStartUnreadable))
+        mixerStartUnreadable = null
     }
 
     private var colorStart: com.spektralab.android.core.color.ColorAdjustments? = null
@@ -1241,6 +1316,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun export() {
         val e = engine ?: return
         if (!hasPhoto || isExporting || isBatchExporting || busy) return
+        finishMixerEdit(cancel = true)
+        finishWheelEdit(cancel = true)
+        if (params.unreadableColorWheels != null) { fail(app.getString(com.spektralab.android.R.string.wheels_unsupported)); return }
+        if (params.unreadableChannelMixer != null) { fail(app.getString(com.spektralab.android.R.string.mixer_unsupported)); return }
         if (params.unreadableColorAdjustments != null) { fail(app.getString(com.spektralab.android.R.string.color_unsupported)); return }
         if (params.unreadableToneCurves != null) { fail(app.getString(com.spektralab.android.R.string.curve_unsupported)); return }
         val interruptedPreview = pendingPreviewWork()
@@ -1395,6 +1474,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Invalidate before changing identity; cancellation alone cannot stop synchronous native work. */
     private fun invalidatePhotoWork(): Long {
+        wheelStart?.let {
+            params.colorWheels = it
+            params.unreadableColorWheels = wheelStartUnreadable
+        }
+        wheelStart = null
+        wheelStartUnreadable = null
+        mixerStart?.let {
+            params.channelMixer = it
+            params.unreadableChannelMixer = mixerStartUnreadable
+        }
+        mixerStart = null
+        mixerStartUnreadable = null
         colorStart?.let {
             params.colorAdjustments = it
             params.unreadableColorAdjustments = colorStartUnreadable
@@ -1721,6 +1812,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveCurrentSidecar() {
         finishCurveEdit(cancel = true)
         finishColorEdit(cancel = true)
+        finishMixerEdit(cancel = true)
+        finishWheelEdit(cancel = true)
         currentUri?.takeIf { it == paramsUri }?.let { EditStore.save(app, it, params) }
     }
 
@@ -1793,6 +1886,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                             renderStage = "第 ${i + 1}/${batchPhotos.size} 张：胶片冲印与相纸扫描"
                         }
                         val photoParams = edits.getValue(uri).toParams()
+                        check(photoParams.unreadableColorWheels == null) { app.getString(com.spektralab.android.R.string.wheels_unsupported) }
+                        check(photoParams.unreadableChannelMixer == null) { app.getString(com.spektralab.android.R.string.mixer_unsupported) }
                         check(photoParams.unreadableColorAdjustments == null) { app.getString(com.spektralab.android.R.string.color_unsupported) }
                         check(photoParams.unreadableToneCurves == null) { app.getString(com.spektralab.android.R.string.curve_unsupported) }
                         val request = renderCache.prepare(uri, photoParams, options, ::checkExportCancellation)
