@@ -15,7 +15,7 @@ import java.security.MessageDigest
 /** Stream checksums rather than bringing a 147 MB TIFF into the small ART heap. */
 internal class FullSizeCacheAudit(private val test: Instrumentation, private val output: File, private val withCurves: Boolean = false,
                                  private val withColor: Boolean = false, private val withMixer: Boolean = false, private val withWheels: Boolean = false,
-                                 private val withPreset: Boolean = false) {
+                                 private val withPreset: Boolean = false, private val withMigration: Boolean = false) {
     fun run(): String {
         val source = File(output, "perf-z6ii.NEF")
         check(source.isFile) { "Push perf-z6ii.NEF before running this explicit camera-file audit" }
@@ -45,7 +45,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                 EditorParams().apply {
                     grainActive = false
                     glareActive = false
-                    if (withWheels) colorWheels = com.spektralab.android.core.color.ColorWheels(
+                    if (withWheels || withMigration) colorWheels = com.spektralab.android.core.color.ColorWheels(
                         master = com.spektralab.android.core.color.WheelAdjustment(35f, 12f, 6f),
                         shadows = com.spektralab.android.core.color.WheelAdjustment(220f, 24f, -8f),
                         midtones = com.spektralab.android.core.color.WheelAdjustment(320f, 8f, 3f),
@@ -63,6 +63,28 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                         com.spektralab.android.core.color.ToneCurve.IDENTITY.add(.5f,.63f))
                 },
             )
+            if (withMigration) {
+                val sandbox = File(output, "raw-migration-${System.nanoTime()}").apply { mkdirs() }
+                val isolated = object : android.content.ContextWrapper(context) {
+                    override fun getFilesDir() = File(sandbox, "legacy-app").apply { mkdirs() }
+                }
+                val original = EditStore.load(context, uri)!!
+                EditStore.save(isolated, uri, original)
+                val key = EditStore.migrationKey(isolated, uri)
+                val sourceEvidence = com.spektralab.android.data.library.SourceProbe.inspect(context, uri)
+                check(sourceEvidence.verified)
+                val archive = EditStore.captureMigrationCopy(isolated, File(sandbox, "archives"),
+                    listOf(com.spektralab.android.core.model.LegacySourceBinding(key, sourceEvidence)), listOf(key), 0)
+                com.spektralab.android.data.library.LibraryPrototypeRepository.openSandbox(File(sandbox, "db")).use { repo ->
+                    check(repo.migrate(archive).single().state == com.spektralab.android.core.model.MigrationState.MIGRATED)
+                    val migrated = repo.migratedVariant(key)!!
+                    val restored = EditorParams.fromJson(org.json.JSONObject(migrated.paramsJson))
+                    check(com.spektralab.android.core.model.EditSnapshot.capture(original) ==
+                        com.spektralab.android.core.model.EditSnapshot.capture(restored))
+                    // Only this known audit fixture is opened normally; shipping migration stays unconnected.
+                    EditStore.save(context, uri, restored)
+                }
+            }
             test.runOnMainSync { vm.openPhotos(listOf(uri)) }
             await { vm.errorMessage != null || vm.hasPhoto && !vm.busy }
             check(vm.errorMessage == null) { vm.errorMessage.orEmpty() }
@@ -138,7 +160,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
             val second = export()
             check(first.hash == second.hash && first.bytes == second.bytes)
             if (withCurves || withColor || withMixer || withWheels || withPreset) check(first.hash != "3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3") { "Active post edit did not affect full-size RAW export" }
-            if (withPreset) check(first.hash == "62f1d58c709a4bc694ca93f8d552954320f921260fc64dd4c013bf4461926f3f") { "Preset changed the existing wheel TIFF output" }
+            if (withPreset || withMigration) check(first.hash == "62f1d58c709a4bc694ca93f8d552954320f921260fc64dd4c013bf4461926f3f") { "Preset/migration changed the existing wheel TIFF output" }
             check(vm.exportCacheStats.hits == afterFirst.hits + 1)
             check(vm.exportCacheStats.writes == afterFirst.writes)
             return "6064x4040 RAW TIFF byte-exact; bytes=${first.bytes}; sha256=${first.hash}; first_ms=${first.ms}; second_ms=${second.ms}; initial=$stats first=$afterFirst final=${vm.exportCacheStats}"

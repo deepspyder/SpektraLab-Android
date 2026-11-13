@@ -92,6 +92,10 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var exportEngineInput = "perf-z6ii.NEF"
     private var interactionPerfLabel = "current"
     private var colorOnly = false
+    private var migrationOnly = false
+    private var migrationCrashMode: String? = null
+    private var migrationCrashVerify = false
+    private var migrationRun = "first"
     private var editToolsOnly = false
     private var editToolsLayoutOnly = false
     private var editModelsOnly = false
@@ -101,6 +105,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var wheelsPerformanceOnly = false
     private var fullSizeWheelsCacheOnly = false
     private var fullSizePresetCacheOnly = false
+    private var fullSizeMigrationCacheOnly = false
     private var mixerOnly = false
     private var mixerLayoutOnly = false
     private var mixerPerformanceOnly = false
@@ -130,11 +135,16 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         renderFoundationOnly = audit == "render-foundation"
         renderSchedulingOnly = audit == "render-scheduling"
         exportCacheOnly = audit == "export-cache"
-        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw" || audit == "presets-raw"
+        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw" || audit == "presets-raw" || audit == "migration-raw"
         fullSizeMixerCacheOnly = audit == "mixer-raw"
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
+        migrationOnly = audit == "library-migration"
+        migrationCrashMode = audit?.takeIf { it in setOf("migration-crash-during", "migration-crash-after") }
+        migrationCrashVerify = audit == "migration-crash-verify"
+        migrationRun = arguments?.getString("migration_run") ?: "first"
+        require(migrationRun.matches(Regex("[a-zA-Z0-9-]{1,32}")))
         editToolsOnly = audit == "edit-tools"
         editToolsLayoutOnly = audit == "edit-tools-layout"
         editModelsOnly = audit == "edit-models"
@@ -144,6 +154,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         wheelsPerformanceOnly = audit == "wheels-perf"
         fullSizeWheelsCacheOnly = audit == "wheels-raw"
         fullSizePresetCacheOnly = audit == "presets-raw"
+        fullSizeMigrationCacheOnly = audit == "migration-raw"
         mixerOnly = audit == "mixer"
         mixerLayoutOnly = audit == "mixer-layout"
         mixerPerformanceOnly = audit == "mixer-perf"
@@ -199,6 +210,30 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        val migrationProcessDirectory = File(output, "migration-process-$migrationRun")
+        migrationCrashMode?.let {
+            migrationProcessDirectory.mkdirs()
+            MigrationProcessDeathAudit(this, migrationProcessDirectory).terminate(it == "migration-crash-after")
+        }
+        if (migrationCrashVerify) {
+            case("migration.real_process_death_recovery") { MigrationProcessDeathAudit(this, migrationProcessDirectory).verify() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (migrationOnly) {
+            case("migration.identity_and_archive") { LibraryMigrationAudit(this, output).identityAndCapture() }
+            case("migration.ownership_and_variants") { LibraryMigrationAudit(this, output).migrationAndOwnership() }
+            case("migration.transaction_recovery") { LibraryMigrationAudit(this, output).interruptedTransactions() }
+            case("migration.unresolved_and_versions") { LibraryMigrationAudit(this, output).unresolvedAndVersions() }
+            case("migration.relocation_and_concurrency") { LibraryMigrationAudit(this, output).relocationAndConcurrency() }
+            case("migration.legacy_pixel_parity") { LibraryMigrationAudit(this, output).legacyPixelParity() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (editRawOnly) {
             case("editing.raw_decode_transfer") { EditRawTransferAudit(this, output).run() }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
@@ -334,8 +369,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         if (renderSchedulingOnly || exportCacheOnly || fullSizeCacheOnly) {
             if (renderSchedulingOnly) case("render.priority_state_and_admission") { RenderSchedulingAudit.run() }
             if (exportCacheOnly) case("export.production_cache") { ExportCacheAudit(this).run() }
-            if (fullSizeCacheOnly) case(if (fullSizePresetCacheOnly) "export.full_size_raw_preset" else if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
-                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly, fullSizePresetCacheOnly).run()
+            if (fullSizeCacheOnly) case(if (fullSizeMigrationCacheOnly) "export.full_size_raw_migration" else if (fullSizePresetCacheOnly) "export.full_size_raw_preset" else if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
+                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly, fullSizePresetCacheOnly, fullSizeMigrationCacheOnly).run()
             }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,

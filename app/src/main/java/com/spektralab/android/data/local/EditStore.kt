@@ -96,6 +96,16 @@ object EditStore {
         return if (id != null && id > 0) "media-$id" else "uri-" + hash16(uri.toString())
     }
 
+    /** Read-only adapter for explicit sandbox capture; does not recover or alter live records. */
+    @Synchronized
+    internal fun migrationKey(context: Context, uri: Uri): String = stableKey(context, uri)
+
+    /** Explicit T06 sandbox entry. Shipping editor remains entirely on the legacy path. */
+    @Synchronized
+    internal fun captureMigrationCopy(context: Context, snapshots: File,
+        bindings: List<com.spektralab.android.core.model.LegacySourceBinding>, session: List<String>, currentPosition: Int?) =
+        com.spektralab.android.data.library.LegacyMigrationArchive.capture(directory(context), snapshots, bindings, session, currentPosition)
+
     private fun resolveMediaId(context: Context, uri: Uri): Long? {
         return try {
             context.contentResolver.query(
