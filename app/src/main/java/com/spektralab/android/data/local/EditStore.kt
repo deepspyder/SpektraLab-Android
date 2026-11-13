@@ -123,6 +123,22 @@ object EditStore {
     @Synchronized
     internal fun savedPhotoCount(context: Context) = checked { repository(context).count() }
     @Synchronized
+    internal fun editVersions(context: Context, assetId: String) = checked { repository(context).versions.list(assetId) }
+    @Synchronized
+    internal fun editVersion(context: Context, versionId: String) = checked { repository(context).versions.find(versionId) }
+    internal fun editSourceUri(context: Context, uri: Uri): Uri =
+        if (com.spektralab.android.core.model.EditVersionUri.owns(uri))
+            Uri.parse(editVersion(context, com.spektralab.android.core.model.EditVersionUri.id(uri)).sourceUri) else uri
+    @Synchronized
+    internal fun createEditVersion(context: Context, expected: com.spektralab.android.core.model.EditVersion, name: String) =
+        checked { repository(context).versions.create(expected, name) }
+    @Synchronized
+    internal fun renameEditVersion(context: Context, expected: com.spektralab.android.core.model.EditVersion, name: String) =
+        checked { repository(context).versions.rename(expected, name) }
+    @Synchronized
+    internal fun deleteEditVersion(context: Context, expected: com.spektralab.android.core.model.EditVersion) =
+        checked { repository(context).deleteVersion(expected) }
+    @Synchronized
     internal fun photoLibraryPage(context: Context, filter: com.spektralab.android.core.model.PhotoLibraryFilter, offset: Int) =
         checked { repository(context).page(filter, offset) }
     @Synchronized

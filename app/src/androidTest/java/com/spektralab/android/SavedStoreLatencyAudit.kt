@@ -11,10 +11,14 @@ import org.json.JSONObject
 
 /** Runs unchanged against F06 and F07. Initialization/migration is outside steady save samples. */
 internal object SavedStoreLatencyAudit {
-    fun run(test: Instrumentation, output: File): String {
-        val uri=Uri.fromFile(File(output,"saved-latency-${System.nanoTime()}.png"))
+    fun run(test: Instrumentation, output: File, virtual: Boolean = false): String {
+        var uri=Uri.fromFile(File(output,"saved-latency-${System.nanoTime()}.png"))
         val params=EditorParams()
         test.runOnMainSync { EditStore.save(test.targetContext,uri,params) }
+        if (virtual) {
+            val photo = EditStore.savedPhotos(test.targetContext).first { it.uri == uri.toString() }
+            uri = EditStore.createEditVersion(test.targetContext, EditStore.editVersions(test.targetContext, photo.assetId).first(), "保存计时").editUri
+        }
         val ms=mutableListOf<Double>()
         repeat(120){index->
             test.runOnMainSync {

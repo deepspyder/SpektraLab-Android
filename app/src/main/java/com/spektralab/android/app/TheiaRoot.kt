@@ -89,6 +89,9 @@ internal fun TheiaRoot(vm: EditorViewModel) {
                 onOpen = { uri -> vm.openPhotos(listOf(uri)); route = AppRoute.Editor },
                 onRestore = { session -> vm.restoreWorkbench(session); route = AppRoute.Editor },
                 onRelink = vm::relinkWorkbenchSource,
+                prepareVersions = vm::prepareVersionBoundary,
+                versionInUse = { it in vm.photos || it == vm.currentUri },
+                onVersionOpen = { uri -> vm.addPhotos(listOf(uri), openSelected = true); route = AppRoute.Editor },
             )
             AppRoute.Editor -> EditorScreen(
                 vm = vm,

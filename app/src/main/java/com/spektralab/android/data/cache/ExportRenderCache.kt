@@ -11,6 +11,7 @@ import com.spektralab.android.core.model.ExportOptions
 import com.spektralab.android.core.model.RenderCacheIdentity
 import com.spektralab.android.engine.EngineClient
 import com.spektralab.android.engine.Rgba16Source
+import com.spektralab.android.data.local.EditStore
 import java.io.File
 import java.security.MessageDigest
 
@@ -54,7 +55,8 @@ internal class ExportRenderCache private constructor(private val context: Contex
             updateStats { it.copy(bypasses = it.bypasses + 1) }
             return null
         }
-        if (uri.scheme != "file" && uri.authority != "media") {
+        val sourceUri = safe { EditStore.editSourceUri(context, uri) }
+        if (sourceUri == null || sourceUri.scheme != "file" && sourceUri.authority != "media") {
             updateStats { it.copy(bypasses = it.bypasses + 1) }
             return null // do not start an extra cloud/pipe fetch just to probe cache eligibility
         }
@@ -116,7 +118,8 @@ internal class ExportRenderCache private constructor(private val context: Contex
     }
 
     /** Re-read content for every request; a URI/size/mtime cache cannot prove source identity. */
-    private fun fingerprint(uri: Uri, cancel: () -> Unit): String? {
+    private fun fingerprint(reference: Uri, cancel: () -> Unit): String? {
+        val uri = EditStore.editSourceUri(context, reference)
         if (uri.scheme == "file") {
             val source = File(uri.path ?: return null)
             if (!source.isFile) return null

@@ -99,6 +99,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val app get() = getApplication<Application>()
 
     internal val savedPhotos by lazy { com.spektralab.android.feature.gallery.SavedPhotosController(app, viewModelScope) }
+    internal fun prepareVersionBoundary() {
+        if (!busy && !isExporting && !isBatchExporting && !isApplyingEdits) saveCurrentSidecar()
+    }
     private val sessionPersistence by lazy { EditSessionPersistence(app, viewModelScope) }
     private var workbenchChanged = false
 
@@ -2519,12 +2522,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     // 读取源 EXIF（仅 JPEG/TIFF/DNG；RAW 抛异常时返回 null）。
     private fun readExif(uri: Uri, keepLocation: Boolean = exportKeepLocation): ExifInterface? {
-        if (Build.VERSION.SDK_INT >= 29 && keepLocation && uri.authority == "media" &&
+        val source = runCatching { EditStore.editSourceUri(app, uri) }.getOrNull() ?: return null
+        if (Build.VERSION.SDK_INT >= 29 && keepLocation && source.authority == "media" &&
             androidx.core.content.ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_MEDIA_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            runCatching { app.contentResolver.openInputStream(MediaStore.setRequireOriginal(uri))?.use(::ExifInterface) }
+            runCatching { app.contentResolver.openInputStream(MediaStore.setRequireOriginal(source))?.use(::ExifInterface) }
                 .getOrNull()?.let { return it }
         }
-        return runCatching { app.contentResolver.openInputStream(uri)?.use(::ExifInterface) }.getOrNull()
+        return runCatching { app.contentResolver.openInputStream(source)?.use(::ExifInterface) }.getOrNull()
     }
 
     private fun decodeSampled(uri: Uri, maxLongEdge: Int = 2048): Bitmap {

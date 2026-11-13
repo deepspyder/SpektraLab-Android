@@ -3,7 +3,7 @@ package com.spektralab.android.core.model
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A default-edit workbench, containing references only, never decoded image data or drafts. */
+/** A workbench of source/default or private version references; never pixels or gesture drafts. */
 internal data class SavedEditSession(
     val photos: List<String>,
     val current: String?,
@@ -24,6 +24,13 @@ internal data class SavedEditSession(
             current?.let(mapped::getValue),
             selected.mapTo(linkedSetOf()) { mapped.getValue(it) },
         )
+    }
+
+    fun without(removed: Set<String>): SavedEditSession {
+        val remaining = photos.filterNot(removed::contains)
+        val selectedCurrent = current?.takeUnless(removed::contains)
+            ?: remaining.getOrNull(photos.indexOf(current).coerceAtLeast(0).coerceAtMost((remaining.size - 1).coerceAtLeast(0)))
+        return SavedEditSession(remaining, selectedCurrent, selected - removed)
     }
 
     fun toJson(): String = JSONObject()

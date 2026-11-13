@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withPermit
 /** Metadata loads and at most two bounded thumbnail reads; never starts the film engine. */
 internal class SavedPhotosController(private val context: Context, private val scope: CoroutineScope) {
     val organization = PhotoOrganizationController(context, scope, ::refresh)
+    val versions = EditVersionsController(context, scope)
     var filter by mutableStateOf(PhotoLibraryFilter())
         private set
     var matchingCount by mutableStateOf(0L)
@@ -171,6 +172,7 @@ internal class SavedPhotosController(private val context: Context, private val s
     fun cancelRelinkPicker() { pendingRelink = null }
 
     fun leave() {
+        versions.leave()
         val abandoned = load
         load = null
         opening = false

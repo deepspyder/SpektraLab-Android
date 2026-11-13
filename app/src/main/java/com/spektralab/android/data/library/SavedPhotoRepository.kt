@@ -8,6 +8,7 @@ import com.spektralab.android.core.model.SavedEditSession
 import com.spektralab.android.core.model.SourceEvidence
 import com.spektralab.android.core.model.PhotoLabel
 import com.spektralab.android.core.model.PhotoLibraryFilter
+import com.spektralab.android.core.model.EditVersionUri
 import com.spektralab.android.data.local.writeAtomicJson
 import java.io.Closeable
 import java.io.File
@@ -24,6 +25,7 @@ internal data class PhotoLibraryPage(val photos: List<SavedPhoto>, val albums: L
 /** Production default-variant store. All calls are serialized by the EditStore facade. */
 internal class SavedPhotoRepository private constructor(private val directory: File, private val db: SQLiteDatabase) : Closeable {
     val organization = PhotoOrganizationRepository(db)
+    val versions = EditVersionRepository(db) { checkEditable(it) }
     data class PendingWrite(val uri: Uri, val expected: String?, val json: String)
     enum class Checkpoint { BACKUP_READY, IMPORT_WRITTEN, IMPORT_COMMITTED, BATCH_WRITTEN, SOURCE_RELINKED, SOURCE_RELINK_COMMITTED }
     internal var checkpoint: (Checkpoint) -> Unit = {}
@@ -40,6 +42,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
     }
 
     fun read(uri: Uri): String? {
+        if (EditVersionUri.owns(uri)) return versions.find(EditVersionUri.id(uri)).paramsJson
         val result = db.rawQuery("SELECT e.params FROM edits e JOIN assets a USING(asset_id) WHERE a.source_key=?",
             arrayOf(key(uri))).use { if (it.moveToFirst()) it.getString(0) else null }
         if (result == null) check(resolveLocation(uri.toString()) == uri.toString()) { "SOURCE_RELINKED" }
@@ -118,6 +121,12 @@ internal class SavedPhotoRepository private constructor(private val directory: F
         if (it.moveToFirst()) photo(it) else null
     }
 
+    fun deleteVersion(expected: com.spektralab.android.core.model.EditVersion) = versions.delete(expected) { removed ->
+        session()?.let { session ->
+            writeSession(session.without(setOf(removed)))
+        }
+    }
+
     private fun current(expected: SavedPhoto): SavedPhoto {
         val actual = find(expected.assetId) ?: error("EDIT_MISSING")
         check(actual.uri == expected.uri && actual.revision == expected.revision) { "EDIT_TARGET_CHANGED" }
@@ -171,7 +180,11 @@ internal class SavedPhotoRepository private constructor(private val directory: F
     }
 
     private fun writeSession(session: SavedEditSession) {
-        val json = session.toJson()
+        val removed = session.photos.filterTo(mutableSetOf()) {
+            val uri = Uri.parse(it)
+            EditVersionUri.owns(uri) && versions.deleted(EditVersionUri.id(uri))
+        }
+        val json = session.without(removed).toJson()
         require(json.length <= 2 * 1024 * 1024) { "WORKBENCH_TOO_LARGE" }
         val unchanged = db.rawQuery("SELECT payload FROM workbench WHERE id='default'", null).use {
             it.moveToFirst() && it.getString(0) == json
@@ -202,6 +215,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
             "params" to json, "revision" to 1L, "updated_at" to System.currentTimeMillis(), "render_version" to "android-legacy-v1"))
     }
     private fun update(uri: Uri, json: String) {
+        if (EditVersionUri.owns(uri)) { versions.save(EditVersionUri.id(uri), json); return }
         db.execSQL("UPDATE edits SET params=?,revision=revision+1,updated_at=? WHERE asset_id=(SELECT asset_id FROM assets WHERE source_key=?)",
             arrayOf<Any>(json, System.currentTimeMillis(), key(uri)))
     }
@@ -253,7 +267,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                 })
             try {
                 db.setForeignKeyConstraintsEnabled(true)
-                require(db.version in 0..3) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
+                require(db.version in 0..4) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
                 val repository = SavedPhotoRepository(directory, db)
                 if (db.version == 0) repository.transaction {
                     db.execSQL("CREATE TABLE assets(asset_id TEXT PRIMARY KEY,source_key TEXT UNIQUE NOT NULL,uri TEXT NOT NULL,name TEXT NOT NULL)")
@@ -271,6 +285,10 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                 if (db.version == 2) repository.transaction {
                     PhotoOrganizationRepository.createSchema(db)
                     db.version = 3
+                }
+                if (db.version == 3) repository.transaction {
+                    EditVersionRepository.createSchema(db)
+                    db.version = 4
                 }
                 return repository
             } catch (error: Throwable) { db.close(); throw error }

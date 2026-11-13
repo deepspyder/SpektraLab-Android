@@ -107,6 +107,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var fullSizeWheelsCacheOnly = false
     private var fullSizePresetCacheOnly = false
     private var fullSizeMigrationCacheOnly = false
+    private var fullSizeVersionsCacheOnly = false
     private var mixerOnly = false
     private var mixerLayoutOnly = false
     private var mixerPerformanceOnly = false
@@ -136,12 +137,12 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         renderFoundationOnly = audit == "render-foundation"
         renderSchedulingOnly = audit == "render-scheduling"
         exportCacheOnly = audit == "export-cache"
-        fullSizeCacheOnly = audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw" || audit == "presets-raw" || audit == "migration-raw"
+        fullSizeCacheOnly = audit == "versions-raw" || audit == "export-cache-raw" || audit == "curves-raw" || audit == "color-raw" || audit == "mixer-raw" || audit == "wheels-raw" || audit == "presets-raw" || audit == "migration-raw"
         fullSizeMixerCacheOnly = audit == "mixer-raw"
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
-        savedPhotosAudit = audit?.takeIf { it in setOf("saved-photos", "saved-photos-layout", "saved-storage", "saved-upgrade-seed", "saved-upgrade-verify", "saved-latency", "saved-crash-during", "saved-crash-after", "saved-crash-verify", "source-recovery", "source-recovery-layout", "source-recovery-storage", "source-upgrade-seed", "source-upgrade-verify", "source-crash-during", "source-crash-after", "source-crash-verify", "photo-organization", "photo-organization-layout", "photo-organization-storage", "organization-upgrade-seed", "organization-upgrade-verify", "organization-crash-during", "organization-crash-after", "organization-crash-verify") }
+        savedPhotosAudit = audit?.takeIf { it in setOf("saved-photos", "saved-photos-layout", "saved-storage", "saved-upgrade-seed", "saved-upgrade-verify", "saved-latency", "saved-crash-during", "saved-crash-after", "saved-crash-verify", "source-recovery", "source-recovery-layout", "source-recovery-storage", "source-upgrade-seed", "source-upgrade-verify", "source-crash-during", "source-crash-after", "source-crash-verify", "photo-organization", "photo-organization-layout", "photo-organization-storage", "organization-upgrade-seed", "organization-upgrade-verify", "organization-crash-during", "organization-crash-after", "organization-crash-verify", "edit-versions", "edit-versions-layout", "edit-versions-storage", "versions-upgrade-seed", "versions-upgrade-verify", "versions-create-during", "versions-create-after", "versions-delete-during", "versions-delete-after", "versions-crash-verify", "versions-latency") }
         migrationOnly = audit == "library-migration"
         migrationCrashMode = audit?.takeIf { it in setOf("migration-crash-during", "migration-crash-after") }
         migrationCrashVerify = audit == "migration-crash-verify"
@@ -156,6 +157,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         wheelsPerformanceOnly = audit == "wheels-perf"
         fullSizeWheelsCacheOnly = audit == "wheels-raw"
         fullSizePresetCacheOnly = audit == "presets-raw"
+        fullSizeVersionsCacheOnly = audit == "versions-raw"
         fullSizeMigrationCacheOnly = audit == "migration-raw"
         mixerOnly = audit == "mixer"
         mixerLayoutOnly = audit == "mixer-layout"
@@ -214,6 +216,17 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
         savedPhotosAudit?.let { mode ->
             when (mode) {
+                "versions-latency" -> case("library.virtual_save_latency") { SavedStoreLatencyAudit.run(this, output, true) }
+                "versions-upgrade-seed" -> case("library.versions_upgrade_seed") { EditVersionsUpgradeAudit(this, output).seed() }
+                "versions-upgrade-verify" -> case("library.versions_upgrade") { EditVersionsUpgradeAudit(this, output).verify() }
+                "versions-create-during", "versions-create-after", "versions-delete-during", "versions-delete-after" -> EditVersionsProcessAudit(File(output, "versions-process")).terminate(mode.removePrefix("versions-"))
+                "versions-crash-verify" -> case("library.versions_process") { EditVersionsProcessAudit(File(output, "versions-process")).verify() }
+                "edit-versions-storage" -> case("library.edit_versions_storage") { EditVersionStorageAudit.run(targetContext, output) }
+                "edit-versions-layout" -> case("library.edit_versions_ui") { EditVersionsUiAudit(this, output).run(true) }
+                "edit-versions" -> {
+                    case("library.edit_versions_storage") { EditVersionStorageAudit.run(targetContext, output) }
+                    case("library.edit_versions_ui") { EditVersionsUiAudit(this, output).run() }
+                }
                 "organization-upgrade-seed" -> case("library.organization_upgrade_seed") { PhotoOrganizationUpgradeAudit(this, output).seed() }
                 "organization-upgrade-verify" -> case("library.organization_upgrade") { PhotoOrganizationUpgradeAudit(this, output).verify() }
                 "organization-crash-during", "organization-crash-after" -> PhotoOrganizationProcessAudit(File(output, "organization-process/${if (mode == "organization-crash-after") "after" else "during"}")).terminate(mode == "organization-crash-after")
@@ -410,8 +423,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         if (renderSchedulingOnly || exportCacheOnly || fullSizeCacheOnly) {
             if (renderSchedulingOnly) case("render.priority_state_and_admission") { RenderSchedulingAudit.run() }
             if (exportCacheOnly) case("export.production_cache") { ExportCacheAudit(this).run() }
-            if (fullSizeCacheOnly) case(if (fullSizeMigrationCacheOnly) "export.full_size_raw_migration" else if (fullSizePresetCacheOnly) "export.full_size_raw_preset" else if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
-                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly, fullSizePresetCacheOnly, fullSizeMigrationCacheOnly).run()
+            if (fullSizeCacheOnly) case(if (fullSizeVersionsCacheOnly) "export.full_size_raw_versions" else if (fullSizeMigrationCacheOnly) "export.full_size_raw_migration" else if (fullSizePresetCacheOnly) "export.full_size_raw_preset" else if (fullSizeWheelsCacheOnly) "export.full_size_raw_wheels" else if (fullSizeMixerCacheOnly) "export.full_size_raw_mixer" else if (fullSizeColorCacheOnly) "export.full_size_raw_color" else if (fullSizeCurveCacheOnly) "export.full_size_raw_curves" else "export.full_size_raw_cache") {
+                FullSizeCacheAudit(this, output, fullSizeCurveCacheOnly, fullSizeColorCacheOnly, fullSizeMixerCacheOnly, fullSizeWheelsCacheOnly, fullSizePresetCacheOnly, fullSizeMigrationCacheOnly, fullSizeVersionsCacheOnly).run()
             }
             val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
             finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,

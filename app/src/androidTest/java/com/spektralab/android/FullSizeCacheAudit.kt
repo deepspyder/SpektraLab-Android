@@ -15,7 +15,8 @@ import java.security.MessageDigest
 /** Stream checksums rather than bringing a 147 MB TIFF into the small ART heap. */
 internal class FullSizeCacheAudit(private val test: Instrumentation, private val output: File, private val withCurves: Boolean = false,
                                  private val withColor: Boolean = false, private val withMixer: Boolean = false, private val withWheels: Boolean = false,
-                                 private val withPreset: Boolean = false, private val withMigration: Boolean = false) {
+                                 private val withPreset: Boolean = false, private val withMigration: Boolean = false,
+                                 private val withVersions: Boolean = false) {
     fun run(): String {
         val source = File(output, "perf-z6ii.NEF")
         check(source.isFile) { "Push perf-z6ii.NEF before running this explicit camera-file audit" }
@@ -37,6 +38,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
         val uri = Uri.fromFile(source)
         val previous = EditStore.load(context, uri)
         var presetId: String? = null
+        var version: com.spektralab.android.core.model.EditVersion? = null
         try {
             await { vm.engine != null && !vm.busy }
             EditStore.save(
@@ -45,7 +47,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                 EditorParams().apply {
                     grainActive = false
                     glareActive = false
-                    if (withWheels || withMigration) colorWheels = com.spektralab.android.core.color.ColorWheels(
+                    if (withWheels || withMigration || withVersions) colorWheels = com.spektralab.android.core.color.ColorWheels(
                         master = com.spektralab.android.core.color.WheelAdjustment(35f, 12f, 6f),
                         shadows = com.spektralab.android.core.color.WheelAdjustment(220f, 24f, -8f),
                         midtones = com.spektralab.android.core.color.WheelAdjustment(320f, 8f, 3f),
@@ -87,7 +89,12 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                     EditStore.save(context, uri, restored)
                 }
             }
-            test.runOnMainSync { vm.openPhotos(listOf(uri)) }
+            val editUri = if (withVersions) {
+                val row = EditStore.savedPhotos(context).first { it.uri == uri.toString() }
+                EditStore.createEditVersion(context, EditStore.editVersions(context, row.assetId).first(), "RAW ${System.nanoTime()}")
+                    .also { version = it }.editUri
+            } else uri
+            test.runOnMainSync { vm.openPhotos(listOf(editUri)) }
             await { vm.errorMessage != null || vm.hasPhoto && !vm.busy }
             check(vm.errorMessage == null) { vm.errorMessage.orEmpty() }
             if (withPreset) {
@@ -162,7 +169,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
             val second = export()
             check(first.hash == second.hash && first.bytes == second.bytes)
             if (withCurves || withColor || withMixer || withWheels || withPreset) check(first.hash != "3c7e8eee7848fa80cafd64faad1b3c2dd6d90b9de6ecee316d079f0da85fc8d3") { "Active post edit did not affect full-size RAW export" }
-            if (withPreset || withMigration) check(first.hash == "62f1d58c709a4bc694ca93f8d552954320f921260fc64dd4c013bf4461926f3f") { "Preset/migration changed the existing wheel TIFF output" }
+            if (withPreset || withMigration || withVersions) check(first.hash == "62f1d58c709a4bc694ca93f8d552954320f921260fc64dd4c013bf4461926f3f") { "Preset/migration/version changed the existing wheel TIFF output" }
             check(vm.exportCacheStats.hits == afterFirst.hits + 1)
             check(vm.exportCacheStats.writes == afterFirst.writes)
             return "6064x4040 RAW TIFF byte-exact; bytes=${first.bytes}; sha256=${first.hash}; first_ms=${first.ms}; second_ms=${second.ms}; initial=$stats first=$afterFirst final=${vm.exportCacheStats}"
@@ -177,6 +184,7 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                 )
             }
             test.runOnMainSync { activity.finish() }
+            version?.let { EditStore.deleteEditVersion(context, EditStore.editVersion(context, it.id)) }
         }
     }
 

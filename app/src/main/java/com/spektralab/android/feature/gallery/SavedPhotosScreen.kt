@@ -41,7 +41,9 @@ import com.spektralab.android.ui.theme.TheiaShapes
 @Composable
 internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boolean,
                               onBack: () -> Unit, onImport: () -> Unit, onOpen: (Uri) -> Unit,
-                              onRestore: (SavedEditSession) -> Unit = {}, onRelink: (Uri, Uri) -> Unit = { _, _ -> }) {
+                              onRestore: (SavedEditSession) -> Unit = {}, onRelink: (Uri, Uri) -> Unit = { _, _ -> },
+                              onVersionOpen: (Uri) -> Unit = onOpen, versionInUse: (Uri) -> Boolean = { true },
+                              prepareVersions: () -> Unit = {}) {
     val context = LocalContext.current
     var checkTarget by remember { mutableStateOf<SavedPhoto?>(null) }
     val sourcePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -162,6 +164,9 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
                             Icon(Icons.Rounded.MoreVert, stringResource(R.string.photos_source_actions, photo.name))
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.versions_title)) }, onClick = {
+                                menu = false; prepareVersions(); controller.versions.open(photo)
+                            })
                             DropdownMenuItem(text = { Text(stringResource(R.string.library_organize)) }, onClick = {
                                 menu = false; controller.organization.open(photo)
                             })
@@ -192,6 +197,9 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
         }
     }
     PhotoOrganizationSheets(controller.organization)
+    EditVersionsSheet(controller.versions, enabled && !controller.loading, onOpen = { photo, version ->
+        controller.open(photo) { _ -> controller.versions.close(); onVersionOpen(version.editUri) }
+    }, inUse = versionInUse)
     checkTarget?.let { photo ->
         AlertDialog(onDismissRequest = { checkTarget = null },
             title = { Text(stringResource(R.string.photos_check_title)) },
