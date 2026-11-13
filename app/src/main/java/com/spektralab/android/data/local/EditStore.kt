@@ -129,6 +129,30 @@ object EditStore {
     internal fun editSourceUri(context: Context, uri: Uri): Uri =
         if (com.spektralab.android.core.model.EditVersionUri.owns(uri))
             Uri.parse(editVersion(context, com.spektralab.android.core.model.EditVersionUri.id(uri)).sourceUri) else uri
+    /** Refer to existing edits; an unedited original does not acquire a synthetic default edit. */
+    @Synchronized
+    internal fun tableSource(context: Context, source: com.spektralab.android.core.model.TableSource): com.spektralab.android.core.model.TableSource = checked {
+        val uri = Uri.parse(source.uri)
+        read(context, uri)
+        if (com.spektralab.android.core.model.EditVersionUri.owns(uri)) {
+            val version = repository(context).versions.find(com.spektralab.android.core.model.EditVersionUri.id(uri))
+            source.copy(assetId = version.assetId, variantId = version.id, editRevision = version.revision)
+        } else {
+            val photo = repository(context).findByUri(uri)
+            if (photo == null) source else source.copy(assetId = photo.assetId, variantId = photo.variantId, editRevision = photo.revision)
+        }
+    }
+    @Synchronized
+    internal fun resolveTableSource(context: Context, source: com.spektralab.android.core.model.TableSource): com.spektralab.android.core.model.TableSource = checked {
+        val asset = source.assetId ?: return@checked source
+        val photo = repository(context).find(asset) ?: error("EDIT_MISSING")
+        if (photo.variantId == source.variantId) source.copy(uri = photo.uri, editRevision = photo.revision)
+        else {
+            val version = repository(context).versions.find(requireNotNull(source.variantId))
+            check(version.assetId == asset) { "EDIT_VERSION_CHANGED" }
+            source.copy(uri = version.editUri.toString(), editRevision = version.revision)
+        }
+    }
     @Synchronized
     internal fun createEditVersion(context: Context, expected: com.spektralab.android.core.model.EditVersion, name: String) =
         checked { repository(context).versions.create(expected, name) }

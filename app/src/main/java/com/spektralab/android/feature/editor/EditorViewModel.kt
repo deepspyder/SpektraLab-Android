@@ -99,6 +99,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val app get() = getApplication<Application>()
 
     internal val savedPhotos by lazy { com.spektralab.android.feature.gallery.SavedPhotosController(app, viewModelScope) }
+    internal val lightTableProjects by lazy { com.spektralab.android.feature.lighttable.LightTableProjectsController(app, viewModelScope) }
     internal fun prepareVersionBoundary() {
         if (!busy && !isExporting && !isBatchExporting && !isApplyingEdits) saveCurrentSidecar()
     }

@@ -229,6 +229,7 @@ internal class EditToolsAudit(private val test: Instrumentation, private val out
             for (index in 0 until node.childCount) editable(node.getChild(index))?.let { return it }
             return null
         }
+        await { editable(root()) != null }
         val node = editable(root()) ?: error("No preset name editor")
         check(node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)

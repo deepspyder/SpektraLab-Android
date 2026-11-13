@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
@@ -77,7 +78,7 @@ internal object StandColors {
     val soft = Color(0xFFB8B2A8)
 }
 
-internal data class LensTarget(val bitmap: Bitmap, val imageBounds: Rect, val clipBounds: Rect)
+internal data class LensTarget(val bitmap: Bitmap, val imageBounds: Rect, val clipBounds: Rect, val rotation: Float = 0f)
 
 @Composable
 internal fun ViewingStand(
@@ -87,19 +88,22 @@ internal fun ViewingStand(
     onImport: () -> Unit, onRemove: (String) -> Unit, onEdit: (String) -> Unit,
     onBack: () -> Unit, modifier: Modifier = Modifier,
     sharedCanvasState: FilmCanvasState? = null, backDescription: String = "返回暗房",
+    projectControls: @Composable (Boolean) -> Unit = {}, onPhotoActions: ((String) -> Unit)? = null,
+    onVisibleItems: (List<String>) -> Unit = {},
 ) {
-    var lightOn by rememberSaveable { mutableStateOf(true) }
     var magnifierOn by rememberSaveable { mutableStateOf(false) }
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val canvasState = sharedCanvasState ?: rememberFilmCanvasState()
+    val lightOn = canvasState.lightOn
     val wallBackground by animateColorAsState(if (lightOn) StandColors.paper else StandColors.night,
         tween(360, easing = FastOutSlowInEasing), label = "light-table")
     val lamp by androidx.compose.animation.core.animateFloatAsState(if (lightOn) 1f else 0f, tween(360), label = "light-output")
     val brightness = .075f + .925f * lamp
     val view = LocalView.current
     DisposableEffect(lightOn, viewerKey != null) {
-        val window = (view.context as? Activity)?.window
+        val window = generateSequence(view.context) { (it as? android.content.ContextWrapper)?.baseContext }
+            .filterIsInstance<Activity>().firstOrNull()?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
         val oldBrightness = window?.attributes?.screenBrightness
         window?.attributes = window?.attributes?.apply { screenBrightness = if (lightOn) .9f else .2f }
@@ -137,14 +141,14 @@ internal fun ViewingStand(
             }, label = "contact-sheet-viewer") { viewing ->
             if (viewing) {
                 StandViewer(photos, viewerKey, brightness, lightOn, magnifierOn, actionsEnabled && !importing,
-                    { lightOn = !lightOn }, { magnifierOn = !magnifierOn }, onLoadDetail,
+                    canvasState::toggleLight, { magnifierOn = !magnifierOn }, onLoadDetail,
                     { selectedKey = it; if (viewerKey != null) viewerKey = it },
                     { viewerKey = null }, ::removePhoto, onEdit)
             } else {
                 ContactSheet(photos, selectedKey, canvasState, importing, importCompleted, importTotal,
                     actionsEnabled, lightOn, wallBackground, lamp, magnifierOn,
-                    { lightOn = !lightOn }, { magnifierOn = !magnifierOn }, onLoadThumbnail,
-                    { selectedKey = it; viewerKey = it }, onImport, onBack, onLoadWallDetails, backDescription)
+                    canvasState::toggleLight, { magnifierOn = !magnifierOn }, onLoadThumbnail,
+                    { selectedKey = it; viewerKey = it }, onImport, onBack, onLoadWallDetails, backDescription, projectControls, onPhotoActions, onVisibleItems)
             }
         }
     }
@@ -159,6 +163,7 @@ private fun ContactSheet(
     onOpen: (String) -> Unit, onImport: () -> Unit, onBack: () -> Unit,
     onLoadWallDetails: suspend (List<String>) -> Unit,
     backDescription: String,
+    projectControls: @Composable (Boolean) -> Unit, onPhotoActions: ((String) -> Unit)?, onVisibleItems: (List<String>) -> Unit,
 ) {
     val ink = if (lightOn) StandColors.ink else StandColors.white
     val muted = if (lightOn) StandColors.muted else StandColors.soft
@@ -175,6 +180,7 @@ private fun ContactSheet(
                     if (lightOn) "关闭灯光" else "打开灯光", tint = if (lightOn) StandColors.brown else StandColors.amber)
             }
         }
+        projectControls(lightOn)
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("${photos.size} 张照片", Modifier.weight(1f), color = muted, style = MaterialTheme.typography.labelMedium)
             TextButton(onClick = onImport, enabled = actionsEnabled && !importing,
@@ -194,7 +200,7 @@ private fun ContactSheet(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (photos.isEmpty()) EmptyContactSheet(importing, ink, muted, actionsEnabled, onImport, Modifier.align(Alignment.Center))
             else PhotoWallCanvas(photos, selectedKey, canvasState, lamp, magnifierOn, onLoadThumbnail, onOpen,
-                onLoadWallDetails, Modifier.fillMaxSize())
+                onLoadWallDetails, Modifier.fillMaxSize(), onActions = onPhotoActions, onVisible = onVisibleItems, enabled = actionsEnabled)
         }
         if (photos.isNotEmpty()) FilmCanvasToolbar(canvasState, lightOn)
     }
@@ -428,7 +434,10 @@ internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: F
     val initial = targets.firstOrNull()?.clipBounds?.center?.minus(viewport.topLeft) ?: Offset(viewport.width / 2, viewport.height / 2)
     val point = clamp(centre ?: initial)
     val rootPoint = point + viewport.topLeft
-    val target = targets.lastOrNull { it.clipBounds.contains(rootPoint) && it.imageBounds.contains(rootPoint) }
+    val target = targets.lastOrNull { candidate ->
+        val bounds = candidate.imageBounds
+        candidate.clipBounds.contains(rootPoint) && WallFrame("", bounds, candidate.rotation).contains(rootPoint)
+    }
     Box(Modifier.offset { IntOffset((point.x - radius).roundToInt(), (point.y - radius).roundToInt()) }
         .onGloballyPositioned { latestBoundsChange(it.boundsInRoot()) }
         .size(128.dp).shadow(12.dp, CircleShape).clip(CircleShape).background(background).border(3.dp, StandColors.amber, CircleShape)
@@ -441,11 +450,15 @@ internal fun PhotoLoupe(viewport: Rect, targets: List<LensTarget>, brightness: F
         Canvas(Modifier.fillMaxSize()) {
             if (target != null && !target.bitmap.isRecycled) {
                 val rect = target.imageBounds
-                val width = rect.width * 2.5f; val height = rect.height * 2.5f
-                val x = (rootPoint.x - rect.left) / rect.width; val y = (rootPoint.y - rect.top) / rect.height
-                drawImage(target.bitmap.asImageBitmap(),
-                    dstOffset = IntOffset((size.width / 2 - x * width).roundToInt(), (size.height / 2 - y * height).roundToInt()),
-                    dstSize = IntSize(width.roundToInt().coerceAtLeast(1), height.roundToInt().coerceAtLeast(1)))
+                val canvas = drawContext.canvas.nativeCanvas
+                val saved = canvas.save()
+                canvas.translate(size.width / 2, size.height / 2)
+                canvas.scale(2.5f, 2.5f)
+                canvas.translate(-rootPoint.x, -rootPoint.y)
+                canvas.rotate(target.rotation, rect.center.x, rect.center.y)
+                canvas.drawBitmap(target.bitmap, null, android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom),
+                    android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG))
+                canvas.restoreToCount(saved)
                 drawRect(Color.Black.copy(alpha = 1 - brightness))
             }
         }

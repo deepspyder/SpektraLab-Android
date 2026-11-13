@@ -65,6 +65,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var stockLibraryOnly = false
     private var editingFeedbackOnly = false
     private var smartDevelopOnly = false
+    private var tableAudit: String? = null
     private var canvasJoiningOnly = false
     private var homeViewingStandOnly = false
     private var exportLayoutOnly = false
@@ -124,6 +125,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
         smartDevelopOnly = audit == "smart-develop"
+        tableAudit = audit?.takeIf { it in setOf("table-projects", "table-layout", "table-storage", "table-save-during", "table-save-after", "table-delete-during", "table-delete-after", "table-crash-verify") }
         canvasJoiningOnly = audit == "canvas-joining"
         homeViewingStandOnly = audit == "home-viewing-stand"
         exportLayoutOnly = audit == "export-layout"
@@ -499,6 +501,26 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
             finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
                 Bundle().apply{putString("stream",rows.toString(2))})
+            return
+        }
+        if(tableAudit in setOf("table-save-during", "table-save-after", "table-delete-during", "table-delete-after")) {
+            LightTableProcessAudit.terminate(targetContext, output, requireNotNull(tableAudit).removePrefix("table-")); return
+        }
+        if(tableAudit == "table-crash-verify") {
+            case("lighttable.process_recovery") { LightTableProcessAudit.verify(targetContext, output) }
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED, Bundle().apply{putString("stream",rows.toString(2))}); return
+        }
+        if(tableAudit != null){
+            if (tableAudit != "table-layout") {
+                case("lighttable.geometry_history") { LightTableStorageAudit.geometry() }
+                case("lighttable.storage") { LightTableStorageAudit.run(targetContext, output) }
+                case("lighttable.source_references") { LightTableStorageAudit.sourceReferences(targetContext, output) }
+                case("lighttable.metadata_latency") { LightTableStorageAudit.performance(output) }
+            }
+            if (tableAudit != "table-storage") case("lighttable.projects_ui") { LightTableProjectsUiAudit(this, output).run(tableAudit == "table-layout") }
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED, Bundle().apply{putString("stream",rows.toString(2))})
             return
         }
         if(canvasJoiningOnly){

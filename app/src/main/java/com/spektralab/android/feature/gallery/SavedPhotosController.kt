@@ -73,7 +73,8 @@ internal class SavedPhotosController(private val context: Context, private val s
         loading = true; error = null
         val offset = if (append) photos.size else 0
         val requestedFilter = filter
-        load = scope.launch {
+        // Register ownership before a cache-fast request can finish inline.
+        val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val (page, session) = withContext(Dispatchers.IO) {
                     EditStore.photoLibraryPage(context, requestedFilter, offset) to runCatching { EditStore.savedSession(context) }
@@ -97,6 +98,8 @@ internal class SavedPhotosController(private val context: Context, private val s
             catch (_: Exception) { error = context.getString(R.string.photos_load_error) }
             finally { if (load === currentCoroutineContext()[Job]) loading = false }
         }
+        load = request
+        request.start()
     }
 
     fun thumbnail(photo: SavedPhoto) {
@@ -137,7 +140,7 @@ internal class SavedPhotosController(private val context: Context, private val s
         load?.cancel()
         loading = true
         opening = true
-        load = scope.launch {
+        val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val uri = Uri.parse(photo.uri)
                 withContext(Dispatchers.IO) {
@@ -163,6 +166,8 @@ internal class SavedPhotosController(private val context: Context, private val s
                 }
             }
         }
+        load = request
+        request.start()
     }
 
     fun prepareRelink(photo: SavedPhoto) {
@@ -233,7 +238,7 @@ internal class SavedPhotosController(private val context: Context, private val s
         if (loading) return
         load?.cancel()
         loading = true
-        load = scope.launch {
+        val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val session = withContext(Dispatchers.IO) { EditStore.savedSession(context) }
                 savedSession = session
@@ -242,6 +247,8 @@ internal class SavedPhotosController(private val context: Context, private val s
             catch (_: Exception) { error = context.getString(R.string.photos_session_load_error) }
             finally { if (load === currentCoroutineContext()[Job]) loading = false }
         }
+        load = request
+        request.start()
     }
 
     private fun sourceOperation(photo: SavedPhoto, action: suspend () -> Unit) {
@@ -250,7 +257,7 @@ internal class SavedPhotosController(private val context: Context, private val s
         loading = true
         checkingAsset = photo.assetId
         sourceMessage = null
-        sourceJob = scope.launch {
+        val request = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 action()
                 sourceErrors = sourceErrors - photo.assetId
@@ -264,6 +271,8 @@ internal class SavedPhotosController(private val context: Context, private val s
                 }
             }
         }
+        sourceJob = request
+        request.start()
     }
 
     private suspend fun inspect(uri: Uri): SourceEvidence = withContext(Dispatchers.IO) {

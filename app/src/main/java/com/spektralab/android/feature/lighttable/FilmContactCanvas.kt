@@ -48,83 +48,25 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import org.json.JSONObject
-
-/** Translation has no content bounds: the light table is a genuinely pannable plane. */
-@Stable
-internal class FilmCanvasState(zoom: Float = 1f, x: Float = 0f, y: Float = 0f) {
-    var zoom by mutableFloatStateOf(zoom); private set
-    var pan by mutableStateOf(Offset(x, y)); private set
-    internal var focus = Offset.Zero
-    internal var origin = Offset.Zero
-    val photoPositions = mutableStateMapOf<String, Offset>()
-    val photoOrder = mutableStateListOf<String>()
-    var draggingKey by mutableStateOf<String?>(null); private set
-    var joinPreview by mutableStateOf<WallJoin?>(null); private set
-    var joinMotion by mutableStateOf<WallJoinMotion?>(null); private set
-    var joinFraction by mutableFloatStateOf(1f)
-    fun move(delta: Offset) { pan += delta }
-    fun reset() { zoom = 1f; pan = Offset.Zero }
-    fun zoomBy(factor: Float) { transform(focus, Offset.Zero, factor, origin) }
-    fun movePhoto(key: String, initial: Offset, delta: Offset) {
-        if(joinMotion!=null)interruptJoin()
-        photoPositions[key] = (photoPositions[key] ?: initial) + delta
-        if(photoOrder.lastOrNull()!=key){photoOrder.remove(key);photoOrder.add(key)}
-    }
-    fun position(key: String, initial: Offset): Offset {
-        val motion=joinMotion?.takeIf { it.join.key==key }
-        return if(motion!=null) motion.from+(motion.join.position-motion.from)*joinFraction
-            else photoPositions[key] ?: initial
-    }
-    fun interruptJoin() {
-        joinMotion?.let { photoPositions[it.join.key]=position(it.join.key,it.from) }
-        joinMotion=null;joinFraction=1f
-    }
-    fun beginDrag(key: String) {
-        interruptJoin();draggingKey=key;joinPreview=null
-    }
-    fun previewJoin(join: WallJoin?) { joinPreview=join }
-    fun endDrag(snap: Boolean) {
-        val join=joinPreview
-        draggingKey=null;joinPreview=null
-        if(snap && join!=null){
-            val from=photoPositions[join.key] ?: join.position
-            photoPositions[join.key]=join.position
-            joinFraction=0f;joinMotion=WallJoinMotion(join,from)
-        }
-    }
-    fun finishJoin() { joinFraction=1f;joinMotion=null }
-    fun transform(centroid: Offset, delta: Offset, factor: Float, origin: Offset) {
-        val next = (zoom * factor).coerceIn(.35f, 6f)
-        pan = centroid - origin - (centroid - origin - pan) * (next / zoom) + delta
-        zoom = next
-    }
-    companion object {
-        val Saver = listSaver<FilmCanvasState, String>(
-            save = { state -> listOf(state.zoom.toString(), state.pan.x.toString(), state.pan.y.toString(),
-                JSONObject().apply { state.photoPositions.forEach { (key, point) ->
-                    put(key, org.json.JSONArray(listOf(point.x, point.y)))
-                } }.toString(), org.json.JSONArray(state.photoOrder.toList()).toString()) },
-            restore = { values -> FilmCanvasState(values[0].toFloat(), values[1].toFloat(), values[2].toFloat()).apply {
-                val positions = JSONObject(values[3])
-                positions.keys().forEach { key -> positions.getJSONArray(key).let {
-                    photoPositions[key] = Offset(it.getDouble(0).toFloat(), it.getDouble(1).toFloat())
-                } }
-                val order = org.json.JSONArray(values[4])
-                for (i in 0 until order.length()) photoOrder.add(order.getString(i))
-            } })
-    }
-}
-
-@Composable
-internal fun rememberFilmCanvasState() = rememberSaveable(saver = FilmCanvasState.Saver) { FilmCanvasState() }
+import com.spektralab.android.core.model.TableGeometry
+import com.spektralab.android.core.model.TablePoint
 
 private const val WALL_WIDTH = 600f
 private const val PHOTO_GAP = 14f
 
-private data class WallPhoto(val index: Int, val bounds: Rect)
+internal data class WallPhoto(val index: Int, val bounds: Rect, val rotation: Float = 0f) {
+    val polygon = TableGeometry.corners(bounds.left, bounds.top, bounds.width, bounds.height, rotation)
+    private val outerBounds = polygonBounds(polygon)
+    fun frame(key: String) = WallFrame(key, bounds, rotation)
+    fun contains(point: Offset) = if (rotation == 0f) bounds.contains(point) else TableGeometry.contains(polygon, TablePoint(point.x, point.y))
+    fun outer(): Rect = outerBounds
+}
+
+private fun polygonBounds(points: List<TablePoint>): Rect = if (points.isEmpty()) Rect.Zero else
+    Rect(points.minOf { it.x }, points.minOf { it.y }, points.maxOf { it.x }, points.maxOf { it.y })
 
 /** A quiet photo wall: original order, natural ratios, no synthetic film gates. */
-private fun photoWallLayout(photos: List<ViewingPhoto>, state: FilmCanvasState): List<WallPhoto> {
+internal fun photoWallLayout(photos: List<ViewingPhoto>, state: FilmCanvasState): List<WallPhoto> {
     val columnBottoms = floatArrayOf(12f, 48f, 26f)
     return photos.mapIndexed { index, photo ->
         val column = index % 3
@@ -134,13 +76,15 @@ private fun photoWallLayout(photos: List<ViewingPhoto>, state: FilmCanvasState):
         val aspect = if (sourceW > 0 && sourceH > 0) sourceW.toFloat() / sourceH else 1f
         // Natural rectangles on an initially loose table, not a locked grid.
         val width = if (aspect > 2.5f) 205f else if (aspect < .8f) 150f else 170f
-        val height = width / aspect
+        val naturalHeight = width / aspect
+        val size = state.photoSizes[photo.key] ?: androidx.compose.ui.geometry.Size(width, naturalHeight)
+        val height = size.height
         val left = column * 203f + floatArrayOf(4f, -7f, 3f, 11f)[index % 4]
         val top = columnBottoms[column]
         columnBottoms[column] = top + height + PHOTO_GAP
         val position = state.position(photo.key, Offset(left, top))
-        WallPhoto(index, Rect(position, androidx.compose.ui.geometry.Size(width, height)))
-    }.sortedBy { state.photoOrder.indexOf(photos[it.index].key) }
+        WallPhoto(index, Rect(position, size), state.rotations[photo.key] ?: 0f)
+    }.sortedBy { state.photoOrder.indexOf(photos[it.index].key).takeIf { i -> i >= 0 } ?: (state.photoOrder.size + it.index) }
 }
 
 private fun Rect.screen(origin: Offset, scale: Float) = Rect(origin + topLeft * scale, size * scale)
@@ -162,6 +106,8 @@ internal fun PhotoWallCanvas(
     lamp: Float, magnifierOn: Boolean, onLoad: (String) -> Unit, onOpen: (String) -> Unit,
     onLoadDetails: suspend (List<String>) -> Unit,
     modifier: Modifier = Modifier,
+    onActions: ((String) -> Unit)? = null,
+    onVisible: (List<String>) -> Unit = {}, enabled: Boolean = true,
 ) {
     val density = LocalDensity.current
     var viewport by remember { mutableStateOf(IntSize.Zero) }
@@ -185,14 +131,22 @@ internal fun PhotoWallCanvas(
     val origin = anchor + state.pan
     val scale = fit * state.zoom
     val viewportRect = Rect(Offset.Zero, androidx.compose.ui.geometry.Size(viewport.width.toFloat(), viewport.height.toFloat()))
-    SideEffect { state.focus = viewportRect.center; state.origin = anchor }
-    val frames = layout.filter { it.bounds.screen(origin, scale).overlaps(viewportRect) }
+    SideEffect {
+        state.focus = viewportRect.center; state.origin = anchor; state.viewportFit = fit
+        photos.map { it.key }.filterNot(state.photoOrder::contains).forEach(state.photoOrder::add)
+    }
+    val frames = layout.filter { it.outer().screen(origin, scale).overlaps(viewportRect) }
     val overlaps=frames.mapIndexed { index, frame ->
-        wallOverlaps(frame.bounds, frames.take(index).map { it.bounds })
+        frames.take(index).mapNotNull { lower ->
+            if (!frame.outer().overlaps(lower.outer())) null
+            else if (frame.rotation == 0f && lower.rotation == 0f) frame.bounds.intersect(lower.bounds).let {
+                TableGeometry.corners(it.left, it.top, it.width, it.height, 0f)
+            } else TableGeometry.intersect(frame.polygon, lower.polygon).takeIf { TableGeometry.area(it) > .001f }
+        }
     }
     val overlapOpacity=frames.mapIndexed { index, frame ->
         key(photos[frame.index].key){
-            val depth=overlaps[index].maxOfOrNull { min(it.width,it.height)*scale } ?: 0f
+            val depth=overlaps[index].maxOfOrNull { polygonBounds(it).let { bounds -> min(bounds.width, bounds.height) * scale } } ?: 0f
             animateFloatAsState(1f-.42f*(depth/with(density){12.dp.toPx()}).coerceIn(0f,1f),
                 tween(120),label="overlap-transmission").value
         }
@@ -231,13 +185,14 @@ internal fun PhotoWallCanvas(
     val overlapPath = remember { Path() }
     val seamPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap=Paint.Cap.ROUND } }
     LaunchedEffect(frames.map { latestPhotos[it.index].key }) {
+        onVisible(frames.map { latestPhotos[it.index].key })
         frames.forEach { onLoad(latestPhotos[it.index].key) }
     }
     val targets = frames.mapNotNull { frame ->
         val bitmap = wallBitmap(photos[frame.index]) ?: return@mapNotNull null
         val image = fitContactPhoto(bitmap.width, bitmap.height, frame.bounds)
             .screen(origin, scale).translate(rootBounds.topLeft)
-        LensTarget(bitmap, image, image.intersect(rootBounds))
+        LensTarget(bitmap, image, frame.outer().screen(origin, scale).translate(rootBounds.topLeft).intersect(rootBounds), frame.rotation)
     }
     Box(modifier.clipToBounds().onSizeChanged { viewport = it }
         .onGloballyPositioned { rootBounds = it.boundsInRoot() }
@@ -246,22 +201,25 @@ internal fun PhotoWallCanvas(
             stateDescription = "自由摆放照片，画布缩放 ${(state.zoom * 100).roundToInt()}%，靠边吸附，重叠透光"
             progressBarRangeInfo = ProgressBarRangeInfo(state.zoom, .35f..6f)
             setProgress { value ->
-                state.transform(viewportRect.center, Offset.Zero, value.coerceIn(.35f, 6f) / state.zoom, anchor); true
+                state.edit { state.transform(viewportRect.center, Offset.Zero, value.coerceIn(.35f, 6f) / state.zoom, anchor) }; true
             }
-            scrollBy { x, y -> state.move(Offset(-x, -y)); true }
+            scrollBy { x, y -> state.edit { state.move(Offset(-x, -y)) }; true }
         }
-        .pointerInput(state, viewport) {
+        .pointerInput(state, viewport, enabled) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                if (!enabled) return@awaitEachGesture
                 // The floating loupe owns the whole gesture, including after it leaves this photo.
                 if(loupeBounds.contains(down.position+rootBounds.topLeft))return@awaitEachGesture
                 val point = (down.position - anchor - state.pan) / (fit * state.zoom)
-                val photo = latestLayout.lastOrNull { it.bounds.contains(point) }
+                val photo = latestLayout.lastOrNull { it.contains(point) }
                 val photoKey = photo?.let { latestPhotos[it.index].key }
                 var moving = false
                 var canvasGesture = false
                 var totalPan = Offset.Zero
                 var photoDragStarted=false
+                state.beginGesture()
+                var completed = false
                 try { do {
                     val event = awaitPointerEvent()
                     if(event.changes.any { it.isConsumed }){
@@ -282,26 +240,35 @@ internal fun PhotoWallCanvas(
                             if(!photoDragStarted){state.beginDrag(photoKey);photoDragStarted=true}
                             state.movePhoto(photoKey, photo.bounds.topLeft, (if(wasMoving)pan else totalPan) / (fit * state.zoom))
                             val bounds=Rect(state.position(photoKey,photo.bounds.topLeft),photo.bounds.size)
-                            state.previewJoin(findWallJoin(WallFrame(photoKey,bounds),latestLayout.map {
-                                WallFrame(latestPhotos[it.index].key,it.bounds)
+                            state.previewJoin(findWallJoin(WallFrame(photoKey,bounds,photo.rotation),latestLayout.map {
+                                WallFrame(latestPhotos[it.index].key,it.bounds,it.rotation)
                             },with(density){18.dp.toPx()}/(fit*state.zoom)))
                         }
                         event.changes.forEach { it.consume() }
                     }
                 } while (event.changes.any { it.pressed })
                     if(photoDragStarted)state.endDrag(true)
-                } finally { if(state.draggingKey==photoKey)state.endDrag(false) }
+                    completed = true
+                } finally {
+                    if(state.draggingKey==photoKey)state.endDrag(false)
+                    state.finishGesture(cancelled = !completed)
+                }
             }
         }
-        .pointerInput(state, viewport) {
+        .pointerInput(state, viewport, enabled) {
             detectTapGestures(onTap = { position ->
-                if(loupeBounds.contains(position+rootBounds.topLeft))return@detectTapGestures
+                if(!enabled || loupeBounds.contains(position+rootBounds.topLeft))return@detectTapGestures
                 val point = (position - anchor - state.pan) / (fit * state.zoom)
-                latestLayout.lastOrNull { it.bounds.contains(point) }
+                latestLayout.lastOrNull { it.contains(point) }
                     ?.let { latestOpen(latestPhotos[it.index].key) }
+            }, onLongPress = { position ->
+                if (enabled && !loupeBounds.contains(position + rootBounds.topLeft)) {
+                    val point = (position - anchor - state.pan) / (fit * state.zoom)
+                    latestLayout.lastOrNull { it.contains(point) }?.let { onActions?.invoke(latestPhotos[it.index].key) }
+                }
             }, onDoubleTap = { position ->
-                if(!loupeBounds.contains(position+rootBounds.topLeft))
-                    state.transform(position, Offset.Zero, (if (state.zoom < 1.5f) 2.2f else 1f) / state.zoom, anchor)
+                if(enabled && !loupeBounds.contains(position+rootBounds.topLeft))
+                    state.edit { state.transform(position, Offset.Zero, (if (state.zoom < 1.5f) 2.2f else 1f) / state.zoom, anchor) }
             })
         }) {
         Canvas(Modifier.fillMaxSize()) {
@@ -317,26 +284,38 @@ internal fun PhotoWallCanvas(
                 val photo = photos[frame.index]
                 val bitmap = wallBitmap(photo)
                 overlapPath.reset()
-                overlaps[frameIndex].forEach { overlapPath.addRect(it.android(),Path.Direction.CW) }
+                overlaps[frameIndex].forEach { polygon ->
+                    overlapPath.moveTo(polygon.first().x, polygon.first().y)
+                    polygon.drop(1).forEach { overlapPath.lineTo(it.x, it.y) }; overlapPath.close()
+                }
+                fun drawPhoto(fitted: Rect) {
+                    val transformed = canvas.save()
+                    canvas.rotate(frame.rotation, frame.bounds.center.x, frame.bounds.center.y)
+                    canvas.drawBitmap(requireNotNull(bitmap), null, fitted.android(), bitmapPaint)
+                    canvas.restoreToCount(transformed)
+                }
                 if (bitmap != null) {
                     val fitted = fitContactPhoto(bitmap.width, bitmap.height, frame.bounds)
                     if(overlaps[frameIndex].isEmpty()){
                         bitmapPaint.alpha=255
-                        canvas.drawBitmap(bitmap, null, fitted.android(), bitmapPaint)
+                        drawPhoto(fitted)
                     } else {
                         val outside=canvas.save();canvas.clipOutPath(overlapPath)
                         bitmapPaint.alpha=255
-                        canvas.drawBitmap(bitmap,null,fitted.android(),bitmapPaint)
+                        drawPhoto(fitted)
                         canvas.restoreToCount(outside)
                         val inside=canvas.save();canvas.clipPath(overlapPath)
                         bitmapPaint.alpha=(overlapOpacity[frameIndex]*255).roundToInt()
-                        canvas.drawBitmap(bitmap,null,fitted.android(),bitmapPaint)
+                        drawPhoto(fitted)
                         canvas.restoreToCount(inside)
                     }
                 } else {
                     fill.color = lerp(Color(0xFF242424), Color(0xFFE2DED5), lamp).toArgb()
                     fill.alpha=255
+                    val transformed = canvas.save()
+                    canvas.rotate(frame.rotation, frame.bounds.center.x, frame.bounds.center.y)
                     canvas.drawRect(frame.bounds.android(), fill)
+                    canvas.restoreToCount(transformed)
                 }
             }
             bitmapPaint.alpha=255
@@ -353,7 +332,7 @@ internal fun PhotoWallCanvas(
         // Hit/reading regions track the transformed frames, without composing off-screen images.
         for (frame in frames) {
             val photo = photos[frame.index]
-            val bounds = frame.bounds.screen(origin, scale).intersect(viewportRect)
+            val bounds = frame.outer().screen(origin, scale).intersect(viewportRect)
             if (bounds.width < 1 || bounds.height < 1) continue
             Box(Modifier.offset { IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()) }
                 .size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() })
@@ -365,16 +344,17 @@ internal fun PhotoWallCanvas(
                         if(overlaps[frames.indexOf(frame)].isNotEmpty()) "，叠片透光" else ""
                     onClick("沉浸观看") { onOpen(photo.key); true }
                     customActions = listOf(
-                        CustomAccessibilityAction("向左移动照片") { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(-20f, 0f)); true },
-                        CustomAccessibilityAction("向右移动照片") { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(20f, 0f)); true },
-                        CustomAccessibilityAction("向上移动照片") { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(0f, -20f)); true },
-                        CustomAccessibilityAction("向下移动照片") { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(0f, 20f)); true },
+                        CustomAccessibilityAction("调整摆放") { onActions?.invoke(photo.key); onActions != null },
+                        CustomAccessibilityAction("向左移动照片") { state.edit { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(-20f, 0f)) }; true },
+                        CustomAccessibilityAction("向右移动照片") { state.edit { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(20f, 0f)) }; true },
+                        CustomAccessibilityAction("向上移动照片") { state.edit { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(0f, -20f)) }; true },
+                        CustomAccessibilityAction("向下移动照片") { state.edit { state.movePhoto(photo.key, frame.bounds.topLeft, Offset(0f, 20f)) }; true },
                         CustomAccessibilityAction("吸附到相邻照片") {
-                            val join=findWallJoin(WallFrame(photo.key,frame.bounds),layout.map {
-                                WallFrame(photos[it.index].key,it.bounds)
+                            val join=findWallJoin(WallFrame(photo.key,frame.bounds,frame.rotation),layout.map {
+                                WallFrame(photos[it.index].key,it.bounds,it.rotation)
                             },with(density){32.dp.toPx()}/scale)
-                            if(join!=null){state.movePhoto(photo.key,frame.bounds.topLeft,Offset.Zero)
-                                state.previewJoin(join);state.endDrag(true);true}else false
+                            if(join!=null){state.edit { state.movePhoto(photo.key,frame.bounds.topLeft,Offset.Zero)
+                                state.previewJoin(join);state.endDrag(true) };true}else false
                         })
                 })
         }

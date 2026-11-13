@@ -6,7 +6,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-internal data class WallFrame(val key: String, val bounds: Rect)
+internal data class WallFrame(val key: String, val bounds: Rect, val rotation: Float = 0f)
 internal data class WallJoin(
     val key: String, val neighbor: String, val position: Offset,
     val seamStart: Offset, val seamEnd: Offset,
@@ -16,6 +16,15 @@ internal data class WallJoinMotion(val join: WallJoin, val from: Offset)
 /** Thresholds are supplied in table units after converting a constant screen-distance budget. */
 internal fun findWallJoin(moving: WallFrame, others: List<WallFrame>, threshold: Float): WallJoin? {
     if (threshold <= 0f || moving.bounds.isEmpty) return null
+    if (moving.rotation != 0f || others.any { it.rotation != 0f }) {
+        val a = moving.polygon()
+        return others.filter { it.key != moving.key }.mapNotNull { other ->
+            com.spektralab.android.core.model.TableGeometry.join(a, other.polygon(), threshold)?.let { join ->
+                WallJoin(moving.key, other.key, moving.bounds.topLeft + Offset(join.delta.x, join.delta.y),
+                    Offset(join.start.x, join.start.y), Offset(join.end.x, join.end.y))
+            }
+        }.minByOrNull { (it.position - moving.bounds.topLeft).getDistanceSquared() }
+    }
     var best: WallJoin? = null
     var bestDistance = Float.POSITIVE_INFINITY
     val a = moving.bounds
@@ -55,3 +64,9 @@ internal fun findWallJoin(moving: WallFrame, others: List<WallFrame>, threshold:
 /** Only intersecting upper areas transmit light; the rest of a photograph stays opaque. */
 internal fun wallOverlaps(bounds: Rect, lower: List<Rect>): List<Rect> =
     lower.mapNotNull { other -> bounds.intersect(other).takeUnless { it.isEmpty } }
+
+internal fun WallFrame.polygon() = com.spektralab.android.core.model.TableGeometry.corners(
+    bounds.left, bounds.top, bounds.width, bounds.height, rotation)
+
+internal fun WallFrame.contains(point: Offset) =
+    com.spektralab.android.core.model.TableGeometry.contains(polygon(), com.spektralab.android.core.model.TablePoint(point.x, point.y))

@@ -97,6 +97,7 @@ internal class PhotoOrganizationUiAudit(private val test: Instrumentation, priva
             for(i in 0 until node.childCount) editable(node.getChild(i))?.let { return it }
             return null
         }
+        await { editable(root()) != null }
         val node=editable(root()) ?: error("Album input missing")
         check(node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value) }))
         test.waitForIdleSync();SystemClock.sleep(150)

@@ -64,6 +64,11 @@ internal class SourceRecoveryUiAudit(private val test: Instrumentation, private 
             check(vm.photos.isEmpty() && !vm.hasPhoto) { "Startup automatically decoded the old workbench" }
             click("照片图库")
             await { !vm.savedPhotos.loading && vm.savedPhotos.savedSession == expected }
+            repeat(32) {
+                test.runOnMainSync { vm.savedPhotos.refresh() }
+                await { !vm.savedPhotos.loading }
+                check(vm.savedPhotos.photos.isNotEmpty())
+            }
             capture("source-recovery-session.png")
             click("恢复工作台")
             idle()
@@ -144,7 +149,15 @@ internal class SourceRecoveryUiAudit(private val test: Instrumentation, private 
             } finally { test.runOnMainSync { vm.smartAutoEnabled = automatic } }
             return "Real activity recreation retains ordered/offline slots, current photo, export checks and committed edits without startup decode; actual root restore/menu/confirm/cancel; OpenDocument result callback cancellation/wrong source/exact moved source; source ID/history/geometry preserved, workbench remapped, no render while relinking; later undo/redo and save use new URI. Picker results intercepted, not a cloud-vendor acceptance."
         } catch (error: Throwable) {
-            runCatching { capture("source-recovery-failure.png") }
+            runCatching {
+                val controller = vm.savedPhotos
+                val jobs = listOf("load", "sourceJob").associateWith { name ->
+                    val field = controller.javaClass.getDeclaredField(name).apply { isAccessible = true }
+                    (field.get(controller) as? Job)?.let { "active=${it.isActive},completed=${it.isCompleted},cancelled=${it.isCancelled}" }
+                }
+                File(output, "source-recovery-failure-state.txt").writeText("loading=${controller.loading}; checking=${controller.checkingAsset}; jobs=$jobs")
+                capture("source-recovery-failure.png")
+            }
             throw error
         } finally {
             test.runOnMainSync { activity.finish() }

@@ -9,6 +9,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
+import androidx.activity.compose.BackHandler
+import com.spektralab.android.R
 import androidx.compose.ui.Modifier
 import androidx.exifinterface.media.ExifInterface
 import com.spektralab.android.feature.editor.EditorViewModel
@@ -77,25 +80,56 @@ internal fun GalleryScreen(
             sourceFormat = metadata[key]?.format.orEmpty(),
         )
     }
-    ViewingStand(
-        photos = photos,
+    val projects = vm.lightTableProjects
+    val draft = canvasState ?: rememberFilmCanvasState()
+    val ui = remember { TableProjectUiState() }
+    val project = projects.current
+    val shown = if (project == null) photos else projects.canvas.members.map { item ->
+        val preview = item.source.preview?.let { projects.previews[it] }
+        val error = projects.sourceErrors[item.id] ?: if (preview == null) context.getString(R.string.table_preview_missing) else null
+        ViewingPhoto(item.id, preview, item.source.preview?.let { projects.details[it] } ?: preview, item.source.name, error.orEmpty(), error = error,
+            wallDetail = item.source.preview?.let { projects.details[it] }, canRefine = item.source.preview != null,
+            sourceWidth = item.source.pixelWidth, sourceHeight = item.source.pixelHeight, sourceFormat = item.source.format)
+    }
+    fun back() = ui.request(projects, onBackToDarkroom)
+    BackHandler(enabled = project != null || projects.pending) { back() }
+    key(project?.id, projects.generation) { ViewingStand(
+        photos = shown,
         importing = vm.isImportingViewingPhotos,
         importCompleted = vm.viewingImportCompleted,
         importTotal = vm.viewingImportTotal,
-        actionsEnabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
+        actionsEnabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting && !projects.pending,
         onLoadThumbnail = { key ->
-            if (key !in independent) vm.loadThumbnail(Uri.parse(key))
+            if (project == null) {
+                if (key !in independent) vm.loadThumbnail(Uri.parse(key))
+            } else projects.canvas.members.firstOrNull { it.id == key }?.source?.preview?.let(projects::requestPreview)
         },
-        onLoadDetail = { vm.loadGalleryPreview(Uri.parse(it)) },
-        onLoadWallDetails = { keys -> vm.loadGalleryWallDetails(keys.map(Uri::parse)) },
-        onImport = onImport,
-        onRemove = { onRemovePhoto(Uri.parse(it)) },
-        onEdit = { onEditPhoto(Uri.parse(it)) },
-        onBack = onBackToDarkroom,
+        onLoadDetail = { key ->
+            if (project == null) vm.loadGalleryPreview(Uri.parse(key))
+            else projects.canvas.members.firstOrNull { it.id == key }?.source?.preview?.let(projects::requestDetail)
+        },
+        onLoadWallDetails = { keys ->
+            if (project == null) vm.loadGalleryWallDetails(keys.map(Uri::parse))
+            else projects.canvas.members.filter { it.id in keys }.mapNotNull { it.source.preview }.distinct().take(4).forEach(projects::requestDetail)
+        },
+        onImport = { if (project == null) onImport() else ui.adding = true },
+        onRemove = { if (project == null) onRemovePhoto(Uri.parse(it)) else projects.canvas.remove(it) },
+        onEdit = { if (project == null) onEditPhoto(Uri.parse(it)) else projects.editItem(it) { uri -> ui.request(projects) { onEditPhoto(uri) } } },
+        onBack = ::back,
         modifier = modifier,
-        sharedCanvasState=canvasState,
+        sharedCanvasState = if (project == null) draft else projects.canvas,
         backDescription=backDescription,
-    )
+        onPhotoActions = { ui.placement = it },
+        onVisibleItems = { if (project != null) projects.visibleItems(it) },
+        projectControls = { lightOn ->
+            TableProjectToolbar(projects, if (project == null) draft else projects.canvas, ui, lightOn,
+                !vm.busy && !vm.isExporting && !vm.isBatchExporting) {
+                vm.prepareVersionBoundary()
+                if (project == null) ui.naming = true else projects.saveCurrent(photos)
+            }
+        },
+    ) }
+    TableProjectPanels(projects, ui, photos, draft, !vm.busy && !vm.isExporting && !vm.isBatchExporting, vm::prepareVersionBoundary)
 }
 
 private fun readViewingMetadata(context: Context, uri: Uri): ViewingMetadata {
