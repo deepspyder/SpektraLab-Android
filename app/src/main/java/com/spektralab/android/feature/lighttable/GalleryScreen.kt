@@ -91,6 +91,19 @@ internal fun GalleryScreen(
             wallDetail = item.source.preview?.let { projects.details[it] }, canRefine = item.source.preview != null,
             sourceWidth = item.source.pixelWidth, sourceHeight = item.source.pixelHeight, sourceFormat = item.source.format)
     }
+    fun openOutput() {
+        if (vm.busy || vm.isExporting || vm.isBatchExporting || projects.pending) return
+        vm.prepareVersionBoundary()
+        val state = if (project == null) draft else projects.canvas
+        val scene = if (project == null) projects.captureDraft(photos, draft) else state.scene()
+        val available = if (project == null) photos.associateBy { it.key } else shown.associateBy { it.key }
+        val images = scene.items.mapNotNull { item ->
+            val photo = available[if (project == null) item.source.uri else item.id]
+            (photo?.wallDetail ?: photo?.detail ?: photo?.thumbnail)?.let { item.id to it }
+        }.toMap()
+        vm.tableOutput.open(scene, state.exportViewport, state.exportFade,
+            project?.name ?: context.getString(R.string.table_output_default_title), images, bind = project == null)
+    }
     fun back() = ui.request(projects, onBackToDarkroom)
     BackHandler(enabled = project != null || projects.pending) { back() }
     key(project?.id, projects.generation) { ViewingStand(
@@ -123,13 +136,14 @@ internal fun GalleryScreen(
         onVisibleItems = { if (project != null) projects.visibleItems(it) },
         projectControls = { lightOn ->
             TableProjectToolbar(projects, if (project == null) draft else projects.canvas, ui, lightOn,
-                !vm.busy && !vm.isExporting && !vm.isBatchExporting) {
+                !vm.busy && !vm.isExporting && !vm.isBatchExporting && shown.isNotEmpty(), onExport = ::openOutput) {
                 vm.prepareVersionBoundary()
                 if (project == null) ui.naming = true else projects.saveCurrent(photos)
             }
         },
     ) }
     TableProjectPanels(projects, ui, photos, draft, !vm.busy && !vm.isExporting && !vm.isBatchExporting, vm::prepareVersionBoundary)
+    TableOutputSheet(vm)
 }
 
 private fun readViewingMetadata(context: Context, uri: Uri): ViewingMetadata {

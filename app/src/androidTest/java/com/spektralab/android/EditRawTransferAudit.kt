@@ -42,6 +42,7 @@ internal class EditRawTransferAudit(private val test: Instrumentation, private v
             test.runOnMainSync { vm.openPhotos(listOf(uri)) }
             idle()
             val asShot = vm.sourceBitmap
+            val asShotPixels = vm.lastResult!!.rgba16.clone()
             test.runOnMainSync {
                 vm.params.cameraWbCustom = true
                 vm.params.cameraWbKelvin = 6800f
@@ -49,7 +50,8 @@ internal class EditRawTransferAudit(private val test: Instrumentation, private v
                 vm.scheduleCameraWb()
             }
             idle()
-            check(vm.errorMessage == null && vm.sourceBitmap !== asShot)
+            check(vm.errorMessage == null && vm.sourceBitmap === asShot) { "RAW WB changed the original reference" }
+            check(!vm.lastResult!!.rgba16.contentEquals(asShotPixels)) { "RAW WB did not change developed pixels" }
             val expected = vm.lastResult!!.rgba16.clone()
             val desired = vm.params.copy()
             EditStore.save(context, uri, base)
@@ -64,7 +66,7 @@ internal class EditRawTransferAudit(private val test: Instrumentation, private v
             idle()
             check(vm.errorMessage == null && vm.editTransferError == null)
             check(vm.params.cameraWbCustom && vm.params.cameraWbKelvin == 6800f && vm.params.cameraWbTint == 12f)
-            check(vm.sourceBitmap !== before && vm.lastResult!!.rgba16.contentEquals(expected)) { "Copied RAW WB differs from direct path" }
+            check(vm.sourceBitmap === before && vm.lastResult!!.rgba16.contentEquals(expected)) { "Copied RAW WB differs from direct path or changed the original reference" }
             check(EditStore.load(context, uri)!!.cameraWbKelvin == 6800f)
             test.runOnMainSync { vm.undo() }
             idle(); check(!vm.params.cameraWbCustom)

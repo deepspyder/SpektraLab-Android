@@ -78,16 +78,17 @@ Java_com_spektralab_android_engine_NativeCurveGrade_prepareBrightness(
     }
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
+namespace {
+void applyStrip(JNIEnv* env,
     jshortArray input, jint offset, jint width, jint height, jint y, jint rows,
-    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette, jobject brightness, jfloatArray output) {
+    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette, jobject brightness, jarray output, jintArray histogram, bool packed, bool scalarTone) {
     const auto* channels = brightness ? static_cast<const float*>(env->GetDirectBufferAddress(brightness)) : nullptr;
     const int64_t count = int64_t(width)*rows;
     const auto color_count = env->GetArrayLength(colors);
     if (width <= 0 || height <= 0 || y < 0 || rows <= 0 || rows > 32 || int64_t(y)+rows > height ||
         count > 1024*1024 || offset < 0 || int64_t(offset)+count*4 > env->GetArrayLength(input) ||
-        env->GetArrayLength(output) < count*3 || env->GetArrayLength(uniforms) != 25 ||
+        env->GetArrayLength(output) < count*(packed ? 1 : 3) ||
+        (packed && (!histogram || env->GetArrayLength(histogram) != 768)) || env->GetArrayLength(uniforms) != 25 ||
         env->GetArrayLength(curves) != 5125 || (color_count != 26 && color_count != 36 && color_count != 53) ||
         (brightness && (!channels || env->GetDirectBufferCapacity(brightness) != 3 * 65536 * sizeof(float))) ||
         (vignette && env->GetArrayLength(vignette) != 1025)) {
@@ -95,7 +96,10 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
     }
     try {
         std::vector<jshort> pixels(size_t(count)*4);
-        std::vector<float> result(size_t(count)*3), table(5125), gains(vignette ? 1025 : 0);
+        std::vector<float> result(packed ? 0 : size_t(count)*3), table(5125), gains(vignette ? 1025 : 0);
+        std::vector<jint> argb(packed ? size_t(count) : 0);
+        jint bins[768]{};
+        if (packed) env->GetIntArrayRegion(histogram, 0, 768, bins);
         float p[25], color[53]{};
         env->GetShortArrayRegion(input, offset, jsize(count*4), pixels.data());
         env->GetFloatArrayRegion(uniforms, 0, 25, p);
@@ -120,7 +124,7 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
                 }
                 const float t=tone(luma(r,g,b));
                 if (p[8]!=0.0f) { float w=(1.0f-t)*(1.0f-t);r+=p[8]*.25f*w*(1.0f-r);g+=p[8]*.25f*w*(1.0f-g);b+=p[8]*.25f*w*(1.0f-b); }
-                if (p[7]!=0.0f) { float k=p[7]*.25f*t*t; r+=k*(p[7]>0.0f?1.0f-r:r);g+=k*(p[7]>0.0f?1.0f-g:g);b+=k*(p[7]>0.0f?1.0f-b:b); }
+                if (p[7]!=0.0f) { float k=scalarTone ? p[7]*.25f*(t*t) : p[7]*.25f*t*t; r+=k*(p[7]>0.0f?1.0f-r:r);g+=k*(p[7]>0.0f?1.0f-g:g);b+=k*(p[7]>0.0f?1.0f-b:b); }
                 const float span=std::max(1.0f-p[9]-p[10],.05f);
                 r=(r-p[9])/span;g=(g-p[9])/span;b=(b-p[9])/span;
                 float lum=luma(r,g,b); r=lum+(r-lum)*p[6];g=lum+(g-lum)*p[6];b=lum+(b-lum)*p[6];
@@ -163,10 +167,46 @@ Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
                 const float t=clamp((nx*nx+ny*ny-inner*inner)/span);
                 const float v=gains[size_t(t*1024.0f+.5f)];r*=v;g*=v;b*=v;
             }
-            result[i*3]=r;result[i*3+1]=g;result[i*3+2]=b;
+            if (packed) {
+                // Match Kotlin Float -> Int quantization; no transfer-function or precision change.
+                const auto quantize = [](float value) {
+                    // Kotlin Float.toInt maps NaN to zero. Never use it as a histogram index.
+                    if (!(value > 0.0f)) return 0;
+                    if (value >= 1.0f) return 255;
+                    return int(value*255.0f+.5f);
+                };
+                const int qr=quantize(r), qg=quantize(g), qb=quantize(b);
+                argb[i]=jint(0xff000000u | (uint32_t(qr)<<16) | (uint32_t(qg)<<8) | uint32_t(qb));
+                ++bins[qr]; ++bins[256+qg]; ++bins[512+qb];
+            } else {
+                result[i*3]=r;result[i*3+1]=g;result[i*3+2]=b;
+            }
         }
-        env->SetFloatArrayRegion(output, 0, jsize(count*3), result.data());
+        if (packed) {
+            env->SetIntArrayRegion(static_cast<jintArray>(output), 0, jsize(count), argb.data());
+            if (!env->ExceptionCheck()) env->SetIntArrayRegion(histogram, 0, 768, bins);
+        } else env->SetFloatArrayRegion(static_cast<jfloatArray>(output), 0, jsize(count*3), result.data());
     } catch (const std::bad_alloc&) {
         env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "Curve strip allocation failed");
     }
+}
+
+} // namespace
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeCurveGrade_apply(JNIEnv* env, jobject,
+    jshortArray input, jint offset, jint width, jint height, jint y, jint rows,
+    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette,
+    jobject brightness, jfloatArray output) {
+    applyStrip(env, input, offset, width, height, y, rows, uniforms, curves, colors, vignette,
+        brightness, output, nullptr, false, false);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_spektralab_android_engine_NativeCurveGrade_applyArgb(JNIEnv* env, jobject,
+    jshortArray input, jint offset, jint width, jint height, jint y, jint rows,
+    jfloatArray uniforms, jfloatArray curves, jfloatArray colors, jfloatArray vignette,
+    jobject brightness, jintArray output, jintArray histogram, jboolean scalarTone) {
+    applyStrip(env, input, offset, width, height, y, rows, uniforms, curves, colors, vignette,
+        brightness, output, histogram, true, scalarTone);
 }

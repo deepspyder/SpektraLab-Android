@@ -20,8 +20,6 @@ import java.nio.ByteOrder
 object ColorPipeline {
 
     private val srgb8ToLinear = FloatArray(256) { srgbToLinear(it) }
-    // The exact existing Float quantizer, for every possible U16 value (no interpolation).
-    private val srgb16To8 = IntArray(65536) { ((it / 65535f) * 255f + .5f).toInt().coerceIn(0, 255) }
 
     /** sRGB 8bit 通道（0..255）→ 线性 float。 */
     fun srgbToLinear(c: Int): Float {
@@ -60,15 +58,15 @@ object ColorPipeline {
                            sourceColorSpace: String = "sRGB", checkCancelled: () -> Unit = {}): Pair<Bitmap, Histogram> {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
-            val rows = minOf(32, height)
+            val transform = if (sourceColorSpace == "Display P3") {
+                ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB))
+            } else null
+            if (transform == null) return bitmap to DisplayStripRenderer.render(rgba16, width, height, grade, bitmap, checkCancelled)
+            val rows = minOf(32, height, (1024 * 1024 / width).coerceAtLeast(1))
             val strip = IntArray(width * rows)
             val histogram = Histogram(IntArray(256), IntArray(256), IntArray(256))
             val pixel = FloatArray(3)
             val native = if (grade.usesNativeGrade) FloatArray(width * rows * 3) else null
-            val transform = if (sourceColorSpace == "Display P3") {
-                ColorSpace.connect(ColorSpace.get(ColorSpace.Named.DISPLAY_P3), ColorSpace.get(ColorSpace.Named.SRGB))
-            } else null
-            val passthrough = grade.isIdentity && transform == null
             var y = 0
             while (y < height) {
                 checkCancelled()
@@ -76,19 +74,11 @@ object ColorPipeline {
                 if (native != null) grade.nativeRows(rgba16, y * width * 4, width, height, y, count, native)
                 for (i in 0 until width * count) {
                     val index = (y * width + i) * 4
-                    if (passthrough) {
-                        val r = srgb16To8[rgba16[index].toInt() and 0xFFFF]
-                        val g = srgb16To8[rgba16[index + 1].toInt() and 0xFFFF]
-                        val b = srgb16To8[rgba16[index + 2].toInt() and 0xFFFF]
-                        strip[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                        histogram.r[r]++; histogram.g[g]++; histogram.b[b]++
-                        continue
-                    }
                     if (native != null) {
                         pixel[0] = native[i * 3]; pixel[1] = native[i * 3 + 1]; pixel[2] = native[i * 3 + 2]
                     } else grade.gradeAt(rgba16[index], rgba16[index + 1], rgba16[index + 2], pixel,
                         i % width, y + i / width, width, height)
-                    transform?.transform(pixel)
+                    transform.transform(pixel)
                     val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
                     val g = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
                     val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
@@ -239,7 +229,7 @@ class Grade(
     private val balanceNeutral = cbShadow.all { it == 0f } && cbMid.all { it == 0f } && cbHigh.all { it == 0f }
     // Brightness was evaluating three double-precision powers per pixel. All inputs here
     // are U16: memoize the unchanged channel operations at every discrete input value.
-    private val brightnessChannels = run {
+    private val brightnessChannels by lazy {
         if (brightness == 0f || usesNativeGrade) null else Array(3) { channel ->
             val wb = when (channel) { 0 -> wbR; 1 -> wbG; else -> wbB }
             FloatArray(65536) { sample ->
@@ -277,6 +267,12 @@ class Grade(
         check(usesNativeGrade)
         NativeCurveGrade.apply(input, offset, width, height, y, rows, nativeUniforms, curveTable, colorUniforms,
             vignetteGains, nativeBrightness, output)
+    }
+
+    internal fun nativeArgbRows(input: ShortArray, offset: Int, width: Int, height: Int, y: Int,
+                                rows: Int, output: IntArray, histogram: IntArray) {
+        NativeCurveGrade.applyArgb(input, offset, width, height, y, rows, nativeUniforms, curveTable,
+            colorUniforms, vignetteGains, nativeBrightness, output, histogram, !usesNativeGrade)
     }
 
     private fun curve(x: Float, row: Int): Float {

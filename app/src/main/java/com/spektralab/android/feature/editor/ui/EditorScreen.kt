@@ -129,10 +129,7 @@ internal fun EditorScreen(
     ) { uris ->
         if (uris.isNotEmpty()) {
             uris.forEach(vm::persistReadPermission)
-            when {
-                addToStage -> vm.addPhotos(uris, openSelected = true)
-                else -> vm.openPhotos(uris)
-            }
+            vm.importPhotos(uris, addToSession = addToStage)
             photoTrayVisible = false
         }
         addToStage = false

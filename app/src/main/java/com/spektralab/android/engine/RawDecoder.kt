@@ -29,6 +29,8 @@ object RawDecoder {
     private external fun nativeDecodeForExport(path: String, maxLongEdge: Int, userMul: FloatArray?,
                                                cancellation: RawDecodeCancellation?): NativeRawImage
     private external fun nativeReadCameraMatrix(path: String): FloatArray?
+    private external fun nativeCameraPreview(path: String, cancellation: RawDecodeCancellation?): ByteArray?
+    private external fun nativeDisplayPreview(path: String, maxLongEdge: Int, cancellation: RawDecodeCancellation?): android.graphics.Bitmap?
 
     private external fun nativeApplyLensCorrection(
         rgb: FloatArray, width: Int, height: Int,
@@ -109,6 +111,14 @@ object RawDecoder {
     /** Header metadata is enough to choose custom white balance before demosaicing. */
     fun readCameraMatrix(context: Context, uri: Uri, cancellation: RawDecodeCancellation? = null): FloatArray? =
         withRawInput(context, uri, "raw_input_", cancellation, ::nativeReadCameraMatrix)
+
+    /** Camera-rendered JPEG only. It is an original-view reference, never an engine input. */
+    internal fun cameraPreview(context: Context, uri: Uri, cancellation: RawDecodeCancellation?): ByteArray? =
+        withRawInput(context, uri, "raw_preview_", cancellation) { nativeCameraPreview(it, cancellation) }
+
+    /** Standard as-shot display rendition for a RAW without a usable embedded camera JPEG. */
+    internal fun displayPreview(context: Context, uri: Uri, maxLongEdge: Int, cancellation: RawDecodeCancellation?): android.graphics.Bitmap? =
+        withRawInput(context, uri, "raw_preview_", cancellation) { nativeDisplayPreview(it, maxLongEdge, cancellation) }
 
     /** Descriptor lifetime encloses LibRaw's synchronous read; no decoded pixels are cached here. */
     private fun <T> withRawInput(context: Context, uri: Uri, prefix: String,

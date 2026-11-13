@@ -7,7 +7,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.spektralab.android.R
 import com.spektralab.android.engine.StockCatalog
 import com.spektralab.android.feature.editor.EditorViewModel
 import com.spektralab.android.feature.editor.ui.editorOptionLabel
@@ -39,7 +41,12 @@ internal fun PrintPanel(vm: EditorViewModel) {
         ToggleRow("纸面光晕", vm.params.glareActive) { vm.params.glareActive = it; vm.scheduleRender() }
         SliderRow("纸面光晕强度", vm.params.glareAmount, 0f..30f, "%.1f") { vm.params.glareAmount = it; vm.scheduleRender() }
         SliderRow("预闪", vm.params.preflashExposure, 0f..0.03f, "%.2f×") { vm.params.preflashExposure = it; vm.scheduleRender() }
-        ToggleRow("扩展动态范围", vm.params.extendedDynamicRange) { vm.params.extendedDynamicRange = it; vm.scheduleRender() }
+        val supportsEdr = !StockCatalog.isPositive(vm.params.filmId) && !StockCatalog.isMonochrome(vm.params.paperId)
+        ToggleRow("扩展动态范围", vm.params.extendedDynamicRange && supportsEdr, enabled = supportsEdr) {
+            vm.params.extendedDynamicRange = it; vm.scheduleRender()
+        }
+        if (!supportsEdr) Text(stringResource(R.string.print_edr_unavailable), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
     }
 
     EditorSection("片边", "胶片格式 · 齿孔 · 雾化 · 漏光 · 帧号", initiallyExpanded = false) {

@@ -65,6 +65,11 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var stockLibraryOnly = false
     private var editingFeedbackOnly = false
     private var smartDevelopOnly = false
+    private var tableOutputAudit: String? = null
+    private var imageQualityOnly = false
+    private var enlargerOnly = false
+    private var enlargerLayoutOnly = false
+    private var imageMaterialsOnly = false
     private var tableAudit: String? = null
     private var canvasJoiningOnly = false
     private var homeViewingStandOnly = false
@@ -83,6 +88,8 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var stockInteractionOnly = false
     private var interactionPerfOnly = false
     private var parameterPerfOnly = false
+    private var photoSelectionOnly = false
+    private var displayStripOnly = false
     private var changedParamsOnly = false
     private var curveLayoutOnly = false
     private var editingBoundariesOnly = false
@@ -124,6 +131,13 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     }
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
+        photoSelectionOnly = audit == "photo-selection" || audit == "photo-selection-layout"
+        displayStripOnly = audit == "display-strip"
+        tableOutputAudit = audit?.takeIf { it in setOf("table-output", "table-output-layout", "table-output-core", "table-output-raw", "table-output-plain") }
+        imageQualityOnly = audit == "image-quality"
+        enlargerOnly = audit == "enlarger" || audit == "enlarger-layout"
+        enlargerLayoutOnly = audit == "enlarger-layout"
+        imageMaterialsOnly = audit == "image-quality-materials"
         smartDevelopOnly = audit == "smart-develop"
         tableAudit = audit?.takeIf { it in setOf("table-projects", "table-layout", "table-storage", "table-save-during", "table-save-after", "table-delete-during", "table-delete-after", "table-crash-verify") }
         canvasJoiningOnly = audit == "canvas-joining"
@@ -216,6 +230,41 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (photoSelectionOnly || displayStripOnly) {
+            if (displayStripOnly) case("display.exact_packed_strips") { DisplayStripAudit.run() }
+            else {
+                case("library.batch_remove_storage") { PhotoRemovalAudit.storage(output) }
+                case("library.batch_remove_ui") { PhotoRemovalAudit(this, output).ui() }
+            }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (enlargerOnly) {
+            val audit = EnlargerAudit(this, output)
+            if (!enlargerLayoutOnly) case("enlarger.native_reprint") { audit.native() }
+            case("enlarger.controls_and_history") { audit.controls() }
+            if (!enlargerLayoutOnly) case("enlarger.analysis_boundaries") { audit.boundaries() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (imageMaterialsOnly) {
+            case("image.film_paper_integrity") { ImageQualityAudit(this, output).materials() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (imageQualityOnly) {
+            case("image.original_decode") { ImageQualityAudit(this, output).originals() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         savedPhotosAudit?.let { mode ->
             when (mode) {
                 "versions-latency" -> case("library.virtual_save_latency") { SavedStoreLatencyAudit.run(this, output, true) }
@@ -502,6 +551,26 @@ class FunctionalAuditInstrumentation : Instrumentation() {
             finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED,
                 Bundle().apply{putString("stream",rows.toString(2))})
             return
+        }
+        if(tableOutputAudit == "table-output-plain") {
+            case("lighttable.output_unedited") { TableOutputPlainAudit(this,output).run() }
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED, Bundle().apply{putString("stream",rows.toString(2))}); return
+        }
+        if(tableOutputAudit == "table-output-raw") {
+            case("lighttable.output_raw") { TableOutputRawAudit(this,output).run() }
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED, Bundle().apply{putString("stream",rows.toString(2))}); return
+        }
+        if(tableOutputAudit != null){
+            if (tableOutputAudit != "table-output-layout") {
+                case("lighttable.output_plan") { TableOutputCoreAudit.geometry() }
+                case("lighttable.output_pixels") { TableOutputCoreAudit.pixels() }
+                case("lighttable.output_safety") { TableOutputCoreAudit.safety(targetContext,output) }
+            }
+            if (tableOutputAudit != "table-output-core") case("lighttable.output_ui") { TableOutputUiAudit(this,output).run(tableOutputAudit == "table-output-layout") }
+            val failed=(0 until rows.length()).count{rows.getJSONObject(it).optString("status")=="FAIL"}
+            finish(if(failed==0)Activity.RESULT_OK else Activity.RESULT_CANCELED, Bundle().apply{putString("stream",rows.toString(2))}); return
         }
         if(tableAudit in setOf("table-save-during", "table-save-after", "table-delete-during", "table-delete-after")) {
             LightTableProcessAudit.terminate(targetContext, output, requireNotNull(tableAudit).removePrefix("table-")); return

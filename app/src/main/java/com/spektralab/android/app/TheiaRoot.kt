@@ -51,7 +51,7 @@ internal fun TheiaRoot(vm: EditorViewModel) {
     ) { uris ->
         if (uris.isNotEmpty()) {
             uris.forEach(vm::persistReadPermission)
-            if (addToHomeSession) vm.addPhotos(uris, openSelected = true) else vm.openPhotos(uris)
+            vm.importPhotos(uris, addToSession = addToHomeSession)
             route = AppRoute.Editor
         }
         addToHomeSession = false

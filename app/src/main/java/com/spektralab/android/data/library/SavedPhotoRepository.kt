@@ -98,20 +98,58 @@ internal class SavedPhotoRepository private constructor(private val directory: F
 
     fun list(limit: Int, offset: Int, filter: PhotoLibraryFilter = PhotoLibraryFilter()): List<SavedPhoto> {
         require(limit in 1..100 && offset >= 0)
-        val (where, args) = PhotoOrganizationRepository.selection(filter)
+        val (where, args) = visibleSelection(filter)
         return db.rawQuery("$PHOTO_COLUMNS$where ORDER BY e.updated_at DESC,a.asset_id LIMIT ? OFFSET ?",
             args + arrayOf(limit.toString(), offset.toString())).use { cursor -> buildList {
             while (cursor.moveToNext()) add(photo(cursor))
         } }
     }
-    fun count(): Long = db.rawQuery("SELECT COUNT(*) FROM edits", null).use { it.moveToFirst(); it.getLong(0) }
+    fun count(): Long = db.rawQuery("SELECT COUNT(*) FROM edits e WHERE NOT EXISTS(SELECT 1 FROM hidden_photos h WHERE h.asset_id=e.asset_id)", null).use { it.moveToFirst(); it.getLong(0) }
     fun matchingCount(filter: PhotoLibraryFilter): Long {
-        val (where, args) = PhotoOrganizationRepository.selection(filter)
+        val (where, args) = visibleSelection(filter)
         return db.rawQuery("SELECT COUNT(*) FROM assets a JOIN edits e USING(asset_id) LEFT JOIN photo_marks m USING(asset_id)$where", args)
             .use { it.moveToFirst(); it.getLong(0) }
     }
     fun page(filter: PhotoLibraryFilter, offset: Int) = transaction {
-        PhotoLibraryPage(list(60, offset, filter), organization.albums(), matchingCount(filter), count())
+        val albums = db.rawQuery("SELECT a.album_id,a.name,COUNT(member.asset_id) FROM albums a LEFT JOIN album_members member ON member.album_id=a.album_id AND NOT EXISTS(SELECT 1 FROM hidden_photos h WHERE h.asset_id=member.asset_id) GROUP BY a.album_id ORDER BY a.created_at,a.album_id", null)
+            .use { cursor -> buildList { while (cursor.moveToNext()) add(com.spektralab.android.core.model.PhotoAlbum(cursor.getString(0), cursor.getString(1), cursor.getLong(2))) } }
+        PhotoLibraryPage(list(60, offset, filter), albums, matchingCount(filter), count())
+    }
+
+    private fun visibleSelection(filter: PhotoLibraryFilter): Pair<String, Array<String>> {
+        val (where, args) = PhotoOrganizationRepository.selection(filter)
+        val join = if (where.isBlank()) " WHERE " else "$where AND "
+        return "${join}NOT EXISTS(SELECT 1 FROM hidden_photos h WHERE h.asset_id=a.asset_id)" to args
+    }
+
+    /** One metadata snapshot, including entries beyond the currently loaded page. */
+    fun selectable(filter: PhotoLibraryFilter): List<SavedPhoto> = transaction {
+        val count = matchingCount(filter)
+        require(count <= 5000) { "PHOTO_SELECTION_TOO_LARGE" }
+        buildList { while (size < count) addAll(list(100, size, filter)) }
+    }
+
+    /** Hide atomically; originals, versions, albums and workbench references stay intact. */
+    fun hide(expected: List<SavedPhoto>) = transaction {
+        require(expected.isNotEmpty() && expected.size <= 5000)
+        require(expected.map { it.assetId }.distinct().size == expected.size)
+        expected.forEach { photo ->
+            val actual = find(photo.assetId)
+            check(actual != null && actual.uri == photo.uri && actual.variantId == photo.variantId &&
+                actual.revision == photo.revision) { "EDIT_TARGET_CHANGED" }
+            check(db.rawQuery("SELECT 1 FROM hidden_photos WHERE asset_id=?", arrayOf(photo.assetId))
+                .use { !it.moveToFirst() }) { "EDIT_TARGET_CHANGED" }
+        }
+        expected.forEach { db.insertOrThrow("hidden_photos", null, values("asset_id" to it.assetId)) }
+    }
+
+    /** Only an explicit import restores library visibility; ordinary autosaves never do. */
+    fun restoreImported(uris: List<Uri>) = transaction {
+        uris.distinct().forEach { uri ->
+            if (!EditVersionUri.owns(uri)) findByUri(uri)?.let {
+                db.delete("hidden_photos", "asset_id=?", arrayOf(it.assetId))
+            }
+        }
     }
 
     fun find(assetId: String): SavedPhoto? = db.rawQuery("$PHOTO_COLUMNS WHERE a.asset_id=?", arrayOf(assetId)).use {
@@ -267,7 +305,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                 })
             try {
                 db.setForeignKeyConstraintsEnabled(true)
-                require(db.version in 0..4) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
+                require(db.version in 0..5) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
                 val repository = SavedPhotoRepository(directory, db)
                 if (db.version == 0) repository.transaction {
                     db.execSQL("CREATE TABLE assets(asset_id TEXT PRIMARY KEY,source_key TEXT UNIQUE NOT NULL,uri TEXT NOT NULL,name TEXT NOT NULL)")
@@ -289,6 +327,10 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                 if (db.version == 3) repository.transaction {
                     EditVersionRepository.createSchema(db)
                     db.version = 4
+                }
+                if (db.version == 4) repository.transaction {
+                    db.execSQL("CREATE TABLE hidden_photos(asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id))")
+                    db.version = 5
                 }
                 return repository
             } catch (error: Throwable) { db.close(); throw error }

@@ -23,6 +23,8 @@ import kotlinx.coroutines.sync.withPermit
 internal class SavedPhotosController(private val context: Context, private val scope: CoroutineScope) {
     val organization = PhotoOrganizationController(context, scope, ::refresh)
     val versions = EditVersionsController(context, scope)
+    val selection = PhotoSelectionController(context, scope,
+        { !loading && !organization.pending && sourceJob?.isActive != true && !opening }, ::refresh)
     var filter by mutableStateOf(PhotoLibraryFilter())
         private set
     var matchingCount by mutableStateOf(0L)
@@ -30,7 +32,7 @@ internal class SavedPhotosController(private val context: Context, private val s
     var totalCount by mutableStateOf(0L)
         private set
     fun applyFilter(value: PhotoLibraryFilter) {
-        if (sourceJob?.isActive == true || opening || organization.pending || filter == value) return
+        if (selection.active || selection.pending || sourceJob?.isActive == true || opening || organization.pending || filter == value) return
         filter = value
         fetch(false)
     }
@@ -68,7 +70,7 @@ internal class SavedPhotosController(private val context: Context, private val s
     fun refresh() = fetch(false)
     fun more() { if (hasMore && !loading) fetch(true) }
     private fun fetch(append: Boolean) {
-        if (sourceJob?.isActive == true || opening) return
+        if (selection.pending || sourceJob?.isActive == true || opening) return
         load?.cancel()
         loading = true; error = null
         val offset = if (append) photos.size else 0
@@ -177,6 +179,7 @@ internal class SavedPhotosController(private val context: Context, private val s
     fun cancelRelinkPicker() { pendingRelink = null }
 
     fun leave() {
+        selection.leave()
         versions.leave()
         val abandoned = load
         load = null

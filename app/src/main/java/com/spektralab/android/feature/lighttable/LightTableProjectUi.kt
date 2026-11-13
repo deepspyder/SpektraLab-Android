@@ -43,7 +43,7 @@ internal class TableProjectUiState {
 
 @Composable
 internal fun TableProjectToolbar(controller: LightTableProjectsController, state: FilmCanvasState,
-    ui: TableProjectUiState, lightOn: Boolean, enabled: Boolean, onSave: () -> Unit) {
+    ui: TableProjectUiState, lightOn: Boolean, enabled: Boolean, onExport: () -> Unit = {}, onSave: () -> Unit) {
     val ink = if (lightOn) StandColors.ink else StandColors.white
     val accent = if (lightOn) StandColors.brown else StandColors.amber
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -61,6 +61,9 @@ internal fun TableProjectToolbar(controller: LightTableProjectsController, state
             }
             IconButton(onClick = onSave, enabled = enabled && !controller.pending) {
                 Icon(Icons.Rounded.Save, stringResource(R.string.table_save), tint = accent)
+            }
+            IconButton(onClick = onExport, enabled = enabled && !controller.pending) {
+                Icon(Icons.Rounded.FileDownload, stringResource(R.string.table_output), tint = accent)
             }
         }
         if (controller.pending) LinearProgressIndicator(Modifier.fillMaxWidth())

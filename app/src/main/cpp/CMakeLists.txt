@@ -126,7 +126,9 @@ else()
             target_compile_options(spk_libraw PRIVATE -w)
         endif()
         set(SPEKTRALAB_RAW_AVAILABLE ON)
-        list(APPEND SPK_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/raw_decode.cpp)
+        list(APPEND SPK_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/raw_decode.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/raw_preview.cpp)
         list(APPEND SPK_INCLUDE_DIRS "${SPEKTRALAB_LIBRAW_SOURCE}")
     else()
         message(WARNING "LibRaw 0.22.2 not found at ${SPEKTRALAB_LIBRAW_SOURCE} — RAW decode disabled. "

@@ -21,6 +21,8 @@ internal class FilmCanvasState(zoom: Float = 1f, x: Float = 0f, y: Float = 0f) {
     val pan get() = scenePan * viewportFit
     internal var focus = Offset.Zero
     internal var origin = Offset.Zero
+    internal var exportViewport: com.spektralab.android.core.model.TableBox? = null
+    internal var exportFade = 18f
     val photoPositions = mutableStateMapOf<String, Offset>()
     val photoOrder = mutableStateListOf<String>()
     val rotations = mutableStateMapOf<String, Float>()

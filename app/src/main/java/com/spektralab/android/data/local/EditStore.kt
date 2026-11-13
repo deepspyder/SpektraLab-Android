@@ -123,6 +123,15 @@ object EditStore {
     @Synchronized
     internal fun savedPhotoCount(context: Context) = checked { repository(context).count() }
     @Synchronized
+    internal fun selectablePhotos(context: Context, filter: com.spektralab.android.core.model.PhotoLibraryFilter) =
+        checked { repository(context).selectable(filter) }
+    @Synchronized
+    internal fun hidePhotos(context: Context, expected: List<com.spektralab.android.data.library.SavedPhoto>) =
+        checked { repository(context).hide(expected) }
+    @Synchronized
+    internal fun restoreImportedPhotos(context: Context, uris: List<Uri>) =
+        checked { repository(context).restoreImported(uris) }
+    @Synchronized
     internal fun editVersions(context: Context, assetId: String) = checked { repository(context).versions.list(assetId) }
     @Synchronized
     internal fun editVersion(context: Context, versionId: String) = checked { repository(context).versions.find(versionId) }

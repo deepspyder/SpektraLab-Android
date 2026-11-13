@@ -59,14 +59,18 @@ internal class LightTableProjectsController(private val context: Context, privat
         current = null; previews = emptyMap(); details = emptyMap(); sources = emptyMap(); sourceErrors = emptyMap(); message = null
     }
 
-    fun create(name: String, photos: List<ViewingPhoto>, draft: FilmCanvasState, onDone: () -> Unit = {}) {
+    fun captureDraft(photos: List<ViewingPhoto>, draft: FilmCanvasState): LightTableScene {
         val frames = photoWallLayout(photos, draft)
-        val scene = LightTableScene(frames.map { frame ->
+        return LightTableScene(frames.map { frame ->
             val photo = photos[frame.index]
+            val point = draft.photoPositions[photo.key] ?: frame.bounds.topLeft
             TablePlacement(UUID.randomUUID().toString(), TableSource(photo.key, photo.name,
                 pixelWidth = photo.sourceWidth, pixelHeight = photo.sourceHeight, format = photo.sourceFormat),
-                frame.bounds.left, frame.bounds.top, frame.bounds.width, frame.bounds.height, frame.rotation)
+                point.x, point.y, frame.bounds.width, frame.bounds.height, frame.rotation)
         }, draft.zoom, draft.pan.x / draft.viewportFit, draft.pan.y / draft.viewportFit, draft.lightOn, draft.millimeters)
+    }
+    fun create(name: String, photos: List<ViewingPhoto>, draft: FilmCanvasState, onDone: () -> Unit = {}) {
+        val scene = captureDraft(photos, draft)
         save(null, name, scene, photos.associateBy { it.key }, onDone) { saved ->
             current = saved; canvas.restore(saved.scene); manager = false; sources = emptyMap(); sourceErrors = emptyMap()
         }

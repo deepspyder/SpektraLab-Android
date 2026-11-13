@@ -24,6 +24,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Preserve profiled original previews on capable screens; SDR devices keep their normal path.
+        if (resources.configuration.isScreenWideColorGamut) {
+            window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_WIDE_COLOR_GAMUT
+        }
         splash.setOnExitAnimationListener { splashView ->
             splashView.view.animate()
                 .alpha(0f)

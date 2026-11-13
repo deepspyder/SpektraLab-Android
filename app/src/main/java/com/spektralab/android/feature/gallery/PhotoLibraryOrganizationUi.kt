@@ -70,10 +70,12 @@ internal fun LibraryFilterBar(controller: SavedPhotosController, enabled: Boolea
     var filters by remember { mutableStateOf(false) }
     val activeAlbum = controller.organization.albums.firstOrNull { it.id == controller.filter.albumId }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Box {
+        Row(Modifier.widthIn(max = 520.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
                 OutlinedButton(onClick = { albumMenu = true }, enabled = enabled, shape = TheiaShapes.control,
-                    modifier = Modifier.heightIn(min = 48.dp).widthIn(max = 240.dp)) {
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.heightIn(min = 48.dp).fillMaxWidth()) {
                     Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(activeAlbum?.name ?: stringResource(R.string.library_all_photos), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -91,13 +93,14 @@ internal fun LibraryFilterBar(controller: SavedPhotosController, enabled: Boolea
                 }
             }
             FilledTonalButton(onClick = { filters = true }, enabled = enabled, shape = TheiaShapes.control,
+                contentPadding = PaddingValues(horizontal = 12.dp),
                 modifier = Modifier.heightIn(min = 48.dp)) {
                 Icon(Icons.Rounded.FilterList, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
                 Text(stringResource(if (controller.filter.minimumRating != 0 || controller.filter.label != null || controller.filter.unratedOnly)
-                    R.string.library_filters_active else R.string.library_filters))
+                    R.string.library_filters_active else R.string.library_filters), maxLines = 1)
             }
-            TextButton(onClick = controller.organization::manageAlbums, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) {
-                Text(stringResource(R.string.library_album_manage))
+            IconButton(onClick = controller.organization::manageAlbums, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.FolderCopy, contentDescription = stringResource(R.string.library_album_manage))
             }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

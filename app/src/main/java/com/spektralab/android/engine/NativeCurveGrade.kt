@@ -10,6 +10,14 @@ internal object NativeCurveGrade {
 
     external fun prepareBrightness(uniforms: FloatArray, channels: ByteBuffer)
 
+    /** Bounded sRGB display strip; keeps grading, quantization and histogram in one pass. */
+    external fun applyArgb(
+        input: ShortArray, offset: Int, width: Int, height: Int, y: Int, rows: Int,
+        uniforms: FloatArray, curves: FloatArray, colors: FloatArray,
+        vignette: FloatArray?, brightness: ByteBuffer?, output: IntArray,
+        histogram: IntArray, scalarTone: Boolean,
+    )
+
     external fun apply(
         input: ShortArray,
         offset: Int,

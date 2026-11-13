@@ -81,6 +81,7 @@ import org.json.JSONObject
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private class ExportCancelled : Exception()
     @Volatile private var exportCancelRequested = false
+    @Volatile private var tableNativeRendering = false
 
     private fun checkExportCancellation() {
         if (exportCancelRequested || cleared) throw ExportCancelled()
@@ -100,6 +101,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     internal val savedPhotos by lazy { com.spektralab.android.feature.gallery.SavedPhotosController(app, viewModelScope) }
     internal val lightTableProjects by lazy { com.spektralab.android.feature.lighttable.LightTableProjectsController(app, viewModelScope) }
+    internal val tableOutput by lazy { com.spektralab.android.feature.lighttable.TableOutputController(app, viewModelScope) }
     internal fun prepareVersionBoundary() {
         if (!busy && !isExporting && !isBatchExporting && !isApplyingEdits) saveCurrentSidecar()
     }
@@ -784,6 +786,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val photo = photoGeneration
         developedPreviewJob?.cancel()
         developedPreviewJob = viewModelScope.launch {
+            // The working canvas publishes every completed frame. Its tray thumbnail can wait
+            // for a brief pause instead of scaling another bitmap on every slider frame.
+            delay(120)
             val preview = withContext(Dispatchers.Default) {
                 val edge = max(bitmap.width, bitmap.height)
                 if (edge > 960) {
@@ -1209,10 +1214,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun decodeRawAndOpen(uri: Uri, photo: Long = photoGeneration, editParams: EditorParams = params.copy()) {
         val raw = decodeRaw(uri, editParams, photo = photo)
         if (photo != photoGeneration || currentUri != uri) return
-        val argb = ColorPipeline.proPhotoLinearToSrgbArgb(raw.linearProPhoto, raw.width, raw.height)
+        val task = currentCoroutineContext()
+        // Hold/split comparison shows the camera's display rendition, not untonemapped sensor RGB.
+        // Keep it stable across white-balance and lens edits; only the film input follows those edits.
+        val original = sourceBitmap ?: com.spektralab.android.data.image.OriginalPreview.raw(app, uri,
+            RawDecodeCancellation { cleared || photo != photoGeneration || !task.isActive }) ?: run {
+            val argb = ColorPipeline.proPhotoLinearToSrgbArgb(raw.linearProPhoto, raw.width, raw.height)
+            Bitmap.createBitmap(argb, raw.width, raw.height, Bitmap.Config.ARGB_8888)
+        }
         withContext(Dispatchers.Main.immediate) {
-            if (photo != photoGeneration || currentUri != uri) return@withContext
-            sourceBitmap = Bitmap.createBitmap(argb, raw.width, raw.height, Bitmap.Config.ARGB_8888)
+            if (photo != photoGeneration || currentUri != uri) {
+                if (original !== sourceBitmap) original.recycle()
+                return@withContext
+            }
+            sourceBitmap = original
             append("RAW 解码: ${raw.width}×${raw.height} · ${raw.make} ${raw.model}" +
                 (matchedLens?.let { " · 镜头校正: $it" } ?: ""))
             openFrame(raw.linearProPhoto, raw.width, raw.height, "ProPhoto RGB")
@@ -1327,54 +1342,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     // 引擎默认 auto_exposure=true + neutral_print_filters_from_database=true，
     // 曝光与中性滤色包本就自动解析；这里只重新测光并把用户手动 shift 归零后重印
     // （与桌面版 solveNow 一致：不把求解 EV 写回 exposure_compensation_ev，避免双重曝光）。
-    fun solve() {
-        val e = engine ?: return
-        if (!hasPhoto || busy) return
-        busy = true
-        viewModelScope.launch {
-            val reply: String = try {
-                engineTasks.onEngine("metering") { e.solve("both") }
-            } catch (ex: SpkException) {
-                fail("SpkException: ${ex.message}")
-                busy = false
-                return@launch
-            } catch (ex: Exception) {
-                fail("${ex::class.simpleName}: ${ex.message}")
-                busy = false
-                return@launch
-            }
-            // 在主线程写 Compose 状态：手动 shift 归零；曝光/中性滤色由引擎自动解析。
-            val sp = JSONObject(reply).optJSONObject("solved_params")
-            val ev = sp?.optDouble("exposure_compensation_ev", 0.0) ?: 0.0
-            val m = sp?.optDouble("m_filter_neutral", 0.0) ?: 0.0
-            val y = sp?.optDouble("y_filter_neutral", 0.0) ?: 0.0
-            params.mFilterShift = 0f
-            params.yFilterShift = 0f
-            append("配光: 测光 EV %+.2f · 中性滤色 M %.0f / Y %.0f".format(ev, m, y))
-            busy = false
-            scheduleRender()
-        }
+    fun solve() = runNativeAnalysis("metering", { solve("both") }) { root ->
+        // 在主线程写 Compose 状态：手动 shift 归零；曝光/中性滤色由引擎自动解析。
+        val sp = root.optJSONObject("solved_params")
+        val ev = sp?.optDouble("exposure_compensation_ev", 0.0) ?: 0.0
+        val m = sp?.optDouble("m_filter_neutral", 0.0) ?: 0.0
+        val y = sp?.optDouble("y_filter_neutral", 0.0) ?: 0.0
+        params.mFilterShift = 0f
+        params.yFilterShift = 0f
+        append("配光: 测光 EV %+.2f · 中性滤色 M %.0f / Y %.0f".format(ev, m, y))
+        scheduleRender()
     }
-
     // 测量场景宽容度：spk_scene_latitude 返回 medium/scene/suggested/fit。
     // 展示建议回拉量，并在 fit 有效时保存 params_delta 供「应用」提交。
     fun measureLatitude() {
-        val e = engine ?: return
-        if (!hasPhoto || busy) return
-        busy = true
-        viewModelScope.launch {
-            val reply: String = try {
-                engineTasks.onEngine("latitude") { e.sceneLatitude(null) }
-            } catch (ex: SpkException) {
-                fail("SpkException: ${ex.message}")
-                busy = false
-                return@launch
-            } catch (ex: Exception) {
-                fail("${ex::class.simpleName}: ${ex.message}")
-                busy = false
-                return@launch
-            }
-            val root = JSONObject(reply)
+        if (!nativeAnalysisAllowed()) return
+        latitudeDelta = null
+        latitudeCanApply = false
+        runNativeAnalysis("latitude", { sceneLatitude(null) }) { root ->
             val suggested = root.optJSONObject("suggested")
             val scene = root.optJSONObject("scene")
             val fit = root.optJSONObject("fit")
@@ -1392,14 +1377,46 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 if (!issue.isNullOrEmpty()) latitudeReadout = "$latitudeReadout\n拟合失败: $issue"
             }
             append(latitudeReadout!!)
-            busy = false
+        }
+    }
+
+    private fun nativeAnalysisAllowed() = hasPhoto && !busy && !isExporting && !isBatchExporting && !isApplyingEdits
+
+    /** Bind read-only native analysis to the exact photo and committed settings that requested it. */
+    private fun runNativeAnalysis(kind: String, query: EngineClient.() -> String, apply: (JSONObject) -> Unit) {
+        val target = engine ?: return
+        if (!nativeAnalysisAllowed()) return
+        val photo = photoGeneration
+        val uri = currentUri
+        val snapshot = EditSnapshot.capture(committedParams())
+        val width = previewW
+        val height = previewH
+        busy = true
+        viewModelScope.launch {
+            try {
+                val reply = engineTasks.onEngine(kind) {
+                    if (photo != photoGeneration || uri != currentUri) return@onEngine null
+                    // A slider's latest request may still be queued when analysis is tapped.
+                    target.setChangedParams(snapshot.toParams().deltaJson(width, height))
+                    target.query()
+                } ?: return@launch
+                if (photo == photoGeneration && uri == currentUri && !isExporting && !isBatchExporting &&
+                    snapshot == EditSnapshot.capture(committedParams())) apply(JSONObject(reply))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (photo == photoGeneration && uri == currentUri) fail("${failure::class.simpleName}: ${failure.message}")
+            } finally {
+                // A previous photo must never clear the new photo loader's busy state.
+                if (photo == photoGeneration && uri == currentUri) busy = false
+            }
         }
     }
 
     // 应用测量得到的场景置位（fit.params_delta → EditorParams → set_params + 重显影）。
     fun applyLatitude() {
         val delta = latitudeDelta ?: return
-        if (!hasPhoto) return
+        if (!nativeAnalysisAllowed()) return
         params.sceneLatitudeActive = delta.optBoolean("scene_latitude_active", false)
         params.sceneLatitudeNorm = delta.optString("scene_latitude_norm", "power")
         params.sceneLatitudeHighlightKnee = delta.optDouble("scene_latitude_highlight_knee", 2.0).toFloat()
@@ -1650,6 +1667,115 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    internal fun cancelTableProjectExport() {
+        if (!isExporting || isExportCommitCompleted) return
+        exportCancelRequested = true
+        renderStage = app.getString(com.spektralab.android.R.string.table_output_cancelling)
+        if (tableNativeRendering) engine?.cancel()
+    }
+
+    /** Uses the same serialized owner, decoder, grade and cache as ordinary photo output. */
+    internal fun exportTableProject(request: com.spektralab.android.core.model.TableExportRequest,
+        onFinished: (Result<String>) -> Unit): Boolean {
+        val e = engine ?: return false
+        if (busy || isExporting || isBatchExporting || isApplyingEdits) return false
+        prepareVersionBoundary()
+        val interrupted = pendingPreviewWork()
+        val activeUri = currentUri
+        val activeParams = EditSnapshot.capture(committedParams()).toParams()
+        val correctLens = lensCorrectionActive
+        isExporting = true; exportCancelRequested = false; isExportCommitCompleted = false
+        renderProgress = 0f; renderStage = app.getString(com.spektralab.android.R.string.table_output_preparing)
+        viewModelScope.launch {
+            engineTasks.run("export") {
+                var session: com.spektralab.android.data.export.TableExportSession? = null
+                var needsRestore = false
+                var outcome: Result<String>? = null
+                try {
+                    withContext(Dispatchers.IO) {
+                        session = com.spektralab.android.data.export.TableExportSession.prepare(app, request, ::checkExportCancellation) { index, total ->
+                            renderStage = app.getString(com.spektralab.android.R.string.table_output_checking, index + 1, total)
+                        }
+                    }
+                    val transaction = requireNotNull(session)
+                    transaction.inputs.forEachIndexed { index, input ->
+                        checkExportCancellation()
+                        renderStage = app.getString(com.spektralab.android.R.string.table_output_rendering, index + 1, transaction.inputs.size)
+                        renderProgress = index * 80f / transaction.inputs.size
+                        var bitmap: Bitmap? = null
+                        try {
+                            if (input.params == null) {
+                                withContext(Dispatchers.IO) {
+                                    RenderAdmission.check(app)
+                                    bitmap = decodeBitmapForExport(Uri.parse(input.source.uri), input.requestedEdge)
+                                }
+                            } else {
+                                val p = input.params.toParams()
+                                val geometry = JSONObject(p.openJson(input.evidence.width.coerceAtLeast(1), input.evidence.height.coerceAtLeast(1)))
+                                val crop = minOf(geometry.optDouble("geometry_crop_w", 1.0), geometry.optDouble("geometry_crop_h", 1.0)).coerceAtLeast(.01)
+                                val resolution = kotlin.math.ceil(input.requestedEdge / crop).toInt().coerceAtLeast(1)
+                                check(resolution <= com.spektralab.android.data.export.TableExportSession.MAX_INPUT_EDGE) { "TABLE_EXPORT_CAPACITY" }
+                                val options = ExportOptions("PNG", resolution, "sRGB", 100, false, false, correctLens)
+                                val uri = Uri.parse(input.source.uri)
+                                val cacheRequest = withContext(Dispatchers.IO) { renderCache.prepare(uri, p, options, ::checkExportCancellation) }
+                                var lease: com.spektralab.android.data.cache.RenderDiskCache.Lease? = null
+                                try {
+                                    withContext(Dispatchers.IO) { lease = cacheRequest?.let { renderCache.acquire(it, ::checkExportCancellation) } }
+                                    val cached = lease
+                                    if (cached != null) withContext(Dispatchers.IO) {
+                                        com.spektralab.android.data.export.TableExportSession.checkSourceSize(cached.width, cached.height)
+                                        bitmap = com.spektralab.android.data.export.Rgba16Bitmap.convert(cached, grade(p), ::checkExportCancellation)
+                                    } else withContext(engineDispatcher) {
+                                        RenderAdmission.check(app); needsRestore = true
+                                        openExportSource(e, uri, p, resolution, "sRGB", options)
+                                        tableNativeRendering = true
+                                        try { e.renderExportOnce().use { result ->
+                                            checkExportCancellation(); e.closeSession()
+                                            withContext(Dispatchers.IO) {
+                                                if (cacheRequest != null) renderCache.store(cacheRequest, uri, result, ::checkExportCancellation)
+                                                com.spektralab.android.data.export.TableExportSession.checkSourceSize(result.width, result.height)
+                                                bitmap = com.spektralab.android.data.export.Rgba16Bitmap.convert(result, grade(p), ::checkExportCancellation)
+                                            }
+                                        } } finally { tableNativeRendering = false }
+                                    }
+                                } finally { lease?.close() }
+                            }
+                            withContext(Dispatchers.IO) { transaction.stage(input, requireNotNull(bitmap)) }
+                        } finally { bitmap?.recycle() }
+                    }
+                    renderProgress = 85f; renderStage = app.getString(com.spektralab.android.R.string.table_output_composing)
+                    val path = withContext(Dispatchers.IO) { transaction.publish {
+                        isExportCommitCompleted = true; exportCancelRequested = false
+                    } }
+                    outcome = Result.success(path)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Throwable) {
+                    if (failure !is Exception && failure !is OutOfMemoryError) throw failure
+                    outcome = Result.failure(failure)
+                } finally {
+                    withContext(NonCancellable + Dispatchers.IO) { session?.close() }
+                    if (needsRestore && !cleared) withContext(NonCancellable + engineDispatcher) {
+                        runCatching {
+                            e.closeSession()
+                            previewLinear?.let { pl -> e.open(pl, previewW, previewH, 3,
+                                activeParams.openJson(previewW, previewH, inputColorSpace = previewInputColorSpace)) }
+                            sourceExif = activeUri?.let(::readExif)
+                        }.onFailure { android.util.Log.e("TableExport", "Preview session restore failed", it) }
+                    }
+                    withContext(NonCancellable + Dispatchers.Main.immediate) {
+                        renderProgress = null; renderStage = ""; exportCancelRequested = false
+                        isExportCommitCompleted = false; isExporting = false
+                        if (!cleared) {
+                            outcome?.let(onFinished)
+                            resumePreview(interrupted)
+                        }
+                    }
+                }
+            }
+        }
+        return true
+    }
+
     fun createEngine() {
         if (engine != null) return
         if (engineCreateJob?.isActive == true) return
@@ -1801,7 +1927,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     if (isRaw) {
                         decodeRawAndOpen(uri, photo)
                     } else {
-                        val bmp = decodeSampled(uri)
+                        val bmp = decodeSampled(uri, preserveColorSpace = true)
                         if (photo != photoGeneration) { bmp.recycle(); return@onEngine }
                         val linear = ColorPipeline.bitmapToLinearSrgb(bmp)
                         if (photo != photoGeneration) { bmp.recycle(); return@onEngine }
@@ -1828,15 +1954,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun decodeSmartPreview(uri: Uri): Bitmap {
         if (RawDecoder.isRaw(app, uri, queryDisplayName(uri))) {
-            readExif(uri)?.thumbnail?.let { data ->
-                BitmapFactory.decodeByteArray(data,0,data.size)?.let { bitmap ->
-                    val edge=max(bitmap.width,bitmap.height)
-                    if(edge<=320)return bitmap
-                    val scale=320f/edge
-                    return Bitmap.createScaledBitmap(bitmap,(bitmap.width*scale).roundToInt().coerceAtLeast(1),
-                        (bitmap.height*scale).roundToInt().coerceAtLeast(1),true).also { if(it!==bitmap)bitmap.recycle() }
-                }
-            }
+            com.spektralab.android.data.image.OriginalPreview.raw(app, uri,
+                RawDecodeCancellation { cleared || Thread.currentThread().isInterrupted }, 320)?.let { return it }
             RawDecoder.decodeForExport(app,uri,320).use { raw ->
                 val argb=ColorPipeline.proPhotoLinearToSrgbArgb(raw.copySmallLinearRgb(),raw.width,raw.height)
                 return Bitmap.createBitmap(argb,raw.width,raw.height,Bitmap.Config.ARGB_8888)
@@ -1925,6 +2044,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             } catch(cancelled:CancellationException){throw cancelled}
             catch(error:Exception){if(photo==photoGeneration)smartMessage="暂时无法完成分析，可继续手动调整"}
             finally { if(photo==photoGeneration)busy=false }
+        }
+    }
+
+    /** Picker imports explicitly restore hidden library entries; session navigation does not. */
+    fun importPhotos(uris: List<Uri>, addToSession: Boolean = false) {
+        if (uris.isEmpty() || busy || isApplyingEdits || isExporting || isBatchExporting) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { EditStore.restoreImportedPhotos(app, uris) }
+                if (addToSession) addPhotos(uris, openSelected = true) else openPhotos(uris)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { fail(app.getString(com.spektralab.android.R.string.photos_import_restore_error)) }
         }
     }
 
@@ -2415,45 +2546,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     ExportMetadata.from(sourceExif, options.keepCapture, options.keepLocation))
             }
         }
-        // A full RGBA16 ShortArray plus full ARGB IntArray exceeded ART limits even for 12 MP.
-        val bitmap = Bitmap.createBitmap(result.width, result.height, Bitmap.Config.ARGB_8888)
-        try {
-            val rows = minOf(32, result.height)
-            val strip = ShortArray(result.width * rows * 4)
-            val argb = IntArray(result.width * rows)
-            val g = grade(editParams)
-            val pixel = FloatArray(3)
-            val native = if (g.usesNativeGrade) FloatArray(result.width * rows * 3) else null
-            var y = 0
-            while (y < result.height) {
-                checkExportCancellation()
-                val count = minOf(rows, result.height - y)
-                result.readRows(y, count, strip)
-                if (native != null) g.nativeRows(strip, 0, result.width, result.height, y, count, native)
-                if (g.isIdentity) {
-                    for (i in 0 until result.width * count) {
-                        val r = ((strip[i * 4].toInt() and 65535) * 255 + 32767) / 65535
-                        val green = ((strip[i * 4 + 1].toInt() and 65535) * 255 + 32767) / 65535
-                        val b = ((strip[i * 4 + 2].toInt() and 65535) * 255 + 32767) / 65535
-                        argb[i] = (0xFF shl 24) or (r shl 16) or (green shl 8) or b
-                    }
-                } else {
-                    for (i in 0 until result.width * count) {
-                        if (native != null) {
-                            pixel[0] = native[i * 3]; pixel[1] = native[i * 3 + 1]; pixel[2] = native[i * 3 + 2]
-                        } else g.gradeAt(strip[i * 4], strip[i * 4 + 1], strip[i * 4 + 2], pixel,
-                            i % result.width, y + i / result.width, result.width, result.height)
-                        val r = (pixel[0] * 255f + .5f).toInt().coerceIn(0, 255)
-                        val gg = (pixel[1] * 255f + .5f).toInt().coerceIn(0, 255)
-                        val b = (pixel[2] * 255f + .5f).toInt().coerceIn(0, 255)
-                        argb[i] = (0xFF shl 24) or (r shl 16) or (gg shl 8) or b
-                    }
-                }
-                bitmap.setPixels(argb, 0, result.width, 0, y, result.width, count)
-                y += count
-            }
-            return saveBitmap(bitmap, suffix, options)
-        } finally { bitmap.recycle() }
+        val bitmap = com.spektralab.android.data.export.Rgba16Bitmap.convert(result, grade(editParams), ::checkExportCancellation)
+        try { return saveBitmap(bitmap, suffix, options) } finally { bitmap.recycle() }
     }
 
     private fun exportPublisher() = ExportPublisher(app, ::checkExportCancellation) {
@@ -2532,11 +2626,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return runCatching { app.contentResolver.openInputStream(source)?.use(::ExifInterface) }.getOrNull()
     }
 
-    private fun decodeSampled(uri: Uri, maxLongEdge: Int = 2048): Bitmap {
+    private fun decodeSampled(uri: Uri, maxLongEdge: Int = 2048, preserveColorSpace: Boolean = false): Bitmap {
         if (Build.VERSION.SDK_INT >= 28) {
             return ImageDecoder.decodeBitmap(ImageDecoder.createSource(app.contentResolver, uri)) { decoder, info, _ ->
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                if (!preserveColorSpace) decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
                 val edge = max(info.size.width, info.size.height)
                 if (edge > maxLongEdge) {
                     val scale = maxLongEdge.toDouble() / edge
@@ -2551,7 +2645,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxLongEdge) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         opts.inPreferredConfig = Bitmap.Config.ARGB_8888
-        opts.inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+        if (!preserveColorSpace) opts.inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
         val bitmap = app.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, opts) }
             ?: throw IllegalArgumentException("无法解码此图片，请选择有效的 JPEG、PNG、WebP 或支持的 RAW 文件")
         val orientation = readExif(uri)?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)

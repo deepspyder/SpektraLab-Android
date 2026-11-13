@@ -23,8 +23,10 @@ internal object EditVersionStorageAudit {
             repo.organization.save(asset, PhotoOrganization(), PhotoOrganization(4, PhotoLabel.BLUE))
             repo.saveSession(SavedEditSession(listOf(uri.toString()), uri.toString(), emptySet()))
         }
-        // The only v4 addition is this table/index. Recreate the exact preceding v3 schema.
-        SQLiteDatabase.openDatabase(File(root, "saved-photos.db").path, null, 0).use { db -> db.execSQL("DROP TABLE virtual_edits"); db.version = 3 }
+        // Remove both later additions to recreate the exact preceding v3 schema.
+        SQLiteDatabase.openDatabase(File(root, "saved-photos.db").path, null, 0).use { db ->
+            db.execSQL("DROP TABLE hidden_photos"); db.execSQL("DROP TABLE virtual_edits"); db.version = 3
+        }
         var copyId = ""
         SavedPhotoRepository.open(root).use { repo ->
             val before = repo.find(asset)!!

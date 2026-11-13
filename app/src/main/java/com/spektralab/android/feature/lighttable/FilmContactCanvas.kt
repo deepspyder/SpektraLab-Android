@@ -133,6 +133,12 @@ internal fun PhotoWallCanvas(
     val viewportRect = Rect(Offset.Zero, androidx.compose.ui.geometry.Size(viewport.width.toFloat(), viewport.height.toFloat()))
     SideEffect {
         state.focus = viewportRect.center; state.origin = anchor; state.viewportFit = fit
+        if (viewport.width > 0 && viewport.height > 0) {
+            val start = (Offset.Zero - origin) / scale
+            val end = (Offset(viewport.width.toFloat(), viewport.height.toFloat()) - origin) / scale
+            state.exportViewport = com.spektralab.android.core.model.TableBox(start.x, start.y, end.x, end.y)
+            state.exportFade = with(density) { 12.dp.toPx() } / scale
+        }
         photos.map { it.key }.filterNot(state.photoOrder::contains).forEach(state.photoOrder::add)
     }
     val frames = layout.filter { it.outer().screen(origin, scale).overlaps(viewportRect) }
@@ -147,7 +153,7 @@ internal fun PhotoWallCanvas(
     val overlapOpacity=frames.mapIndexed { index, frame ->
         key(photos[frame.index].key){
             val depth=overlaps[index].maxOfOrNull { polygonBounds(it).let { bounds -> min(bounds.width, bounds.height) * scale } } ?: 0f
-            animateFloatAsState(1f-.42f*(depth/with(density){12.dp.toPx()}).coerceIn(0f,1f),
+            animateFloatAsState(com.spektralab.android.core.model.TableMaterial.transmission(depth, with(density){12.dp.toPx()}),
                 tween(120),label="overlap-transmission").value
         }
     }

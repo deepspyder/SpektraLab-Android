@@ -150,10 +150,11 @@ fun SliderRow(
 }
 
 @Composable
-fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(checked, role = Role.Switch, onValueChange = onChecked), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(end = 16.dp))
-        Switch(checked = checked, onCheckedChange = null)
+fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, onChecked: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onChecked), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(end = 16.dp),
+            color = if (enabled) androidx.compose.material3.LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f))
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 
