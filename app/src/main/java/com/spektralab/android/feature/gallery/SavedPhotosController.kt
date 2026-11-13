@@ -14,12 +14,25 @@ import com.spektralab.android.data.local.EditStore
 import com.spektralab.android.data.library.SourceProbe
 import com.spektralab.android.core.model.SavedEditSession
 import com.spektralab.android.core.model.SourceEvidence
+import com.spektralab.android.core.model.PhotoLibraryFilter
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 /** Metadata loads and at most two bounded thumbnail reads; never starts the film engine. */
 internal class SavedPhotosController(private val context: Context, private val scope: CoroutineScope) {
+    val organization = PhotoOrganizationController(context, scope, ::refresh)
+    var filter by mutableStateOf(PhotoLibraryFilter())
+        private set
+    var matchingCount by mutableStateOf(0L)
+        private set
+    var totalCount by mutableStateOf(0L)
+        private set
+    fun applyFilter(value: PhotoLibraryFilter) {
+        if (sourceJob?.isActive == true || opening || organization.pending || filter == value) return
+        filter = value
+        fetch(false)
+    }
     var photos by mutableStateOf<List<SavedPhoto>>(emptyList())
         private set
     var loading by mutableStateOf(false)
@@ -58,15 +71,26 @@ internal class SavedPhotosController(private val context: Context, private val s
         load?.cancel()
         loading = true; error = null
         val offset = if (append) photos.size else 0
+        val requestedFilter = filter
         load = scope.launch {
             try {
                 val (page, session) = withContext(Dispatchers.IO) {
-                    EditStore.savedPhotos(context, offset) to runCatching { EditStore.savedSession(context) }
+                    EditStore.photoLibraryPage(context, requestedFilter, offset) to runCatching { EditStore.savedSession(context) }
                 }
-                photos = if (append) (photos + page).distinctBy { it.assetId } else page
+                if (requestedFilter != filter) return@launch
+                // A deleted album falls back to All. No hidden empty filter remains selected.
+                if (requestedFilter.albumId != null && page.albums.none { it.id == requestedFilter.albumId }) {
+                    filter = requestedFilter.copy(albumId = null)
+                    fetch(false)
+                    return@launch
+                }
+                organization.albums = page.albums
+                matchingCount = page.matchingCount
+                totalCount = page.totalCount
+                photos = if (append) (photos + page.photos).distinctBy { it.assetId } else page.photos
                 savedSession = session.getOrNull()
                 sessionError = if (session.isFailure) context.getString(R.string.photos_session_load_error) else null
-                hasMore = page.size == 60
+                hasMore = photos.size < matchingCount
                 sourceErrors = emptyMap()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error = context.getString(R.string.photos_load_error) }

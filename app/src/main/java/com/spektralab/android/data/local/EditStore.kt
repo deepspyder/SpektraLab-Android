@@ -123,6 +123,23 @@ object EditStore {
     @Synchronized
     internal fun savedPhotoCount(context: Context) = checked { repository(context).count() }
     @Synchronized
+    internal fun photoLibraryPage(context: Context, filter: com.spektralab.android.core.model.PhotoLibraryFilter, offset: Int) =
+        checked { repository(context).page(filter, offset) }
+    @Synchronized
+    internal fun photoOrganization(context: Context, assetId: String) = checked { repository(context).organization.read(assetId) }
+    @Synchronized
+    internal fun savePhotoOrganization(context: Context, assetId: String, expected: com.spektralab.android.core.model.PhotoOrganization,
+                                      updated: com.spektralab.android.core.model.PhotoOrganization) =
+        checked { repository(context).organization.save(assetId, expected, updated) }
+    @Synchronized
+    internal fun photoAlbums(context: Context) = checked { repository(context).organization.albums() }
+    @Synchronized
+    internal fun createPhotoAlbum(context: Context, name: String) = checked { repository(context).organization.createAlbum(name) }
+    @Synchronized
+    internal fun renamePhotoAlbum(context: Context, id: String, name: String) = checked { repository(context).organization.renameAlbum(id, name) }
+    @Synchronized
+    internal fun deletePhotoAlbum(context: Context, id: String) = checked { repository(context).organization.deleteAlbum(id) }
+    @Synchronized
     internal fun savedPhoto(context: Context, assetId: String) = checked { repository(context).find(assetId) }
     @Synchronized
     internal fun checkSavedSource(context: Context, photo: com.spektralab.android.data.library.SavedPhoto,

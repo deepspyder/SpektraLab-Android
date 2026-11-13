@@ -6,6 +6,8 @@ import android.net.Uri
 import com.spektralab.android.core.model.CanonicalJson
 import com.spektralab.android.core.model.SavedEditSession
 import com.spektralab.android.core.model.SourceEvidence
+import com.spektralab.android.core.model.PhotoLabel
+import com.spektralab.android.core.model.PhotoLibraryFilter
 import com.spektralab.android.data.local.writeAtomicJson
 import java.io.Closeable
 import java.io.File
@@ -13,10 +15,15 @@ import java.util.UUID
 import org.json.JSONObject
 
 internal data class SavedPhoto(val assetId: String, val variantId: String, val uri: String, val name: String,
-    val revision: Long, val updatedAt: Long, val sourceSha256: String? = null, val sourceSize: Long? = null)
+    val revision: Long, val updatedAt: Long, val sourceSha256: String? = null, val sourceSize: Long? = null,
+    val rating: Int = 0, val label: PhotoLabel = PhotoLabel.NONE)
+
+internal data class PhotoLibraryPage(val photos: List<SavedPhoto>, val albums: List<com.spektralab.android.core.model.PhotoAlbum>,
+    val matchingCount: Long, val totalCount: Long)
 
 /** Production default-variant store. All calls are serialized by the EditStore facade. */
 internal class SavedPhotoRepository private constructor(private val directory: File, private val db: SQLiteDatabase) : Closeable {
+    val organization = PhotoOrganizationRepository(db)
     data class PendingWrite(val uri: Uri, val expected: String?, val json: String)
     enum class Checkpoint { BACKUP_READY, IMPORT_WRITTEN, IMPORT_COMMITTED, BATCH_WRITTEN, SOURCE_RELINKED, SOURCE_RELINK_COMMITTED }
     internal var checkpoint: (Checkpoint) -> Unit = {}
@@ -86,16 +93,28 @@ internal class SavedPhotoRepository private constructor(private val directory: F
         checkpoint(Checkpoint.BATCH_WRITTEN)
     }
 
-    fun list(limit: Int, offset: Int): List<SavedPhoto> {
+    fun list(limit: Int, offset: Int, filter: PhotoLibraryFilter = PhotoLibraryFilter()): List<SavedPhoto> {
         require(limit in 1..100 && offset >= 0)
-        return db.rawQuery("$PHOTO_COLUMNS ORDER BY e.updated_at DESC,a.asset_id LIMIT ? OFFSET ?",
-            arrayOf(limit.toString(), offset.toString())).use { cursor -> buildList {
+        val (where, args) = PhotoOrganizationRepository.selection(filter)
+        return db.rawQuery("$PHOTO_COLUMNS$where ORDER BY e.updated_at DESC,a.asset_id LIMIT ? OFFSET ?",
+            args + arrayOf(limit.toString(), offset.toString())).use { cursor -> buildList {
             while (cursor.moveToNext()) add(photo(cursor))
         } }
     }
     fun count(): Long = db.rawQuery("SELECT COUNT(*) FROM edits", null).use { it.moveToFirst(); it.getLong(0) }
+    fun matchingCount(filter: PhotoLibraryFilter): Long {
+        val (where, args) = PhotoOrganizationRepository.selection(filter)
+        return db.rawQuery("SELECT COUNT(*) FROM assets a JOIN edits e USING(asset_id) LEFT JOIN photo_marks m USING(asset_id)$where", args)
+            .use { it.moveToFirst(); it.getLong(0) }
+    }
+    fun page(filter: PhotoLibraryFilter, offset: Int) = transaction {
+        PhotoLibraryPage(list(60, offset, filter), organization.albums(), matchingCount(filter), count())
+    }
 
     fun find(assetId: String): SavedPhoto? = db.rawQuery("$PHOTO_COLUMNS WHERE a.asset_id=?", arrayOf(assetId)).use {
+        if (it.moveToFirst()) photo(it) else null
+    }
+    fun findByUri(uri: Uri): SavedPhoto? = db.rawQuery("$PHOTO_COLUMNS WHERE a.source_key=?", arrayOf(key(uri))).use {
         if (it.moveToFirst()) photo(it) else null
     }
 
@@ -172,6 +191,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
         cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3),
         cursor.getLong(4), cursor.getLong(5), cursor.getString(6),
         if (cursor.isNull(7)) null else cursor.getLong(7),
+        cursor.getInt(8), PhotoLabel.fromId(cursor.getString(9)),
     )
 
     private fun insert(uri: Uri, json: String, name: String) {
@@ -216,7 +236,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
     override fun close() = db.close()
 
     companion object {
-        private const val PHOTO_COLUMNS = "SELECT a.asset_id,e.variant_id,a.uri,a.name,e.revision,e.updated_at,s.sha256,s.bytes FROM assets a JOIN edits e USING(asset_id) LEFT JOIN source_checks s USING(asset_id)"
+        private const val PHOTO_COLUMNS = "SELECT a.asset_id,e.variant_id,a.uri,a.name,e.revision,e.updated_at,s.sha256,s.bytes,COALESCE(m.rating,0),COALESCE(m.label,'none') FROM assets a JOIN edits e USING(asset_id) LEFT JOIN source_checks s USING(asset_id) LEFT JOIN photo_marks m USING(asset_id)"
         private val knownTypes by lazy {
             val defaults = com.spektralab.android.core.model.EditorParams().toJson()
             defaults.keys().asSequence().associateWith { when (defaults.get(it)) {
@@ -233,7 +253,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                 })
             try {
                 db.setForeignKeyConstraintsEnabled(true)
-                require(db.version in 0..2) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
+                require(db.version in 0..3) { "UNSUPPORTED_SAVED_PHOTOS_VERSION" }
                 val repository = SavedPhotoRepository(directory, db)
                 if (db.version == 0) repository.transaction {
                     db.execSQL("CREATE TABLE assets(asset_id TEXT PRIMARY KEY,source_key TEXT UNIQUE NOT NULL,uri TEXT NOT NULL,name TEXT NOT NULL)")
@@ -247,6 +267,10 @@ internal class SavedPhotoRepository private constructor(private val directory: F
                     db.execSQL("CREATE TABLE retired_sources(source_key TEXT PRIMARY KEY,asset_id TEXT NOT NULL REFERENCES assets(asset_id))")
                     db.execSQL("CREATE TABLE workbench(id TEXT PRIMARY KEY,payload TEXT NOT NULL)")
                     db.version = 2
+                }
+                if (db.version == 2) repository.transaction {
+                    PhotoOrganizationRepository.createSchema(db)
+                    db.version = 3
                 }
                 return repository
             } catch (error: Throwable) { db.close(); throw error }

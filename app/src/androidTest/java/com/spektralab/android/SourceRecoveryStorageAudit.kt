@@ -100,7 +100,7 @@ internal object SourceRecoveryStorageAudit {
         }
         val future = "{\"version\":99,\"keep\":true}"
         SQLiteDatabase.openDatabase(File(dir, "saved-photos.db").path, null, 0).use { db ->
-            check(db.version == 2)
+            check(db.version == 3)
             db.execSQL("UPDATE workbench SET payload=?", arrayOf(future))
         }
         SavedPhotoRepository.open(dir).use { repo ->

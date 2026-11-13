@@ -80,6 +80,9 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
                     Text(stringResource(R.string.photos_hint), style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 16.dp))
                 }
+                item {
+                    LibraryFilterBar(controller, enabled && !controller.loading && !controller.organization.pending)
+                }
                 controller.savedSession?.takeIf { it.photos.isNotEmpty() }?.let { session -> item {
                     Row(Modifier.fillMaxWidth().clip(TheiaShapes.panel)
                         .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp),
@@ -112,13 +115,18 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
                     Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                     TextButton(onClick = controller::refresh) { Text(stringResource(R.string.photos_retry)) }
                 } }
+                if (controller.organization.target == null && !controller.organization.albumManager) controller.organization.error?.let { message -> item {
+                    Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = controller.organization::dismissError) { Text(stringResource(R.string.library_cancel)) }
+                } }
                 if (controller.photos.isEmpty() && !controller.loading && controller.error == null) item {
                     Column(Modifier.fillMaxWidth().padding(vertical = 56.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.Image, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
-                        Text(stringResource(R.string.photos_empty), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-                        Text(stringResource(R.string.photos_empty_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Button(onClick = onImport, enabled = enabled, shape = TheiaShapes.control, modifier = Modifier.padding(top = 24.dp).heightIn(min = 48.dp)) {
-                            Text(stringResource(R.string.photos_import))
+                        Text(stringResource(if (controller.filter.active) R.string.library_no_results else R.string.photos_empty), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
+                        Text(stringResource(if (controller.filter.active) R.string.library_no_results_hint else R.string.photos_empty_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick = { if (controller.filter.active) controller.applyFilter(com.spektralab.android.core.model.PhotoLibraryFilter()) else onImport() },
+                            enabled = enabled && !controller.organization.pending, shape = TheiaShapes.control, modifier = Modifier.padding(top = 24.dp).heightIn(min = 48.dp)) {
+                            Text(stringResource(if (controller.filter.active) R.string.library_filter_clear else R.string.photos_import))
                         }
                     }
                 }
@@ -131,7 +139,7 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
                     val label = stringResource(R.string.photos_open, photo.name)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                       Row(Modifier.weight(1f).clip(TheiaShapes.control)
-                        .clickable(enabled = enabled && !controller.loading, role = Role.Button) { controller.open(photo, onOpen) }
+                        .clickable(enabled = enabled && !controller.loading && !controller.organization.pending, role = Role.Button) { controller.open(photo, onOpen) }
                         .semantics(mergeDescendants = true) { contentDescription = label }
                         .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -144,15 +152,19 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(photo.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(stringResource(R.string.photos_continue), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            PhotoMarks(photo.rating, photo.label)
                             if (photo.sourceSha256 != null) Text(stringResource(R.string.photos_source_verified),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                       }
                       Box {
-                        IconButton(onClick = { menu = true }, enabled = enabled && !controller.loading) {
+                        IconButton(onClick = { menu = true }, enabled = enabled && !controller.loading && !controller.organization.pending) {
                             Icon(Icons.Rounded.MoreVert, stringResource(R.string.photos_source_actions, photo.name))
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.library_organize)) }, onClick = {
+                                menu = false; controller.organization.open(photo)
+                            })
                             DropdownMenuItem(text = { Text(stringResource(R.string.photos_check_source)) },
                                 onClick = { menu = false; checkTarget = photo })
                             DropdownMenuItem(text = { Text(stringResource(R.string.photos_relink_source)) }, onClick = {
@@ -179,6 +191,7 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
             }
         }
     }
+    PhotoOrganizationSheets(controller.organization)
     checkTarget?.let { photo ->
         AlertDialog(onDismissRequest = { checkTarget = null },
             title = { Text(stringResource(R.string.photos_check_title)) },

@@ -141,7 +141,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
-        savedPhotosAudit = audit?.takeIf { it in setOf("saved-photos", "saved-photos-layout", "saved-storage", "saved-upgrade-seed", "saved-upgrade-verify", "saved-latency", "saved-crash-during", "saved-crash-after", "saved-crash-verify", "source-recovery", "source-recovery-layout", "source-recovery-storage", "source-upgrade-seed", "source-upgrade-verify", "source-crash-during", "source-crash-after", "source-crash-verify") }
+        savedPhotosAudit = audit?.takeIf { it in setOf("saved-photos", "saved-photos-layout", "saved-storage", "saved-upgrade-seed", "saved-upgrade-verify", "saved-latency", "saved-crash-during", "saved-crash-after", "saved-crash-verify", "source-recovery", "source-recovery-layout", "source-recovery-storage", "source-upgrade-seed", "source-upgrade-verify", "source-crash-during", "source-crash-after", "source-crash-verify", "photo-organization", "photo-organization-layout", "photo-organization-storage", "organization-upgrade-seed", "organization-upgrade-verify", "organization-crash-during", "organization-crash-after", "organization-crash-verify") }
         migrationOnly = audit == "library-migration"
         migrationCrashMode = audit?.takeIf { it in setOf("migration-crash-during", "migration-crash-after") }
         migrationCrashVerify = audit == "migration-crash-verify"
@@ -214,6 +214,16 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
         savedPhotosAudit?.let { mode ->
             when (mode) {
+                "organization-upgrade-seed" -> case("library.organization_upgrade_seed") { PhotoOrganizationUpgradeAudit(this, output).seed() }
+                "organization-upgrade-verify" -> case("library.organization_upgrade") { PhotoOrganizationUpgradeAudit(this, output).verify() }
+                "organization-crash-during", "organization-crash-after" -> PhotoOrganizationProcessAudit(File(output, "organization-process/${if (mode == "organization-crash-after") "after" else "during"}")).terminate(mode == "organization-crash-after")
+                "organization-crash-verify" -> case("library.organization_process") { PhotoOrganizationProcessAudit(File(output, "organization-process")).verify() }
+                "photo-organization-storage" -> case("library.organization_storage") { PhotoOrganizationAudit.run(targetContext, output) }
+                "photo-organization-layout" -> case("library.organization_ui") { PhotoOrganizationUiAudit(this, output).run(true) }
+                "photo-organization" -> {
+                    case("library.organization_storage") { PhotoOrganizationAudit.run(targetContext, output) }
+                    case("library.organization_ui") { PhotoOrganizationUiAudit(this, output).run() }
+                }
                 "source-crash-during", "source-crash-after" -> SourceRecoveryProcessAudit(this,
                     File(output, "source-process-final")).terminate(mode == "source-crash-after")
                 "source-crash-verify" -> case("library.source_process_recovery") { SourceRecoveryProcessAudit(this,
