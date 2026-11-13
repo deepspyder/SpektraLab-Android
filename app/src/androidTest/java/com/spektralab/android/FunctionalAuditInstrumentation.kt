@@ -92,6 +92,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var exportEngineInput = "perf-z6ii.NEF"
     private var interactionPerfLabel = "current"
     private var colorOnly = false
+    private var savedPhotosAudit: String? = null
     private var migrationOnly = false
     private var migrationCrashMode: String? = null
     private var migrationCrashVerify = false
@@ -140,6 +141,7 @@ class FunctionalAuditInstrumentation : Instrumentation() {
         fullSizeCurveCacheOnly = audit == "curves-raw"
         curvesOnly = audit == "curves"
         colorOnly = audit == "color"
+        savedPhotosAudit = audit?.takeIf { it in setOf("saved-photos", "saved-photos-layout", "saved-storage", "saved-upgrade-seed", "saved-upgrade-verify", "saved-latency", "saved-crash-during", "saved-crash-after", "saved-crash-verify", "source-recovery", "source-recovery-layout", "source-recovery-storage", "source-upgrade-seed", "source-upgrade-verify", "source-crash-during", "source-crash-after", "source-crash-verify") }
         migrationOnly = audit == "library-migration"
         migrationCrashMode = audit?.takeIf { it in setOf("migration-crash-during", "migration-crash-after") }
         migrationCrashVerify = audit == "migration-crash-verify"
@@ -210,6 +212,35 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        savedPhotosAudit?.let { mode ->
+            when (mode) {
+                "source-crash-during", "source-crash-after" -> SourceRecoveryProcessAudit(this,
+                    File(output, "source-process-final")).terminate(mode == "source-crash-after")
+                "source-crash-verify" -> case("library.source_process_recovery") { SourceRecoveryProcessAudit(this,
+                    File(output, "source-process-final")).verify() }
+                "source-upgrade-seed" -> case("library.source_cover_seed") { SourceRecoveryUpgradeAudit(this, output).seed() }
+                "source-upgrade-verify" -> case("library.source_cover_upgrade") { SourceRecoveryUpgradeAudit(this, output).verify() }
+                "source-recovery-storage" -> case("library.source_recovery_storage") { SourceRecoveryStorageAudit.run(targetContext, output) }
+                "source-recovery-layout" -> case("library.source_recovery_ui") { SourceRecoveryUiAudit(this, output).run(true) }
+                "source-recovery" -> {
+                    case("library.source_recovery_storage") { SourceRecoveryStorageAudit.run(targetContext, output) }
+                    case("library.source_recovery_ui") { SourceRecoveryUiAudit(this, output).run() }
+                }
+                "saved-latency" -> case("library.save_latency") { SavedStoreLatencyAudit.run(this,output) }
+                "saved-crash-during", "saved-crash-after" -> SavedPhotosProcessAudit(this,output).terminate(mode=="saved-crash-after")
+                "saved-crash-verify" -> case("library.production_process_recovery") { SavedPhotosProcessAudit(this,output).verify() }
+                "saved-upgrade-seed" -> case("library.cover_upgrade_seed") { SavedPhotosUpgradeAudit(this, output).seed() }
+                "saved-upgrade-verify" -> case("library.cover_upgrade_verify") { SavedPhotosUpgradeAudit(this, output).verify() }
+                else -> {
+                    if (mode != "saved-photos-layout") case("library.production_storage") { SavedPhotoStorageAudit.run(targetContext, output) }
+                    if (mode != "saved-storage") case("library.saved_photos_ui") { SavedPhotosUiAudit(this, output).run(mode == "saved-photos-layout") }
+                }
+            }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         val migrationProcessDirectory = File(output, "migration-process-$migrationRun")
         migrationCrashMode?.let {
             migrationProcessDirectory.mkdirs()

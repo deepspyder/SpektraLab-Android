@@ -122,8 +122,8 @@ internal class LibraryMigrationAudit(private val test: Instrumentation, private 
         }
         val actualContext = object : ContextWrapper(context) { override fun getFilesDir() = File(root, "old-app").apply { mkdirs() } }
         val uri = Uri.fromFile(fixture)
-        EditStore.save(actualContext, uri, edited)
         val actualKey = EditStore.migrationKey(actualContext, uri)
+        File(actualContext.filesDir, "sidecars/$actualKey.json").apply { parentFile!!.mkdirs(); writeText(edited.toJson().toString()) }
         val copied = EditStore.captureMigrationCopy(actualContext, File(root, "adapter-archives"),
             listOf(LegacySourceBinding(actualKey, evidence)), listOf(actualKey), 0)
         check(copied.entries.single().key == actualKey)

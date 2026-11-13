@@ -69,8 +69,10 @@ internal class FullSizeCacheAudit(private val test: Instrumentation, private val
                     override fun getFilesDir() = File(sandbox, "legacy-app").apply { mkdirs() }
                 }
                 val original = EditStore.load(context, uri)!!
-                EditStore.save(isolated, uri, original)
                 val key = EditStore.migrationKey(isolated, uri)
+                File(isolated.filesDir, "sidecars/$key.json").apply {
+                    parentFile!!.mkdirs(); writeText(original.toJson().toString())
+                }
                 val sourceEvidence = com.spektralab.android.data.library.SourceProbe.inspect(context, uri)
                 check(sourceEvidence.verified)
                 val archive = EditStore.captureMigrationCopy(isolated, File(sandbox, "archives"),

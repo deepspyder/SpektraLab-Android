@@ -85,6 +85,7 @@ internal fun HomeScreen(
     onOpenViewingStand: () -> Unit,
     onOpenTestImage: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenSavedPhotos: () -> Unit = {},
 ) {
     var moreExpanded by remember { mutableStateOf(false) }
     val preview = vm.rendered ?: vm.sourceBitmap
@@ -97,6 +98,12 @@ internal fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(3.dp).height(22.dp).background(MaterialTheme.colorScheme.primary))
                     Text("Theia", Modifier.weight(1f).padding(start = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = onOpenSavedPhotos, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
+                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        Icon(Icons.Rounded.PhotoLibrary, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.photos_title), style = MaterialTheme.typography.labelLarge)
+                    }
                     Box {
                         IconButton(onClick = { moreExpanded = true }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Rounded.Tune, "更多操作", modifier = Modifier.size(20.dp))

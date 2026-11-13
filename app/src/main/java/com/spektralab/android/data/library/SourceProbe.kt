@@ -15,7 +15,7 @@ import java.net.URLConnection
 import java.security.MessageDigest
 import org.json.JSONObject
 
-/** Explicit prototype inspection, never called from import/preview. Streams source bytes in 64KiB. */
+/** Explicit source inspection; never used by parameter saves or gallery scrolling. Streams in 64KiB. */
 internal object SourceProbe {
     fun inspect(context: Context, uri: Uri, checkpoint: () -> Unit = {}): SourceEvidence {
         require(uri.scheme in setOf("content", "file"))

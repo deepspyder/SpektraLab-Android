@@ -9,7 +9,7 @@ import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /** Keep enum class identities stable for existing Compose saved navigation state. */
-internal enum class AppRoute { Home, Editor, FilmStocks, About, ViewingStand }
+internal enum class AppRoute { Home, Editor, FilmStocks, About, ViewingStand, SavedPhotos }
 
 internal enum class EditorTab(val label: String, val icon: ImageVector) {
     Shoot("拍摄", Icons.Rounded.CameraAlt),

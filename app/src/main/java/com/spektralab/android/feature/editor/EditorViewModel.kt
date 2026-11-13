@@ -23,6 +23,7 @@ import com.spektralab.android.core.model.EditSnapshot
 import com.spektralab.android.core.model.EditGroup
 import com.spektralab.android.core.model.EditTemplate
 import com.spektralab.android.core.model.EditTransferProblem
+import com.spektralab.android.core.model.SavedEditSession
 import com.spektralab.android.R
 import com.spektralab.android.core.model.ExportOptions
 import com.spektralab.android.core.model.EditorParams
@@ -97,6 +98,56 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private val app get() = getApplication<Application>()
 
+    internal val savedPhotos by lazy { com.spektralab.android.feature.gallery.SavedPhotosController(app, viewModelScope) }
+    private val sessionPersistence by lazy { EditSessionPersistence(app, viewModelScope) }
+    private var workbenchChanged = false
+
+    private fun persistWorkbench() {
+        workbenchChanged = true
+        sessionPersistence.save(photos.map(Uri::toString),
+            photos.getOrNull(currentIndex)?.toString(), batchExportSelection.mapTo(linkedSetOf(), Uri::toString))
+    }
+
+    internal fun restoreWorkbench(session: SavedEditSession) {
+        if (busy || isExporting || isBatchExporting || isApplyingEdits || session.photos.isEmpty()) return
+        saveCurrentSidecar()
+        photos = session.photos.map(Uri::parse)
+        currentIndex = session.photos.indexOf(session.current).coerceAtLeast(0)
+        batchExportSelection = session.selected.mapTo(linkedSetOf(), Uri::parse)
+        retainThumbnailRequests(photos.toSet())
+        thumbnails = thumbnails.filterKeys { it in photos }
+        developedPreviews = developedPreviews.filterKeys { it in photos }
+        galleryPreviews = galleryPreviews.filterKeys { it in photos }
+        openPhoto(photos[currentIndex])
+        persistWorkbench()
+    }
+
+    /** Relocation has already proved byte equality. Keep the in-memory edit and its history. */
+    internal fun relinkWorkbenchSource(previous: Uri, replacement: Uri) {
+        if (previous == replacement) return
+        photos = photos.map { if (it == previous) replacement else it }.distinct()
+        batchExportSelection = batchExportSelection.mapTo(linkedSetOf()) { if (it == previous) replacement else it }
+        undoHistory.remove(previous.toString())?.let { undoHistory[replacement.toString()] = it }
+        redoHistory.remove(previous.toString())?.let { redoHistory[replacement.toString()] = it }
+        if (currentUri == previous) currentUri = replacement
+        if (paramsUri == previous) paramsUri = replacement
+        currentIndex = currentUri?.let(photos::indexOf)?.coerceAtLeast(0) ?: 0
+        retainThumbnailRequests(photos.toSet())
+        thumbnails = thumbnails - previous
+        developedPreviews = developedPreviews - previous
+        discardGalleryPreview(previous)
+        lastHistoryKey = null
+        refreshHistoryButtons()
+        // The transaction already remapped the durable workbench. Avoid writing an empty,
+        // unrelated in-memory session over it when relinking a historical library entry.
+        if (photos.isNotEmpty()) persistWorkbench()
+    }
+    internal fun retrySavedEdit() {
+        if (busy || isExporting || isBatchExporting || isApplyingEdits) return
+        EditStore.dismissStorageError()
+        currentUri?.takeIf { it == paramsUri }?.let { EditStore.save(app, it, committedParams()) }
+        if (workbenchChanged) persistWorkbench()
+    }
     internal val editPresets by lazy { EditPresetController(app, viewModelScope) }
     internal var isApplyingEdits by mutableStateOf(false)
         private set
@@ -1815,6 +1866,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             }
         } catch(cancelled:CancellationException){ throw cancelled }
         catch(error:Exception){
+            if (error is EditStore.StorageException) throw error
             android.util.Log.w("SmartDevelop","Image analysis skipped; original editing remains available",error)
             null
         }
@@ -1834,7 +1886,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 for(uri in uris){
                     if(uri !in photos)continue
-                    ensureSmartParams(uri,style,true)
+                    try {
+                        ensureSmartParams(uri,style,true)
+                    } catch (error: EditStore.StorageException) {
+                        // The foreground open reports the error. A retired/corrupt record must
+                        // neither become defaults nor escape this background launch and crash.
+                        android.util.Log.w("SmartDevelop", "Saved edit unavailable; automatic analysis preserved it", error)
+                    }
                     if(generation==smartQueueGeneration)smartImportCompleted++
                 }
             } finally { if(generation==smartQueueGeneration)smartImportRunning=false }
@@ -1881,6 +1939,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         currentIndex = 0
         queueSmartDevelop(photos)
         openPhoto(photos[0])
+        persistWorkbench()
     }
 
     /** Queue-only callers can retain the edit; picker callers explicitly open the selected photo. */
@@ -1898,6 +1957,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (openSelected) {
             selectPhoto(merged.indexOf(uris.first()))
         } else if (selected == null) openPhoto(merged.first())
+        persistWorkbench()
     }
 
     // 切换到图库中的第 [index] 张。
@@ -1908,6 +1968,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         saveCurrentSidecar()
         currentIndex = index
         openPhoto(photos[index])
+        persistWorkbench()
     }
 
     fun previousPhoto() {
@@ -1940,6 +2001,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             busy = false
             viewModelScope.launch { engineTasks.onEngine { engine?.closeSession() } }
         }
+        persistWorkbench()
     }
 
     /** Remove a photo from the temporary edit session without touching its source file. */
@@ -1959,6 +2021,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         photos = remaining
         batchExportSelection = batchExportSelection - uri
         if (index < currentIndex) currentIndex -= 1
+        persistWorkbench()
         toast("已从当前展厅移除；原始照片未删除")
     }
 
@@ -1993,11 +2056,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun setBatchExportPhotoSelected(uri: Uri, selected: Boolean) {
         if (busy || isExporting || isBatchExporting || uri !in photos) return
         batchExportSelection = if (selected) batchExportSelection + uri else batchExportSelection - uri
+        persistWorkbench()
     }
 
     fun selectAllBatchExportPhotos(selected: Boolean) {
         if (busy || isExporting || isBatchExporting) return
         batchExportSelection = if (selected) photos.toSet() else emptySet()
+        persistWorkbench()
     }
 
     // Snapshot selected session photos in queue order; preserve each photo's own edits.

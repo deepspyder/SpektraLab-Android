@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -29,6 +30,7 @@ import com.spektralab.android.feature.lighttable.rememberFilmCanvasState
 
 @Composable
 internal fun TheiaRoot(vm: EditorViewModel) {
+    val storageError by com.spektralab.android.data.local.EditStore.storageError.collectAsState()
     var route by rememberSaveable { mutableStateOf(AppRoute.Home) }
     var addToHomeSession by rememberSaveable { mutableStateOf(false) }
     var libraryStartsWithPaper by rememberSaveable { mutableStateOf(false) }
@@ -63,7 +65,7 @@ internal fun TheiaRoot(vm: EditorViewModel) {
     BackHandler(enabled = route != AppRoute.Home) {
         route = when (route) {
             AppRoute.Home -> AppRoute.Home
-            AppRoute.Editor, AppRoute.About, AppRoute.ViewingStand -> AppRoute.Home
+            AppRoute.Editor, AppRoute.About, AppRoute.ViewingStand, AppRoute.SavedPhotos -> AppRoute.Home
             AppRoute.FilmStocks -> AppRoute.Editor
         }
     }
@@ -79,6 +81,14 @@ internal fun TheiaRoot(vm: EditorViewModel) {
                 onOpenViewingStand = { route = AppRoute.ViewingStand },
                 onOpenTestImage = { vm.openTestImage(); route = AppRoute.Editor },
                 onOpenAbout = { route = AppRoute.About },
+                onOpenSavedPhotos = { route = AppRoute.SavedPhotos },
+            )
+            AppRoute.SavedPhotos -> com.spektralab.android.feature.gallery.SavedPhotosScreen(
+                controller = vm.savedPhotos, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
+                onBack = { route = AppRoute.Home }, onImport = { launchPhotoPicker(false) },
+                onOpen = { uri -> vm.openPhotos(listOf(uri)); route = AppRoute.Editor },
+                onRestore = { session -> vm.restoreWorkbench(session); route = AppRoute.Editor },
+                onRelink = vm::relinkWorkbenchSource,
             )
             AppRoute.Editor -> EditorScreen(
                 vm = vm,
@@ -115,6 +125,16 @@ internal fun TheiaRoot(vm: EditorViewModel) {
           }
         }
 
+        storageError?.let { message ->
+            AlertDialog(onDismissRequest = com.spektralab.android.data.local.EditStore::dismissStorageError,
+                title = { Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.photos_save_error)) },
+                text = { Text(message) },
+                dismissButton = { TextButton(onClick = vm::retrySavedEdit, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting) {
+                    Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.photos_retry_save))
+                } }, confirmButton = { TextButton(onClick = com.spektralab.android.data.local.EditStore::dismissStorageError) {
+                    Text(androidx.compose.ui.res.stringResource(com.spektralab.android.R.string.photos_understood))
+                } })
+        }
         vm.errorMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { vm.dismissError() },
