@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -49,14 +50,14 @@ internal fun LaunchSplash() {
                 modifier = Modifier
                     .size(92.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(colorResource(R.color.theia_logo_background)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_theia_mark),
+                    painter = painterResource(R.drawable.theia_logo_artwork),
                     contentDescription = null,
                     tint = Color.Unspecified,
-                    modifier = Modifier.size(78.dp),
+                    modifier = Modifier.size(92.dp),
                 )
             }
 

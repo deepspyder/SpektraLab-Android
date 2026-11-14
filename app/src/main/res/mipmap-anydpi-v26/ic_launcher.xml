@@ -1,4 +1,4 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/theia_brand" />
-    <foreground android:drawable="@drawable/ic_theia_mark" />
+    <background android:drawable="@color/theia_logo_background" />
+    <foreground android:drawable="@drawable/ic_theia_launcher_foreground" />
 </adaptive-icon>

@@ -1,0 +1,12 @@
+{
+  "source": "source-reference.png",
+  "sourceSha256": "cfe04b10f5a34c0a1b4044ea3f7c5df4434ebaca7d65c09052c54c17059189aa",
+  "processing": "Traced foreground matte, pure-black rounded background, Lanczos resize and restrained sharpening; source subject retained.",
+  "background": "#000000",
+  "generation": "none",
+  "runtime": [
+    "theia_logo_artwork.webp",
+    "theia_logo_foreground.webp"
+  ],
+  "encoding": "512 x 512 lossless WebP; source is a raster reference, resizing does not invent original detail."
+}
