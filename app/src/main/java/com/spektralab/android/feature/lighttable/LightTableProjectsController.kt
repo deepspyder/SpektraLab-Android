@@ -2,6 +2,7 @@ package com.spektralab.android.feature.lighttable
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.runtime.*
 import com.spektralab.android.R
@@ -91,9 +92,13 @@ internal class LightTableProjectsController(private val context: Context, privat
                 val source = captured.getOrPut(item.source.uri) {
                     val live = available[item.source.uri]
                     if (live == null) item.source else {
-                        val bitmap = live.wallDetail ?: live.detail ?: live.thumbnail
-                        EditStore.tableSource(context, item.source).copy(preview = bitmap?.takeUnless { it.isRecycled }?.let(previewStore::put)
-                            ?: item.source.preview)
+                        val bitmap = live.detail ?: live.thumbnail
+                        val rendered = live.wallDetail ?: live.detail ?: live.thumbnail
+                        val tracked = EditStore.tableSource(context, item.source)
+                        tracked.copy(
+                            preview = bitmap?.takeUnless { it.isRecycled }?.let(previewStore::put) ?: tracked.preview,
+                            renderedPreview = rendered?.takeUnless { it.isRecycled }?.let(previewStore::put) ?: tracked.renderedPreview,
+                        )
                     }
                 }
                 item.copy(source = source)
@@ -133,11 +138,31 @@ internal class LightTableProjectsController(private val context: Context, privat
                 if (photo.sourceWidth > 0 && photo.sourceHeight > 0) photo.sourceWidth.toFloat() / photo.sourceHeight else 1f
             val source = EditStore.tableSource(context, TableSource(photo.key, photo.name,
                 pixelWidth = photo.sourceWidth, pixelHeight = photo.sourceHeight, format = photo.sourceFormat))
-                .copy(preview = bitmap?.takeUnless { it.isRecycled }?.let(previewStore::put))
+                .copy(
+                    preview = bitmap?.takeUnless { it.isRecycled }?.let(previewStore::put),
+                    renderedPreview = photo.wallDetail?.takeUnless { it.isRecycled }?.let(previewStore::put),
+                )
             TablePlacement(UUID.randomUUID().toString(), source, 20f + index % 3 * 180f,
                 (existing.items.maxOfOrNull { it.y + it.height } ?: 0f) + 20f + index / 3 * 190f, 160f, 160f / ratio)
         } }
         canvas.add(items); resolveSources(canvas.scene().items)
+    }
+
+    /** Add gallery sources to an existing saved project without touching their edit sidecars. */
+    fun addUrisToProject(summary: TableProjectSummary, uris: List<Uri>, onDone: () -> Unit = {}) = action(onDone) {
+        val expected = withContext(Dispatchers.IO) { store().use { it.read(summary.id).also { check(it.revision == summary.revision) { "TABLE_CHANGED" } } } }
+        val additions = withContext(Dispatchers.IO) { uris.distinct().mapIndexed { index, uri ->
+            val source = EditStore.tableSource(context, TableSource(uri.toString(), uri.lastPathSegment.orEmpty()))
+            val bitmap = runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } }.getOrNull()
+            val preview = bitmap?.let { previewStore.put(it) }
+            bitmap?.recycle()
+            TablePlacement(UUID.randomUUID().toString(), source.copy(preview = preview, renderedPreview = preview),
+                24f + index % 3 * 180f, (expected.scene.items.maxOfOrNull { it.y + it.height } ?: 0f) + 24f + index / 3 * 190f,
+                160f, 160f)
+        } }
+        val saved = withContext(Dispatchers.IO) { store().use { it.save(expected, expected.name, expected.scene.copy(items = expected.scene.items + additions)) } }
+        if (current?.id == saved.id) { current = saved; canvas.restore(saved.scene); resolveSources(saved.scene.items) }
+        projects = withContext(Dispatchers.IO) { store().use { it.list() } }
     }
 
     private suspend fun resolveSources(items: List<TablePlacement>) {

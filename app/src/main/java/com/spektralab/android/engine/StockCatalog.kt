@@ -19,16 +19,19 @@ data class Stock(
     val type: String,
     val targetPrint: String?,
     val monochrome: Boolean = false,
+    val antihalation: String = "",
+    val derivedFrom: String? = null,
 )
 
 /**
- * 从 assets 里的 profile JSON 读出胶片/相纸目录（33 个 profiles）。
+ * 从 assets 里的 profile JSON 读出胶片/相纸目录。
  * 不依赖引擎，可在创建引擎前调用。
  */
 object StockCatalog {
     private var stocks: Map<String, Stock> = emptyMap()
     fun isMonochrome(id: String): Boolean = stocks[id]?.monochrome == true
     fun isPositive(id: String): Boolean = stocks[id]?.type == "positive"
+    fun hasNoAntihalation(id: String): Boolean = stocks[id]?.antihalation == "no"
     fun canPrint(film: String, paper: String): Boolean = isMonochrome(film) == isMonochrome(paper)
 
     /** The lettering exposed by the physical emulsion, resolved like Windows. */
@@ -50,6 +53,7 @@ object StockCatalog {
             "kodak_vision3_250d" to ("EASTMAN 5207" to "EASTMAN 5207"),
             "kodak_vision3_200t" to ("EASTMAN 5213" to "EASTMAN 5213"),
             "kodak_vision3_500t" to ("EASTMAN 5219" to "EASTMAN 5219"),
+            "cinestill_800t" to ("CINESTILL 800T" to "CINESTILL 800T"),
         )[id]
         if (known != null) return if (gauge120) known.second else known.first
         val name = stocks[id]?.name ?: id
@@ -73,7 +77,18 @@ object StockCatalog {
             val text = context.assets.open("$dir/$f").use {
                 it.readBytes().toString(Charsets.UTF_8)
             }
-            val info = JSONObject(text).getJSONObject("info")
+            val root = JSONObject(text)
+            val base = root.optString("derived_from").takeIf { it.isNotEmpty() }
+            val info = if (base == null) root.getJSONObject("info") else {
+                require(base.matches(Regex("[a-zA-Z0-9_-]{1,96}"))) { "Invalid material alias" }
+                val original = JSONObject(context.assets.open("$dir/$base.json").bufferedReader().use { it.readText() })
+                require(!original.has("derived_from")) { "Nested material aliases are unsupported" }
+                JSONObject(original.getJSONObject("info").toString()).apply {
+                    val overrides = root.getJSONObject("info")
+                    overrides.keys().forEach { key -> put(key, overrides.get(key)) }
+                    put("stock", f.removeSuffix(".json"))
+                }
+            }
             val stock = Stock(
                 id = info.getString("stock"),
                 name = info.optString("name", info.getString("stock")),
@@ -81,6 +96,8 @@ object StockCatalog {
                 type = info.optString("type", ""),
                 targetPrint = if (info.isNull("target_print")) null else info.optString("target_print"),
                 monochrome = info.optString("channel_model") == "bw",
+                antihalation = info.optString("antihalation"),
+                derivedFrom = base,
             )
             when (stock.stage) {
                 "filming" -> films += stock

@@ -120,6 +120,13 @@ internal class ExportEngineAudit(
                 autoExposure = false; grainActive = false; glareActive = false
                 cropX = .1f; cropY = .15f; cropW = .7f; cropH = .65f
             }
+            for (headroom in listOf(0f, 4f, 8f)) {
+                cases += EditorParams().apply {
+                    filmId = "cinestill_800t"; paperId = "kodak_2383"
+                    halationModelVersion = 2; halationHeadroomEv = headroom
+                    grainActive = false; glareActive = false
+                }
+            }
             EngineClient.create(context).use { engine ->
                 for ((index, params) in cases.withIndex()) {
                     val json = params.openJson(width, height)
@@ -169,11 +176,10 @@ internal class ExportEngineAudit(
             return "All film families and compatible papers, geometry, overscan/date, fresh-session grain and cached-negative consumption match full U16 pixels; output survives closed session and later editor still caches its negative; cases=" + (cases.size + 2)
         }
 
-        fun cancellation(context: Context): String {
+        fun cancellation(context: Context, params: EditorParams = EditorParams()): String {
             val width = 2048
             val height = 1536
             EngineClient.create(context).use { engine ->
-                val params = EditorParams()
                 engine.open(FloatArray(width * height * 3) { .18f }, width, height, 3, params.openJson(width, height))
                 val previousId = engine.progressSnapshot().progressId
                 val worker = Executors.newSingleThreadExecutor()

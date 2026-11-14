@@ -51,6 +51,11 @@ def main() -> None:
     if di.is_dir():
         shutil.copytree(di, out / "DI", dirs_exist_ok=True)
 
+    # Android-owned metadata aliases contain no duplicated measured arrays.
+    extension = ROOT / "app" / "src" / "main" / "engine-resources"
+    shutil.copytree(extension / "profiles", out / "profiles", dirs_exist_ok=True)
+    copy_file(extension / "NOTICE.md", out / "Theia-models-NOTICE.md")
+
     profiles = list((out / "profiles").glob("*.json"))
     print(f"资源已同步 -> {out}")
     print(f"profiles: {len(profiles)} 个")

@@ -48,6 +48,7 @@ FILMS = [
  ('kodak_vision3_250d','cine','KODAK','250D','5207','#E68B09','VISION3 COLOR NEGATIVE'),
  ('kodak_vision3_500t','cine','KODAK','500T','5219','#4D7BAC','VISION3 COLOR NEGATIVE'),
  ('kodak_verita_200d','cine','KODAK','200D','5206','#BB984D','VERITA COLOR NEGATIVE'),
+ ('cinestill_800t','cinestill','CineStill','TUNGSTEN','800T','#D54B39','COLOR NEGATIVE'),
 ]
 PAPERS = [
  ('fujifilm_crystal_archive_typeii','paper','FUJIFILM','CRYSTAL','ARCHIVE II','#238D5D','COLOR PHOTOGRAPHIC PAPER'),
@@ -101,6 +102,12 @@ def label(definition):
         face+=txt(title,100,94,29,white,'center','bold',180)
         face+=txt(number,100,167,83,white,'center','bold',186)
         face+=f'<rect y="182" width="200" height="18" fill="{yellow}"/>'
+    elif family=='cinestill':
+        face=f'<rect width="200" height="200" fill="{cream}"/><rect width="200" height="58" fill="{color}"/>'
+        face+=txt(brand.upper(),100,42,31,white,'center','condensed',176)
+        face+=txt(number,100,140,76,'#242321','center','bold',180)
+        face+=txt(title,100,171,16,color,'center','condensed',175)
+        face+=txt(footer,100,191,10,'#242321','center','condensed',175)
     elif family=='cine':
         face=f'<rect width="200" height="200" fill="{color}"/>'
         face+=txt('ISO '+title.rstrip('DT') if stock.startswith('kodak_vision') or stock=='kodak_verita_200d' else brand,12,24,10,'#F8F3E7',weight='condensed',maxwidth=175)
@@ -145,15 +152,7 @@ def extract_references():
         h=(510 if sheet=='p1' else 355) if row==3 else side
         sources[sheet].crop((x,y,x+side,y+h)).save(destination/(stock+'.png'))
 
-def main():
-    extract_references();artwork=[]
-    for kind,definitions in [('film',FILMS),('paper',PAPERS)]:
-        for definition in definitions:
-            svg=label(definition);stock=definition[0]
-            (OUT/'svg'/f'{stock}.svg').write_text(svg,encoding='utf-8')
-            artwork.append({'id':stock,'type':kind,'svg':svg,'label':definition[2]+' '+definition[3]+' '+definition[4],
-                'reference':list(REFERENCE_PANELS[stock]) if stock in REFERENCE_PANELS else 'matching label family',
-                'design':'Remastered softly rounded paper label; subtle paper edge, no cartridge'})
+def write_board(artwork):
     board=[]
     for i,item in enumerate(artwork):
         x=40+i%8*260;y=60+i//8*310
@@ -163,6 +162,32 @@ def main():
         board.append(txt(item['label'],x+120,y+273,10,'#D7D3C7','center',maxwidth=240))
     svg='<svg xmlns="http://www.w3.org/2000/svg" width="2160" height="1340" viewBox="0 0 2160 1340">'+''.join(board)+'</svg>'
     (OUT/'stock-artwork-board.svg').write_text(svg,encoding='utf-8')
+
+def main():
+    if '--stock' in sys.argv:
+        stock = sys.argv[sys.argv.index('--stock') + 1]
+        definitions = [(kind, item) for kind, items in [('film', FILMS), ('paper', PAPERS)] for item in items]
+        kind, definition = next((kind, item) for kind, item in definitions if item[0] == stock)
+        (OUT/'svg'/f'{stock}.svg').write_text(label(definition), encoding='utf-8')
+        manifest_path = OUT/'artwork-manifest.json'
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        entry = {'id':stock, 'type':kind, 'label':' '.join(definition[2:5]),
+                 'reference':'matching label family; no official packaging reference supplied',
+                 'design':'Remastered softly rounded paper label; subtle paper edge, no cartridge'}
+        manifest = [old for old in manifest if old['id'] != stock] + [entry]
+        manifest_path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        write_board([dict(item,svg=(OUT/'svg'/(item['id']+'.svg')).read_text(encoding='utf-8')) for item in manifest])
+        print('Created only '+stock+'; existing artwork preserved')
+        return
+    extract_references();artwork=[]
+    for kind,definitions in [('film',FILMS),('paper',PAPERS)]:
+        for definition in definitions:
+            svg=label(definition);stock=definition[0]
+            (OUT/'svg'/f'{stock}.svg').write_text(svg,encoding='utf-8')
+            artwork.append({'id':stock,'type':kind,'svg':svg,'label':definition[2]+' '+definition[3]+' '+definition[4],
+                'reference':list(REFERENCE_PANELS[stock]) if stock in REFERENCE_PANELS else 'matching label family',
+                'design':'Remastered softly rounded paper label; subtle paper edge, no cartridge'})
+    write_board(artwork)
     (OUT/'artwork-manifest.json').write_text(json.dumps([{k:v for k,v in item.items() if k!='svg'} for item in artwork],ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(f'Created {len(artwork)} remastered square label artworks; {len(REFERENCE_PANELS)} reference matches')
 

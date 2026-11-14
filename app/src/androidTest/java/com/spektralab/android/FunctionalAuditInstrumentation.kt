@@ -88,6 +88,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     private var stockInteractionOnly = false
     private var interactionPerfOnly = false
     private var parameterPerfOnly = false
+    private var projectRestoreOnly = false
+    private var cineStillOnly = false
+    private var cineStillMode = ""
     private var photoSelectionOnly = false
     private var displayStripOnly = false
     private var changedParamsOnly = false
@@ -131,6 +134,9 @@ class FunctionalAuditInstrumentation : Instrumentation() {
     }
     override fun onCreate(arguments: Bundle?) {
         val audit = arguments?.getString("audit")
+        projectRestoreOnly = audit == "project-restore"
+        cineStillOnly = audit in setOf("cinestill", "cinestill-native", "cinestill-layout", "cinestill-raw", "cinestill-performance")
+        cineStillMode = audit.orEmpty()
         photoSelectionOnly = audit == "photo-selection" || audit == "photo-selection-layout"
         displayStripOnly = audit == "display-strip"
         tableOutputAudit = audit?.takeIf { it in setOf("table-output", "table-output-layout", "table-output-core", "table-output-raw", "table-output-plain") }
@@ -230,6 +236,29 @@ class FunctionalAuditInstrumentation : Instrumentation() {
 
     override fun onStart() {
         output = File(targetContext.getExternalFilesDir(null), "functional-audit").apply { mkdirs() }
+        if (projectRestoreOnly) {
+            case("lighttable.cold_workbench_appearance") { ProjectRestoreAudit(this, output).run(false) }
+            case("lighttable.project_resave_appearance") { ProjectRestoreAudit(this, output).run(true) }
+            case("library.batch_add_to_album") { ProjectRestoreAudit(this, output).batchAlbum() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
+        if (cineStillOnly) {
+            if (cineStillMode == "cinestill" || cineStillMode == "cinestill-native")
+                case("film.cinestill_back_reflection") { CineStillAudit(this, output).run() }
+            if (cineStillMode == "cinestill" || cineStillMode == "cinestill-layout")
+                case("film.cinestill_editor_and_export") { CineStillUiAudit(this, output).run(cineStillMode == "cinestill-layout") }
+            if (cineStillMode == "cinestill-raw")
+                case("film.cinestill_full_size_raw") { CineStillUiAudit(this, output).raw() }
+            if (cineStillMode == "cinestill-performance")
+                case("film.cinestill_parameter_timings") { CineStillAudit(this, output).timings() }
+            val failed = (0 until rows.length()).count { rows.getJSONObject(it).optString("status") == "FAIL" }
+            finish(if (failed == 0) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle().apply { putString("stream", rows.toString(2)) })
+            return
+        }
         if (photoSelectionOnly || displayStripOnly) {
             if (displayStripOnly) case("display.exact_packed_strips") { DisplayStripAudit.run() }
             else {

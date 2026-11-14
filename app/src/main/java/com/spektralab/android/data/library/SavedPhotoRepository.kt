@@ -268,6 +268,7 @@ internal class SavedPhotoRepository private constructor(private val directory: F
         if (runCatching { validate(json) }.isSuccess) validated[raw] = true
     }
     private fun validate(json: JSONObject) {
+        com.spektralab.android.core.model.HalationModel.requireReadable(json)
         for (key in json.keys()) if (knownTypes.containsKey(key)) {
             val value = json.get(key)
             check(when (knownTypes[key]) {

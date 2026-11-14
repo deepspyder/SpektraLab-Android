@@ -35,44 +35,47 @@ else()
     # 无需单独下载 Khronos Vulkan-Headers。着色器（SPIR-V）编译需要 glslangValidator，
     # 缺它时 .so 仍可编译，只是运行时加载不到 SPIR-V（见 engine/README.md）。
 
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidHalation.cmake")
+    theia_android_halation("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_ENGINE_DIR)
+
     set(SPK_CORE_SOURCES
-        ${SPEKTRA_ENGINE_DIR}/src/core/blob.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/cam16.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/colour.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/curves.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/digital_intermediate.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/hanatos.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/json.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/latitude_fit.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/numeric.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/params.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/print_lut.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/printing.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/profile.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/setup_cache.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/core/spectral.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/blob.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/cam16.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/colour.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/curves.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/digital_intermediate.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/hanatos.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/json.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/latitude_fit.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/numeric.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/params.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/print_lut.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/printing.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/profile.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/setup_cache.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/core/spectral.cpp
     )
 
     # 非 Apple 分支（Android 走这里）：windows_unported 是「显式边界」占位，
     # view_process / overscan / imprint_raster 是片边/日期后背的 Vulkan 路径。
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidExportExecution.cmake")
-    theia_android_export_execution("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_ENGINE_SOURCE SPK_ANDROID_PIPELINE_SOURCE)
+    theia_android_export_execution("${SPK_ANDROID_ENGINE_DIR}" SPK_ANDROID_ENGINE_SOURCE SPK_ANDROID_PIPELINE_SOURCE)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidExportFir.cmake")
-    theia_android_export_fir("${SPEKTRA_ENGINE_DIR}" SPK_ANDROID_BLUR_SOURCE)
+    theia_android_export_fir("${SPK_ANDROID_ENGINE_DIR}" SPK_ANDROID_BLUR_SOURCE)
 
     set(SPK_PIPELINE_SOURCES
         ${SPK_ANDROID_BLUR_SOURCE}
         ${SPK_ANDROID_ENGINE_SOURCE}
         ${SPK_ANDROID_PIPELINE_SOURCE}
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/scene_latitude.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/windows_unported.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/view_process.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/overscan.cpp
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline/imprint_raster.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline/scene_latitude.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline/windows_unported.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline/view_process.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline/overscan.cpp
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline/imprint_raster.cpp
     )
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AndroidVulkanMemory.cmake")
-    theia_android_vulkan_backend("${SPEKTRA_ENGINE_DIR}" SPK_GPU_SOURCES)
+    theia_android_vulkan_backend("${SPK_ANDROID_ENGINE_DIR}" SPK_GPU_SOURCES)
 
     set(SPK_VOLK_SOURCES
         ${SPEKTRA_ENGINE_DIR}/third_party/volk/volk.c
@@ -81,10 +84,10 @@ else()
     list(APPEND SPK_SOURCES ${SPK_CORE_SOURCES} ${SPK_PIPELINE_SOURCES} ${SPK_GPU_SOURCES})
 
     list(APPEND SPK_INCLUDE_DIRS
-        ${SPEKTRA_ENGINE_DIR}/src
-        ${SPEKTRA_ENGINE_DIR}/src/core
-        ${SPEKTRA_ENGINE_DIR}/src/gpu
-        ${SPEKTRA_ENGINE_DIR}/src/pipeline
+        ${SPK_ANDROID_ENGINE_DIR}/src
+        ${SPK_ANDROID_ENGINE_DIR}/src/core
+        ${SPK_ANDROID_ENGINE_DIR}/src/gpu
+        ${SPK_ANDROID_ENGINE_DIR}/src/pipeline
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${SPEKTRA_ENGINE_DIR}/third_party/volk
         ${SPEKTRA_ENGINE_DIR}/third_party/stb
@@ -149,18 +152,18 @@ else()
             spk_view_grade spk_view_grade_di spk_view_geometry spk_view_pack spk_view_cam16 spk_view_pair
             spk_grain_layers spk_grain_layer_one spk_grain_simple
             spk_lognormal_field spk_rng_probe spk_mul spk_glare_add
-            spk_reduce_max spk_boost spk_bw_correct spk_edr spk_cctf_decode
+            spk_reduce_max spk_boost spk_highlight_headroom spk_bw_correct spk_edr spk_cctf_decode
             spk_zoom_bilinear_mirror spk_geometry_resample_df
             spk_lut3d_trilinear spk_di_normalise spk_di_encode spk_scene_latitude
             spk_overscan_canvas spk_overscan_add_mask spk_overscan_film_present spk_overscan_light)
         set(vulkan_spirv)
         foreach(kernel ${SPEKTRALAB_VULKAN_KERNELS})
-            set(shader "${SPEKTRA_ENGINE_DIR}/src/shaders/vulkan/${kernel}.comp")
+            set(shader "${SPK_ANDROID_ENGINE_DIR}/src/shaders/vulkan/${kernel}.comp")
             set(spirv "${vulkan_shader_dir}/${kernel}.spv")
             add_custom_command(OUTPUT "${spirv}"
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${vulkan_shader_dir}"
                 COMMAND "${SPEKTRALAB_GLSLANG}" -V --target-env vulkan1.0
-                        "-I${SPEKTRA_ENGINE_DIR}/src/shaders/vulkan"
+                        "-I${SPK_ANDROID_ENGINE_DIR}/src/shaders/vulkan"
                         -o "${spirv}" "${shader}"
                 DEPENDS "${shader}"
                 VERBATIM)

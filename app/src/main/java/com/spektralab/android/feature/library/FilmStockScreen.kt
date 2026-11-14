@@ -256,7 +256,7 @@ private fun Stock.stripLabel(): String = name.removePrefix("Kodak Professional "
     .removePrefix("Fujifilm ").removePrefix("Ilford ").replace("Professional ", "")
     .replace("Neopan 100 Acros II", "Acros II 100").replace("(Push 1)", "+1").replace("(Push 2)", "+2")
 
-private fun Stock.isCinema() = id.startsWith("kodak_vision3_") || id == "kodak_verita_200d"
+private fun Stock.isCinema() = id.startsWith("kodak_vision3_") || id == "kodak_verita_200d" || id == "cinestill_800t"
 
 private val filmDisplayOrder = listOf(
     "kodak_portra_400", "kodak_gold_200", "fujifilm_pro_400h", "kodak_ektar_100",
@@ -264,5 +264,5 @@ private val filmDisplayOrder = listOf(
     "kodak_portra_800_push1", "kodak_portra_800_push2", "kodak_ektachrome_100", "fujifilm_provia_100f",
     "fujifilm_velvia_100", "kodak_kodachrome_64", "ilford_hp5_plus_400", "kodak_tri_x_400",
     "kodak_tmax_100", "fujifilm_neopan_acros_100_ii", "kodak_vision3_50d", "kodak_vision3_200t",
-    "kodak_vision3_250d", "kodak_vision3_500t", "kodak_verita_200d",
+    "kodak_vision3_250d", "kodak_vision3_500t", "cinestill_800t", "kodak_verita_200d",
 )

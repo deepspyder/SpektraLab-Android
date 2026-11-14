@@ -68,6 +68,17 @@ internal class PhotoOrganizationRepository(private val db: SQLiteDatabase) {
         }
     }
 
+    /** Add a selected set to one existing album atomically; edit payloads stay untouched. */
+    fun addToAlbum(assetIds: List<String>, albumId: String) = transaction {
+        ensureAlbum(albumId)
+        assetIds.distinct().forEach { assetId ->
+            ensureAsset(assetId)
+            db.insertWithOnConflict("album_members", null, ContentValues().apply {
+                put("album_id", albumId); put("asset_id", assetId)
+            }, SQLiteDatabase.CONFLICT_IGNORE)
+        }
+    }
+
     private fun ensureUniqueName(key: String, except: String? = null) {
         db.rawQuery("SELECT album_id FROM albums WHERE name_key=?", arrayOf(key)).use {
             check(!it.moveToFirst() || it.getString(0) == except) { "ALBUM_NAME_EXISTS" }

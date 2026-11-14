@@ -1,0 +1,16 @@
+    if (hal.back_reflection) {
+        // No anti-halation layer: the base's rear face is a mirror and the halo
+        // is its geometry -- `halation_psf.hpp`, in units of the base's
+        // thickness, which the area multiplier scales as it scales any radius.
+        const double d_px = hal.base_thickness_um * h_scale * h_radius / px;
+        if (any_strength && d_px > 0.0) {
+            for (int k = 0; k < kBackReflectionComponents; ++k) {
+                Blur::Component comp{};
+                for (int c = 0; c < 3; ++c) {
+                    comp.weight[c] = kBackReflectionWeight[k][c];
+                    comp.sigma[c] = std::max(kBackReflectionSigmaOverBase[k][c] * d_px, 1e-6);
+                }
+                out.bounces.push_back(comp);
+            }
+        }
+    } else if (N >= 1 && any_strength && any_sigma) {

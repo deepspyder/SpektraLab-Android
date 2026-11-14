@@ -75,7 +75,8 @@ internal class StockLibraryAudit(private val test: Instrumentation, private val 
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
         main { vm = ViewModelProvider(activity)[EditorViewModel::class.java] }
         try {
-            await("home") { vm.engine != null && !vm.busy && vm.films.size == 24 && find("更多操作") != null }
+            await("home") { vm.engine != null && !vm.busy && vm.films.size == 25 && find("更多操作") != null }
+            check(vm.films.single { it.id == "cinestill_800t" }.derivedFrom == "kodak_vision3_500t")
             // Every film and paper uses a bounded transparent resource, including former placeholders.
             (vm.films + vm.papers).forEach { stock ->
                 val resource = checkNotNull(stockArtworkResource(stock.id)) { "Missing product image ${stock.id}" }
@@ -145,7 +146,7 @@ internal class StockLibraryAudit(private val test: Instrumentation, private val 
             capture("credits")
             click("关闭"); click("返回暗房")
             check(vm.errorMessage == null) { vm.errorMessage.orEmpty() }
-            return "Photo-first preview and comparison; horizontal film/paper scrolling and selection renders; 33 transparent stock resources; compatibility, direct entry and Done/back passed"
+            return "Photo-first preview and comparison; horizontal film/paper scrolling and selection renders; ${vm.films.size + vm.papers.size} transparent stock resources including CineStill; compatibility, direct entry and Done/back passed"
         } finally { main { activity.finish() } }
     }
 }

@@ -46,6 +46,9 @@ import com.spektralab.android.ui.theme.TheiaShapes
 @Composable
 internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boolean,
                               onBack: () -> Unit, onImport: () -> Unit, onOpen: (Uri) -> Unit,
+                              onAddToViewing: (List<Uri>) -> Unit = {},
+                              projects: List<com.spektralab.android.core.model.TableProjectSummary> = emptyList(),
+                              onAddToProject: (List<Uri>, com.spektralab.android.core.model.TableProjectSummary) -> Unit = { _, _ -> },
                               onRestore: (SavedEditSession) -> Unit = {}, onRelink: (Uri, Uri) -> Unit = { _, _ -> },
                               onVersionOpen: (Uri) -> Unit = onOpen, versionInUse: (Uri) -> Boolean = { true },
                               prepareVersions: () -> Unit = {}) {
@@ -91,7 +94,10 @@ internal fun SavedPhotosScreen(controller: SavedPhotosController, enabled: Boole
             }
         }
     }, bottomBar = {
-        if (selection.active) PhotoSelectionBar(selection, controller.filter, controller.matchingCount, canAct)
+        if (selection.active) PhotoSelectionBar(selection, controller.filter, controller.matchingCount, canAct,
+            controller.organization.albums, projects,
+            { onAddToViewing(selection.selected.values.map { Uri.parse(it.uri) }); selection.clear() },
+            { project -> onAddToProject(selection.selected.values.map { Uri.parse(it.uri) }, project); selection.clear() })
     }) { insets ->
         Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.TopCenter) {
             LazyColumn(Modifier.widthIn(max = 860.dp).fillMaxSize().navigationBarsPadding(),

@@ -85,10 +85,12 @@ internal fun GalleryScreen(
     val ui = remember { TableProjectUiState() }
     val project = projects.current
     val shown = if (project == null) photos else projects.canvas.members.map { item ->
-        val preview = item.source.preview?.let { projects.previews[it] }
+        val wallKey = item.source.renderedPreview ?: item.source.preview
+        val preview = wallKey?.let { projects.previews[it] }
         val error = projects.sourceErrors[item.id] ?: if (preview == null) context.getString(R.string.table_preview_missing) else null
-        ViewingPhoto(item.id, preview, item.source.preview?.let { projects.details[it] } ?: preview, item.source.name, error.orEmpty(), error = error,
-            wallDetail = item.source.preview?.let { projects.details[it] }, canRefine = item.source.preview != null,
+        ViewingPhoto(item.id, preview, item.source.renderedPreview?.let { projects.details[it] } ?: preview, item.source.name, error.orEmpty(), error = error,
+            wallDetail = item.source.renderedPreview?.let { projects.details[it] } ?: preview,
+            canRefine = item.source.renderedPreview != null || item.source.preview != null,
             sourceWidth = item.source.pixelWidth, sourceHeight = item.source.pixelHeight, sourceFormat = item.source.format)
     }
     fun openOutput() {
@@ -115,15 +117,19 @@ internal fun GalleryScreen(
         onLoadThumbnail = { key ->
             if (project == null) {
                 if (key !in independent) vm.loadThumbnail(Uri.parse(key))
-            } else projects.canvas.members.firstOrNull { it.id == key }?.source?.preview?.let(projects::requestPreview)
+            } else projects.canvas.members.firstOrNull { it.id == key }?.source?.let { source ->
+                (source.renderedPreview ?: source.preview)?.let(projects::requestPreview)
+            }
         },
         onLoadDetail = { key ->
             if (project == null) vm.loadGalleryPreview(Uri.parse(key))
-            else projects.canvas.members.firstOrNull { it.id == key }?.source?.preview?.let(projects::requestDetail)
+            else projects.canvas.members.firstOrNull { it.id == key }?.source?.let { source ->
+                (source.renderedPreview ?: source.preview)?.let(projects::requestDetail)
+            }
         },
         onLoadWallDetails = { keys ->
             if (project == null) vm.loadGalleryWallDetails(keys.map(Uri::parse))
-            else projects.canvas.members.filter { it.id in keys }.mapNotNull { it.source.preview }.distinct().take(4).forEach(projects::requestDetail)
+            else projects.canvas.members.filter { it.id in keys }.mapNotNull { it.source.renderedPreview ?: it.source.preview }.distinct().take(4).forEach(projects::requestDetail)
         },
         onImport = { if (project == null) onImport() else ui.adding = true },
         onRemove = { if (project == null) onRemovePhoto(Uri.parse(it)) else projects.canvas.remove(it) },
@@ -138,7 +144,7 @@ internal fun GalleryScreen(
             TableProjectToolbar(projects, if (project == null) draft else projects.canvas, ui, lightOn,
                 !vm.busy && !vm.isExporting && !vm.isBatchExporting && shown.isNotEmpty(), onExport = ::openOutput) {
                 vm.prepareVersionBoundary()
-                if (project == null) ui.naming = true else projects.saveCurrent(photos)
+                if (project == null) ui.naming = true else projects.saveCurrent(shown)
             }
         },
     ) }

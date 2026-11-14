@@ -267,5 +267,12 @@
     "label": "KODAK VISION 2393",
     "reference": "matching label family",
     "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
+  },
+  {
+    "id": "cinestill_800t",
+    "type": "film",
+    "label": "CineStill TUNGSTEN 800T",
+    "reference": "matching label family; no official packaging reference supplied",
+    "design": "Remastered softly rounded paper label; subtle paper edge, no cartridge"
   }
 ]

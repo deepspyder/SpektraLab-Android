@@ -13,7 +13,8 @@ enum class EditGroup(val key: String, val fields: Set<String>) {
         "scene_latitude_active", "scene_latitude_norm", "scene_latitude_highlight_knee", "scene_latitude_highlight_room",
         "scene_latitude_shadow_knee", "scene_latitude_shadow_room", "scene_latitude_rolloff", "scene_latitude_max_lift",
         "grain_active", "grain_amount", "grain_layered", "halation_active", "halation_amount", "halation_scatter_amount",
-        "halation_boost_ev", "antihalation_removed", "dir_couplers_active", "dir_couplers_amount", "extended_dynamic_range", "camera_filter")),
+        "halation_boost_ev", "halation_model_version", "halation_headroom_ev", "antihalation_removed",
+        "dir_couplers_active", "dir_couplers_amount", "extended_dynamic_range", "camera_filter")),
     PRINT("print", setOf("print_exposure", "m_filter_shift", "y_filter_shift", "glare_active", "glare_amount", "preflash_exposure")),
     LIGHT("light", setOf("grade_exposure", "contrast", "brightness", "highlights", "shadows", "black_point", "white_point")),
     CURVES("curves", setOf("tone_curves")),
@@ -79,7 +80,8 @@ class EditTemplate private constructor(val groups: Set<EditGroup>, private val v
     }
 
     companion object {
-        private val optional = setOf("tone_curves", "color_adjustments", "channel_mixer", "color_wheels")
+        private val optional = setOf("tone_curves", "color_adjustments", "channel_mixer", "color_wheels",
+            "halation_model_version", "halation_headroom_ev")
 
         fun capture(params: EditorParams, groups: Set<EditGroup>): EditTemplate {
             require(groups.isNotEmpty())
@@ -100,6 +102,11 @@ class EditTemplate private constructor(val groups: Set<EditGroup>, private val v
             val fields = groups.flatMap { it.fields }.toSet()
             require(values.keys().asSequence().all { it in fields })
             require((fields - optional).all(values::has))
+            HalationModel.requireReadable(values)
+            if (values.has("halation_headroom_ev")) {
+                val raw = values.get("halation_headroom_ev")
+                require(raw is Number && raw.toDouble().isFinite() && raw.toDouble() in 0.0..8.0)
+            }
             val defaults = EditorParams().toJson()
             for (key in fields - optional) {
                 val raw = values.get(key)

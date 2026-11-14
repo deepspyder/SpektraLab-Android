@@ -368,6 +368,12 @@
     <string name="photos_selection_detail">轻点照片切换选择。全选包含当前筛选结果中尚未加载的照片。</string>
     <string name="photos_remove">从图库移除</string>
     <string name="photos_remove_count">移除 (%1$d)</string>
+    <string name="photos_add_album">加入相册</string>
+    <string name="photos_add_viewing">加入观景台</string>
+    <string name="photos_add_project">加入观景台项目</string>
+    <string name="photos_choose_project">选择观景台项目</string>
+    <string name="photos_choose_album">选择相册</string>
+    <string name="photos_added_to_album">已将 %2$d 张照片加入“%1$s”</string>
     <string name="photos_remove_title">移除所选 %1$d 张照片？</string>
     <string name="photos_remove_hint">仅从应用图库中隐藏这些照片。手机原片、编辑版本、相册归属和工作台均会保留。重新导入原片可恢复显示。</string>
     <string name="photos_removing">正在移除…</string>
@@ -376,4 +382,17 @@
     <string name="photos_selection_load_error">无法读取全部照片，请重试。</string>
     <string name="photos_selection_limit">单次最多选择 5000 张，请通过相册、评分或颜色筛选后再全选。</string>
     <string name="photos_import_restore_error">无法恢复图库记录，请重新导入。原片和编辑未更改。</string>
+    <string name="halation_enabled">光晕</string>
+    <string name="halation_amount">光晕强度</string>
+    <string name="halation_area">光晕面积</string>
+    <string name="halation_scatter">光晕散射</string>
+    <string name="halation_boost">高光增强</string>
+    <string name="halation_keep_backing">保留抗晕层</string>
+    <string name="halation_no_backing">该胶片原生没有防光晕层，无需再次移除。</string>
+    <string name="halation_model">光晕模型</string>
+    <string name="halation_classic">经典</string>
+    <string name="halation_back_reflection">背反射</string>
+    <string name="halation_headroom">截断高光余量</string>
+    <string name="halation_headroom_hint">仅为接近画面峰值的高光补充模拟余量，保留其颜色。0 EV 使用记录值；此项不会恢复原片已丢失的细节。</string>
+    <string name="halation_classic_hint">保留旧版光晕计算，已有照片不会自动改变。切换背反射后可调整高光余量。</string>
 </resources>

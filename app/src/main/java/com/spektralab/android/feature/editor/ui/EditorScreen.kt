@@ -276,11 +276,10 @@ internal fun EditorScreen(
                             modifier = Modifier.weight(1.08f).fillMaxHeight())
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             if (destination != EditorTab.Grade) {
-                                PhotoMetadataStrip(vm)
                                 EditorStockSelection(vm, onOpenFilmStocks, onOpenPaperStocks)
                             }
                             EditorPanel(vm, destination, Modifier.weight(1f).fillMaxWidth(), panelStates,
-                                showHeader = destination != EditorTab.Grade, onSaveRecipe = { showSaveRecipeDialog = true })
+                                showHeader = false, onSaveRecipe = { showSaveRecipeDialog = true })
                         }
                     }
                     destination == EditorTab.Shoot && !showAllShootControls -> Column(Modifier.fillMaxSize()) {

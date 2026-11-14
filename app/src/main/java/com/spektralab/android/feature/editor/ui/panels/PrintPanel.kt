@@ -31,11 +31,7 @@ internal fun PrintPanel(vm: EditorViewModel) {
         ToggleRow("颗粒", vm.params.grainActive) { vm.params.grainActive = it; vm.scheduleRender() }
         SliderRow("颗粒强度", vm.params.grainAmount, 0f..2f, "%.2f×") { vm.params.grainAmount = it; vm.scheduleRender() }
         ToggleRow("分层颗粒", vm.params.grainLayered) { vm.params.grainLayered = it; vm.scheduleRender() }
-        ToggleRow("光晕", vm.params.halationActive) { vm.params.halationActive = it; vm.scheduleRender() }
-        SliderRow("光晕强度", vm.params.halationAmount, 0f..4f, "%.1f") { vm.params.halationAmount = it; vm.scheduleRender() }
-        SliderRow("光晕散射", vm.params.halationScatterAmount, 0f..1f, "%.2f") { vm.params.halationScatterAmount = it; vm.scheduleRender() }
-        SliderRow("高光增强", vm.params.halationBoostEv, 0f..8f, "%.1f EV") { vm.params.halationBoostEv = it; vm.scheduleRender() }
-        ToggleRow("保留抗晕层", !vm.params.antihalationRemoved) { vm.params.antihalationRemoved = !it; vm.scheduleRender() }
+        HalationControls(vm)
         ToggleRow("DIR 成色剂耦合", vm.params.dirCouplersActive) { vm.params.dirCouplersActive = it; vm.scheduleRender() }
         SliderRow("DIR 强度", vm.params.dirCouplersAmount, 0f..1.5f, "%.1f") { vm.params.dirCouplersAmount = it; vm.scheduleRender() }
         ToggleRow("纸面光晕", vm.params.glareActive) { vm.params.glareActive = it; vm.scheduleRender() }

@@ -81,12 +81,15 @@ internal fun TheiaRoot(vm: EditorViewModel) {
                 onOpenViewingStand = { route = AppRoute.ViewingStand },
                 onOpenTestImage = { vm.openTestImage(); route = AppRoute.Editor },
                 onOpenAbout = { route = AppRoute.About },
-                onOpenSavedPhotos = { route = AppRoute.SavedPhotos },
+                onOpenSavedPhotos = { vm.lightTableProjects.refresh(); route = AppRoute.SavedPhotos },
             )
             AppRoute.SavedPhotos -> com.spektralab.android.feature.gallery.SavedPhotosScreen(
                 controller = vm.savedPhotos, enabled = !vm.busy && !vm.isExporting && !vm.isBatchExporting,
                 onBack = { route = AppRoute.Home }, onImport = { launchPhotoPicker(false) },
                 onOpen = { uri -> vm.openPhotos(listOf(uri)); route = AppRoute.Editor },
+                onAddToViewing = { uris -> vm.loadViewingPhotos(uris); route = AppRoute.ViewingStand },
+                projects = vm.lightTableProjects.projects,
+                onAddToProject = { uris, project -> vm.lightTableProjects.addUrisToProject(project, uris) },
                 onRestore = { session -> vm.restoreWorkbench(session); route = AppRoute.Editor },
                 onRelink = vm::relinkWorkbenchSource,
                 prepareVersions = vm::prepareVersionBoundary,

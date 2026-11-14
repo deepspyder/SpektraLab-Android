@@ -76,6 +76,21 @@ internal class PhotoSelectionController(
         if (!pending && canStart() && selected.isNotEmpty()) confirming = true
     }
 
+    fun addToAlbum(albumId: String, albumName: String) {
+        if (pending || !canStart() || selected.isEmpty()) return
+        val expected = selected.values.map { it.assetId }
+        pending = true; error = null
+        job = scope.launch {
+            try {
+                withContext(NonCancellable + Dispatchers.IO) { EditStore.addPhotosToAlbum(context, expected, albumId) }
+                selected = emptyMap(); active = false
+                message = context.getString(R.string.photos_added_to_album, albumName, expected.size)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { error = context.getString(R.string.library_organization_error) }
+            finally { pending = false; refresh() }
+        }
+    }
+
     fun dismissRemoval() { if (!pending) confirming = false }
 
     fun remove() {

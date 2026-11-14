@@ -45,6 +45,7 @@ internal fun stockArtworkResource(id: String): Int? = when (id) {
     "kodak_vision3_200t" -> R.drawable.stock_kodak_vision3_200t
     "kodak_vision3_250d" -> R.drawable.stock_kodak_vision3_250d
     "kodak_vision3_500t" -> R.drawable.stock_kodak_vision3_500t
+    "cinestill_800t" -> R.drawable.stock_cinestill_800t
     "kodak_verita_200d" -> R.drawable.stock_kodak_verita_200d
     "ilford_multigrade_iv_rc" -> R.drawable.stock_ilford_multigrade_iv_rc
     "fujifilm_crystal_archive_typeii" -> R.drawable.stock_fujifilm_crystal_archive_typeii

@@ -215,5 +215,12 @@
     "pngBytes": 21793,
     "width": 384,
     "height": 448
+  },
+  {
+    "id": "cinestill_800t",
+    "webpBytes": 12046,
+    "pngBytes": 22292,
+    "width": 384,
+    "height": 448
   }
 ]

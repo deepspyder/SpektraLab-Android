@@ -1310,6 +1310,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 ?: papers.firstOrNull { StockCatalog.canPrint(stockId, it.id) }?.id ?: return
         params.filmId = stockId
         params.paperId = paper
+        // CineStill is a new explicit choice; existing photographs never opt in on load.
+        if (stockId == "cinestill_800t") params.halationModelVersion = com.spektralab.android.core.model.HalationModel.BACK_REFLECTION.version
         scheduleRender(immediate = true)
     }
 

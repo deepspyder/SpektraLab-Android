@@ -20,6 +20,7 @@ TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent
 DEFAULT_OUT = (ROOT / "app" / "src" / "main" / "assets" / "engine" / "resources" / "vulkan").resolve()
 SHADER_DIR = (ROOT.parent / "SpektraLab-Windows" / "engine" / "src" / "shaders" / "vulkan").resolve()
+ANDROID_SHADER_DIR = ROOT / "app" / "src" / "main" / "cpp" / "shaders" / "vulkan"
 
 
 def find_glslang(explicit: str | None) -> str | None:
@@ -49,7 +50,9 @@ def main() -> None:
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
 
-    shaders = sorted(SHADER_DIR.glob("*.comp"))
+    sources = {shader.name: shader for shader in SHADER_DIR.glob("*.comp")}
+    sources.update({shader.name: shader for shader in ANDROID_SHADER_DIR.glob("*.comp")})
+    shaders = sorted(sources.values())
     if not shaders:
         sys.exit(f"没找到着色器: {SHADER_DIR}")
 

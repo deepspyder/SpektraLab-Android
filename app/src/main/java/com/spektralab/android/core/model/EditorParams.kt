@@ -68,6 +68,8 @@ class EditorParams {
     var halationAmount by mutableFloatStateOf(1f)
     var halationScatterAmount by mutableFloatStateOf(1f)
     var halationBoostEv by mutableFloatStateOf(0f)
+    var halationModelVersion by mutableStateOf(HalationModel.CLASSIC.version)
+    var halationHeadroomEv by mutableFloatStateOf(4f)
     var antihalationRemoved by mutableStateOf(false)
     var dirCouplersActive by mutableStateOf(true)
     var dirCouplersAmount by mutableFloatStateOf(1f)
@@ -186,6 +188,8 @@ class EditorParams {
         .put("halation_amount", halationAmount.toDouble())
         .put("halation_scatter_amount", halationScatterAmount.toDouble())
         .put("halation_boost_ev", halationBoostEv.toDouble())
+        .put("halation_model_version", halationModelVersion)
+        .put("halation_headroom_ev", halationHeadroomEv.toDouble())
         .put("antihalation_removed", antihalationRemoved)
         .put("dir_couplers_active", dirCouplersActive)
         .put("dir_couplers_amount", dirCouplersAmount.toDouble())
@@ -282,6 +286,7 @@ class EditorParams {
         grainActive = p.grainActive; grainAmount = p.grainAmount; grainLayered = p.grainLayered
         halationActive = p.halationActive; halationAmount = p.halationAmount; halationScatterAmount = p.halationScatterAmount
         halationBoostEv = p.halationBoostEv; antihalationRemoved = p.antihalationRemoved
+        halationModelVersion = p.halationModelVersion; halationHeadroomEv = p.halationHeadroomEv
         dirCouplersActive = p.dirCouplersActive; dirCouplersAmount = p.dirCouplersAmount
         glareActive = p.glareActive; glareAmount = p.glareAmount; preflashExposure = p.preflashExposure
         extendedDynamicRange = p.extendedDynamicRange
@@ -324,6 +329,7 @@ class EditorParams {
         }
         /** 从 sidecar JSON 恢复参数（缺字段用默认值）。 */
         fun fromJson(json: JSONObject): EditorParams {
+            HalationModel.requireReadable(json)
             val p = EditorParams()
             p.preservedFields = json.keys().asSequence().filterNot { it in knownFields }.associateWith { key ->
                 org.json.JSONArray().put(json.get(key)).toString().let { it.substring(1, it.length - 1) }
@@ -358,6 +364,8 @@ class EditorParams {
             p.halationAmount = json.optDouble("halation_amount", 1.0).toFloat()
             p.halationScatterAmount = json.optDouble("halation_scatter_amount", 1.0).toFloat().coerceIn(0f, 1f)
             p.halationBoostEv = json.optDouble("halation_boost_ev", 0.0).toFloat().coerceIn(0f, 8f)
+            p.halationModelVersion = json.optInt("halation_model_version", HalationModel.CLASSIC.version)
+            p.halationHeadroomEv = json.optDouble("halation_headroom_ev", 4.0).toFloat()
             p.antihalationRemoved = json.optBoolean("antihalation_removed", false)
             p.dirCouplersActive = json.optBoolean("dir_couplers_active", true)
             p.dirCouplersAmount = json.optDouble("dir_couplers_amount", 1.0).toFloat().coerceIn(0f, 1.5f)
@@ -480,6 +488,8 @@ class EditorParams {
             .put("halation_amount", halationAmount.toDouble())
             .put("halation_scatter_amount", halationScatterAmount.toDouble())
             .put("halation_boost_ev", halationBoostEv.toDouble())
+            .put("halation_model_version", halationModelVersion)
+            .put("halation_headroom_ev", halationHeadroomEv.toDouble())
             .put("antihalation_removed", antihalationRemoved)
             .put("dir_couplers_active", dirCouplersActive)
             .put("dir_couplers_amount", dirCouplersAmount.toDouble())

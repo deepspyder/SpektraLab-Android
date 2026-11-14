@@ -1,0 +1,29 @@
+bool Pipeline::headroom_wanted() const {
+    const HalationParams& hal = params_.film_render.halation;
+    return hal.active && hal.back_reflection && hal.headroom_ev > 0.0 && hal.halation_amount > 0.0 &&
+           hal.headroom_to_ev > hal.headroom_from_ev;
+}
+
+bool Pipeline::node_headroom(const Image& in, Image& out, std::string& error) {
+    const HalationParams& hal = params_.film_render.halation;
+    if (!headroom_wanted()) {
+        out = in;
+        return true;
+    }
+    Timer t(this, "filming.expose.headroom");
+    double clip = 0.0;
+    if (!device_max(in, clip, error)) return false;
+    if (!(clip > 0.0)) { out = in; return true; }
+    const float p[7] = {float(1.0 / clip), float(kHeadroomClipFromEv),
+                        float(1.0 / (kHeadroomClipToEv - kHeadroomClipFromEv)),
+                        float(hal.headroom_ev), float(1.0 / kMidgray), float(hal.headroom_from_ev),
+                        float(1.0 / (hal.headroom_to_ev - hal.headroom_from_ev))};
+    gpu::BufferRef p_buf = gpu_->upload(p, sizeof p, error);
+    if (!p_buf) return false;
+    if (!alloc_like(in, out, error)) return false;
+    const uint32_t n[1] = {uint32_t(in.pixels())};
+    return gpu_->dispatch("spk_highlight_headroom",
+                          {gpu::Arg::buf(in.buf), gpu::Arg::buf(p_buf), gpu::Arg::inline_bytes(n, 1),
+                           gpu::Arg::buf(out.buf)},
+                          in.pixels(), error);
+}

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="Fresh local output directory")
-    parser.add_argument("--audit", choices=("fir", "dir", "print", "mixture"), default="fir")
+    parser.add_argument("--audit", choices=("fir", "dir", "print", "mixture", "halation"), default="fir")
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists():
@@ -28,6 +28,8 @@ def main():
             key, value = line.split("=", 1)
             values[key.split(":", 1)[0]] = value
     engine = Path(values["SPEKTRA_ENGINE_DIR"]).resolve()
+    staged = generated.parents[1] / "generated/f14-engine"
+    source_engine = staged if staged.is_dir() else engine
     compiler_value = values.get("CMAKE_CXX_COMPILER")
     if not compiler_value:
         for info in generated.parents[1].glob("CMakeFiles/*/CMakeCXXCompiler.cmake"):
@@ -82,11 +84,13 @@ def main():
     command = [
         str(compiler), "--target=x86_64-linux-android26", "--sysroot=" + str(toolchain / "sysroot"),
         "-std=c++20", "-O2", "-I" + str(ROOT / "app/src/main/cpp"),
-        *("-I" + str(engine / path) for path in ("src", "src/core", "src/pipeline", "src/gpu")),
+        *("-I" + str(source_engine / path) for path in ("src", "src/core", "src/pipeline", "src/gpu")),
         str(ROOT / {"fir": "tools/native/export_fir_bands_audit.cpp",
                     "dir": "tools/native/export_dir_audit.cpp",
                     "print": "tools/native/export_print_audit.cpp",
-                    "mixture": "tools/native/export_mixture_audit.cpp"}[args.audit]), str(generated),
+                    "mixture": "tools/native/export_mixture_audit.cpp",
+                    "halation": "tools/native/halation_model_audit.cpp"}[args.audit]),
+        *([] if args.audit == "halation" else [str(generated)]),
         "-L" + str(output), "-lspektralab", "-lc++_shared", "-llog",
         "-Wl,-rpath,$ORIGIN", "-o", str(output / ("export-" + args.audit + "-audit")),
     ]

@@ -15,6 +15,8 @@ internal data class TableSource(
     val pixelWidth: Int = 0,
     val pixelHeight: Int = 0,
     val format: String = "",
+    /** Developed wall frame, separate from the fallback source thumbnail. */
+    val renderedPreview: String? = null,
 )
 
 internal data class TablePlacement(
@@ -52,6 +54,7 @@ internal data class LightTableScene(
             source.assetId?.let { require(UUID.fromString(it).toString() == it) }
             source.variantId?.let { require(UUID.fromString(it).toString() == it) }
             source.preview?.let { require(it.matches(Regex("[a-f0-9]{64}"))) }
+            source.renderedPreview?.let { require(it.matches(Regex("[a-f0-9]{64}"))) }
             require(source.pixelWidth >= 0 && source.pixelHeight >= 0)
         }
     }
@@ -70,6 +73,7 @@ internal data class LightTableScene(
                         put("revision", source.editRevision); put("preview", source.preview)
                         put("pixel_width", source.pixelWidth); put("pixel_height", source.pixelHeight)
                         put("format", source.format)
+                        put("rendered_preview", source.renderedPreview)
                     })
                 }) }
             }).toString()
@@ -94,12 +98,13 @@ internal data class LightTableScene(
                 val item = items.getJSONObject(index)
                 val source = item.getJSONObject("source")
                 item.known("id", "x", "y", "width", "height", "rotation", "source")
-                source.known("uri", "name", "asset", "variant", "revision", "preview", "pixel_width", "pixel_height", "format")
+                source.known("uri", "name", "asset", "variant", "revision", "preview", "rendered_preview", "pixel_width", "pixel_height", "format")
                 TablePlacement(item.getString("id"), TableSource(
                     source.getString("uri"), source.getString("name"),
                     source.optString("asset").takeIf(String::isNotEmpty), source.optString("variant").takeIf(String::isNotEmpty),
                     source.getLong("revision"), source.optString("preview").takeIf(String::isNotEmpty),
                     source.getInt("pixel_width"), source.getInt("pixel_height"), source.getString("format"),
+                    source.optString("rendered_preview").takeIf(String::isNotEmpty),
                 ), item.number("x"), item.number("y"), item.number("width"), item.number("height"), item.number("rotation"))
             }, json.number("zoom"), json.number("pan_x"), json.number("pan_y"), json.getBoolean("light"), json.getBoolean("millimeters"))
                 .validated()

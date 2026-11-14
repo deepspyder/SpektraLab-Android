@@ -59,6 +59,7 @@ object EditStore {
     fun load(context: Context, uri: Uri): EditorParams? = checked {
         read(context, uri)?.let { raw ->
             val json = JSONObject(raw)
+            com.spektralab.android.core.model.HalationModel.requireReadable(json)
             val defaults = EditorParams().toJson()
             for (key in json.keys()) if (defaults.has(key)) {
                 val value = json.get(key)
@@ -90,7 +91,11 @@ object EditStore {
     @Synchronized
     fun loadForTransfer(context: Context, uri: Uri): StoredEdit = checked {
         val text = read(context, uri)
-        StoredEdit(text?.let { EditorParams.fromJson(JSONObject(it)) } ?: EditorParams(), text)
+        StoredEdit(text?.let {
+            val json = JSONObject(it)
+            com.spektralab.android.core.model.HalationModel.requireReadable(json)
+            EditorParams.fromJson(json)
+        } ?: EditorParams(), text)
     }
 
     @Synchronized
@@ -128,6 +133,9 @@ object EditStore {
     @Synchronized
     internal fun hidePhotos(context: Context, expected: List<com.spektralab.android.data.library.SavedPhoto>) =
         checked { repository(context).hide(expected) }
+    @Synchronized
+    internal fun addPhotosToAlbum(context: Context, assetIds: List<String>, albumId: String) =
+        checked { repository(context).organization.addToAlbum(assetIds, albumId) }
     @Synchronized
     internal fun restoreImportedPhotos(context: Context, uris: List<Uri>) =
         checked { repository(context).restoreImported(uris) }
