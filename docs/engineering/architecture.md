@@ -38,7 +38,7 @@ to the editor UI rather than the reusable component package.
 `EditorViewModel` remains the single lifecycle owner of its state machine and
 native handles. The package refactor preserved method behavior, coroutine scopes,
 dispatchers and render ordering. Subsequent import/export performance changes
-are documented in [full-resolution-performance.md](full-resolution-performance.md).
+are documented in [full-resolution-performance.md](../performance/full-resolution-performance.md).
 Publication helpers do not own editor state or native sessions.
 
 ## Compatibility and behavior

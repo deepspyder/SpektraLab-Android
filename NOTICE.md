@@ -47,7 +47,7 @@ profiles were modified by this adaptation.
 
 | Component | Attribution / terms | License location |
 | --- | --- | --- |
-| Resource Han Rounded CN | Cyano Hao; portions by Adobe. SIL Open Font License 1.1. | [Bundled OFL and copyrights](app/src/main/assets/licenses/Resource-Han-Rounded-OFL.txt); [font documentation](docs/fonts.md). |
+| Resource Han Rounded CN | Cyano Hao; portions by Adobe. SIL Open Font License 1.1. | [Bundled OFL and copyrights](app/src/main/assets/licenses/Resource-Han-Rounded-OFL.txt); [font documentation](docs/project/fonts.md). |
 | Lucide icons | Lucide Icons and Contributors. ISC; additional notices are retained in the bundled file. | [Bundled license](app/src/main/assets/licenses/lucide-LICENSE.txt). |
 | LibRaw | RAW decoding dependency; distributed by its authors under LGPL 2.1 / CDDL 1.0 dual-license terms. | `deps/LibRaw-0.22.2/LICENSE.LGPL` and `LICENSE.CDDL` in the dependency source checkout. |
 | volk | Arseny Kapoulkine. MIT. | `SpektraLab-Windows/engine/third_party/volk/LICENSE.md` in the shared checkout. |

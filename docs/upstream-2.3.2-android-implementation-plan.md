@@ -14,9 +14,9 @@
 
 依据：
 
-1. 仓库内的[新原型可行性分析](upstream-2.3.2-android-feasibility.md)。
+1. 仓库内的[新原型可行性分析](compatibility/upstream-2.3.2-android-feasibility.md)。
 2. 本地补充分析：`E:/Code/SpektraLab/.tmp/spektralab-android-feature-analysis.md`。其有效结论已纳入本文，实施时不依赖该临时文件存在。
-3. [现有全尺寸性能记录](full-resolution-performance.md)、[代码组织说明](architecture.md)与本轮核对的 owning source。
+3. [现有全尺寸性能记录](performance/full-resolution-performance.md)、[代码组织说明](engineering/architecture.md)与本轮核对的 owning source。
 
 参照原型为本地 `SpektraLab` 检出 `1952c63`，发布提交标记为 2.3.2，日期 2026-11-10；未将其等同于已经在线确认的最新远端版本。Android 基线为 `2a6adef` 加当前未提交改动，实际依赖兄弟目录 `SpektraLab-Windows/engine`。本轮确认共享检出中的 `engine.cpp`、`pipeline.hpp` 也有本地修改；不能只用 Android HEAD 复现当前结果。
 
@@ -428,7 +428,7 @@ S3 的数据设计可在 S2 中独立推进，但先定义序列化/字段语义
 | 旧参数、复制与片边居中裁剪 | `SpektraLab-Android/app/src/main/java/com/spektralab/android/core/model/EditorParams.kt` |
 | 旧 per-photo 持久化 | `SpektraLab-Android/app/src/main/java/com/spektralab/android/data/local/EditStore.kt` |
 | 现有自由画布与吸附 | `SpektraLab-Android/app/src/main/java/com/spektralab/android/feature/lighttable/FilmContactCanvas.kt` |
-| 当前导出恢复、发布与性能证据 | `SpektraLab-Android/docs/full-resolution-performance.md` |
+| 当前导出恢复、发布与性能证据 | `SpektraLab-Android/docs/performance/full-resolution-performance.md` |
 | 现行 Mac 主体与两层编辑 | `SpektraLab/ARCHITECTURE.md` 第 7 节，`app/SpektraLab/PAGES.md` |
 | 原型调色公式/顺序 | `SpektraLab/app/SpektraLab/Sources/Model/Adjustments.swift`、`Sources/Engine/Layer2Kernel.swift` |
 | bands 计划与真实整图执行 | `SpektraLab/app/SpektraLab/Sources/Scheduler/SpkEngine.swift`、`CostModel.swift` |

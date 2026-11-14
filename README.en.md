@@ -57,7 +57,7 @@ It brings together RAW editing, per-photo Smart Develop, a multi-photo workspace
 
 > **Large-image export:** Prefer a smaller export resolution for very large photographs. Full-size export uses more memory and takes longer to process.
 
-Requires Android 8.0 (API 26) or later. The build targets `arm64-v8a` and `x86_64`. Formerly SpektraLab Android, Theia retains the application ID `com.spektralab.android` for compatible upgrades and existing edit data. See the [rename notes](docs/theia-branding.md).
+Requires Android 8.0 (API 26) or later. The build targets `arm64-v8a` and `x86_64`. Formerly SpektraLab Android, Theia retains the application ID `com.spektralab.android` for compatible upgrades and existing edit data. See the [rename notes](docs/project/theia-branding.md).
 
 ## Build from source
 
@@ -120,10 +120,11 @@ app/src/main/
 └── res/                         # Theme, fonts and UI resources
 
 docs/images/                     # Device screenshots used in this README
+docs/README.md                    # Documentation index and categories
 tools/                           # Engine resource sync and shader compilation
 ```
 
-See [architecture notes](docs/architecture.md) for package responsibilities, compatibility contracts and code checks. Run `python tools/check_package_boundaries.py` to check package paths and dependency direction.
+See [architecture notes](docs/engineering/architecture.md) for package responsibilities, compatibility contracts and code checks. Run `python tools/check_package_boundaries.py` to check package paths and dependency direction.
 
 ## Credits
 

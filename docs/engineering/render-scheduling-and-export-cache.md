@@ -1,6 +1,6 @@
 # 第二批：优先调度与正式导出缓存
 
-日期：2026-11-11。承接[首批渲染基础](render-foundation.md)，对应 F01/F02 的继续实现。整体进度见[开发核对清单](development-progress.md)。
+日期：2026-11-11。承接[首批渲染基础](render-foundation.md)，对应 F01/F02 的继续实现。整体进度见[开发核对清单](../development-progress.md)。
 
 ## 1. 调度与状态
 

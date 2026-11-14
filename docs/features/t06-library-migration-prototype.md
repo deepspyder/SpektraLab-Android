@@ -46,7 +46,7 @@ Z6II NEF参数经隔离库往返后，正常应用链路导出6064×4040、16位
 
 ### 本地构建
 
-[Theia-v0.1.5-migration-prototype.apk](../app/release/v0.1.5-t06-migration/Theia-v0.1.5-migration-prototype.apk)
+[Theia-v0.1.5-migration-prototype.apk](../../app/release/v0.1.5-t06-migration/Theia-v0.1.5-migration-prototype.apk)
 
 SHA-256：`1306e5eeef7d448ad008ba9813093550e7fbd0c2afb22b0b738b266e3dfa3805`。此包不会自动迁移用户记录，仅归档本轮验证构建。
 

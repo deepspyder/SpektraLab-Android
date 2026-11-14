@@ -70,7 +70,7 @@ API37 x86_64 模拟器，1024×768 U16 输入，Release native，每项预热后
 
 ## 本地验证包
 
-[Theia-v0.1.5-color-wheels.apk](../app/release/v0.1.5-f05-color-wheels/Theia-v0.1.5-color-wheels.apk)
+[Theia-v0.1.5-color-wheels.apk](../../app/release/v0.1.5-f05-color-wheels/Theia-v0.1.5-color-wheels.apk)
 
 SHA-256：`024ad5121fac9247f8ebe60e5c400f2606a0e701b4b5da7a904f21d38e4b50aa`。版本保持 0.1.5 (6)，包名 com.spektralab.android。
 

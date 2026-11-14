@@ -19,8 +19,8 @@ android {
         applicationId = "com.spektralab.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
         testInstrumentationRunner = "com.spektralab.android.FunctionalAuditInstrumentation"
 
         // Vulkan 与 LibRaw 在 64 位 ARM 上最稳；加 x86_64 方便在模拟器上跑。

@@ -84,7 +84,7 @@
 
 ## 本地验证包
 
-[Theia-v0.1.5-edit-presets.apk](../app/release/v0.1.5-f06-edit-presets/Theia-v0.1.5-edit-presets.apk)
+[Theia-v0.1.5-edit-presets.apk](../../app/release/v0.1.5-f06-edit-presets/Theia-v0.1.5-edit-presets.apk)
 
 SHA-256：`a75b01e85be7eb8e81c1453a1cc23ecb74ffcec8897fc047b68975872afa362b`。版本保持0.1.5 (6)，包名com.spektralab.android。
 

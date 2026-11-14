@@ -226,7 +226,7 @@
         "app/src/androidTest/java/com/spektralab/android/RenderSchedulingAudit.kt",
         "app/src/androidTest/java/com/spektralab/android/ParameterPerformanceAudit.kt",
         "app/src/androidTest/java/com/spektralab/android/ChangedParamsAudit.kt",
-        "docs/parameter-render-performance.md"
+        "docs/performance/parameter-render-performance.md"
       ]
     },
     {
@@ -271,28 +271,28 @@
         "app/src/main/cpp/export_execution.hpp",
         "app/src/main/java/com/spektralab/android/engine/EngineClient.kt",
         "app/src/androidTest/java/com/spektralab/android/ExportEngineAudit.kt",
-        "docs/full-resolution-export-engine.md",
+        "docs/engineering/full-resolution-export-engine.md",
         "app/src/main/cpp/export_fir_bands.hpp",
         "app/src/main/cpp/cmake/AndroidExportFir.cmake",
         "tools/native/export_fir_bands_audit.cpp",
         "tools/build_export_fir_audit.py",
-        "docs/f03-batch-02-fir-and-preview.md",
-        "docs/f03-batch-03-source-lifetime.md",
+        "docs/features/f03-batch-02-fir-and-preview.md",
+        "docs/features/f03-batch-03-source-lifetime.md",
         "app/src/main/cpp/cmake/AndroidExportDir.cmake",
         "app/src/main/cpp/cmake/templates/ExportFilmSegment.cpp.in",
         "tools/native/export_dir_audit.cpp",
-        "docs/f03-batch-04-dir-lifetimes.md",
+        "docs/features/f03-batch-04-dir-lifetimes.md",
         "app/src/main/cpp/cmake/templates/ExportPrintSegment.cpp.in",
         "tools/native/export_print_audit.cpp",
-        "docs/f03-batch-05-print-ownership.md",
+        "docs/features/f03-batch-05-print-ownership.md",
         "app/src/main/cpp/cmake/AndroidExportHalation.cmake",
         "app/src/main/cpp/cmake/AndroidExportMixture.cmake",
         "app/src/main/cpp/export_mixture_accumulator.hpp",
         "tools/native/export_mixture_audit.cpp",
-        "docs/f03-batch-06-halation-mixture.md",
-        "docs/f03-batch-07-film-source.md",
+        "docs/features/f03-batch-06-halation-mixture.md",
+        "docs/features/f03-batch-07-film-source.md",
         "app/src/main/java/com/spektralab/android/engine/DisplayStripRenderer.kt",
-        "docs/render-library-performance-2026-11-14.md"
+        "docs/performance/render-library-performance-2026-11-14.md"
       ]
     },
     {
@@ -340,10 +340,10 @@
         "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/ChannelMixerEditor.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/GradePanel.kt",
         "app/src/main/cpp/curve_grade.cpp",
-        "docs/f05-channel-mixer.md",
+        "docs/features/f05-channel-mixer.md",
         "app/src/main/java/com/spektralab/android/core/color/ColorWheels.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/ColorWheelEditor.kt",
-        "docs/f05-color-wheels.md"
+        "docs/features/f05-color-wheels.md"
       ]
     },
     {
@@ -365,7 +365,7 @@
         "app/src/main/java/com/spektralab/android/feature/editor/EditPresetController.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/EditorViewModel.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/ui/EditToolsSheet.kt",
-        "docs/f06-edit-presets.md"
+        "docs/features/f06-edit-presets.md"
       ]
     },
     {
@@ -393,29 +393,29 @@
         "app/src/main/java/com/spektralab/android/data/library/LegacyMigrationArchive.kt",
         "app/src/main/java/com/spektralab/android/data/library/LibraryPrototypeRepository.kt",
         "app/src/main/java/com/spektralab/android/data/library/MigrationSandboxGateway.kt",
-        "docs/t06-library-migration-prototype.md",
+        "docs/features/t06-library-migration-prototype.md",
         "app/src/main/java/com/spektralab/android/data/library/SavedPhotoRepository.kt",
         "app/src/main/java/com/spektralab/android/data/local/EditStore.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/SavedPhotosController.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/SavedPhotosScreen.kt",
-        "docs/f07-saved-photos.md",
+        "docs/features/f07-saved-photos.md",
         "app/src/main/java/com/spektralab/android/core/model/SavedEditSession.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/EditSessionPersistence.kt",
-        "docs/f07-source-recovery.md",
+        "docs/features/f07-source-recovery.md",
         "app/src/main/java/com/spektralab/android/core/model/PhotoOrganization.kt",
         "app/src/main/java/com/spektralab/android/data/library/PhotoOrganizationRepository.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/PhotoOrganizationController.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/PhotoLibraryOrganizationUi.kt",
-        "docs/f07-photo-organization.md",
+        "docs/features/f07-photo-organization.md",
         "app/src/main/java/com/spektralab/android/core/model/EditVersion.kt",
         "app/src/main/java/com/spektralab/android/data/library/EditVersionRepository.kt",
         "app/src/main/java/com/spektralab/android/data/library/EditVersionProvider.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/EditVersionsController.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/EditVersionsSheet.kt",
-        "docs/f07-edit-versions.md",
+        "docs/features/f07-edit-versions.md",
         "app/src/main/java/com/spektralab/android/feature/gallery/PhotoSelectionController.kt",
         "app/src/main/java/com/spektralab/android/feature/gallery/PhotoSelectionUi.kt",
-        "docs/render-library-performance-2026-11-14.md"
+        "docs/performance/render-library-performance-2026-11-14.md"
       ]
     },
     {
@@ -440,7 +440,7 @@
         "app/src/main/java/com/spektralab/android/feature/lighttable/LightTableProjectsController.kt",
         "app/src/main/java/com/spektralab/android/feature/lighttable/LightTableProjectUi.kt",
         "app/src/main/java/com/spektralab/android/feature/lighttable/GalleryScreen.kt",
-        "docs/f08-lighttable-projects.md"
+        "docs/features/f08-lighttable-projects.md"
       ]
     },
     {
@@ -460,7 +460,7 @@
         "app/src/main/java/com/spektralab/android/data/export/Rgba16Bitmap.kt",
         "app/src/main/java/com/spektralab/android/feature/lighttable/TableOutputController.kt",
         "app/src/main/java/com/spektralab/android/feature/lighttable/TableOutputSheet.kt",
-        "docs/f09-lighttable-export.md"
+        "docs/features/f09-lighttable-export.md"
       ]
     },
     {
@@ -524,7 +524,7 @@
         "app/src/main/java/com/spektralab/android/core/model/HalationModel.kt",
         "app/src/main/java/com/spektralab/android/feature/editor/ui/panels/HalationControls.kt",
         "app/src/main/java/com/spektralab/android/engine/StockCatalog.kt",
-        "docs/f14-cinestill-halation.md"
+        "docs/features/f14-cinestill-halation.md"
       ]
     },
     {

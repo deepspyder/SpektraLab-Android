@@ -57,7 +57,7 @@ Theia 是一款免费开源的 Android 胶片与暗房模拟应用，基于 **An
 
 > **大图导出提示**：照片尺寸较大时，建议优先选择较小的导出分辨率。全尺寸导出会占用更多内存，处理时间也更长。
 
-应用要求 Android 8.0（API 26）及以上，构建目标为 `arm64-v8a` 和 `x86_64`。项目原名为 SpektraLab Android；为兼容覆盖安装与已有编辑数据，应用 ID 仍为 `com.spektralab.android`。详见 [Theia 改名说明](docs/theia-branding.md)。
+应用要求 Android 8.0（API 26）及以上，构建目标为 `arm64-v8a` 和 `x86_64`。项目原名为 SpektraLab Android；为兼容覆盖安装与已有编辑数据，应用 ID 仍为 `com.spektralab.android`。详见 [Theia 改名说明](docs/project/theia-branding.md)。
 
 ## 从源码构建
 
@@ -120,10 +120,11 @@ app/src/main/
 └── res/                         # 应用主题、字体与界面资源
 
 docs/images/                     # 本 README 使用的实机截图
+docs/README.md                    # 文档分类索引
 tools/                           # 引擎资源同步与着色器编译脚本
 ```
 
-分包职责、兼容约束和代码检查方式见 [架构说明](docs/architecture.md)。运行 `python tools/check_package_boundaries.py` 可检查包路径与依赖方向。
+分包职责、兼容约束和代码检查方式见 [架构说明](docs/engineering/architecture.md)。运行 `python tools/check_package_boundaries.py` 可检查包路径与依赖方向。
 
 ## 来源与致谢
 
